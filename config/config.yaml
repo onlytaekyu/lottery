@@ -1,0 +1,402 @@
+# DAEBAK_AI 로또 추천 시스템 설정 파일
+
+# 데이터 설정
+data:
+  historical_data_path: "data/raw/lottery.csv"
+  min_number: 1
+  max_number: 45
+  sequence_length: 6
+  cache_size: 1073741824  # 1GB
+  test_size: 0.2
+  validation_size: 0.1
+
+# 성능 관련 설정
+performance:
+  torch_amp_enabled: true   # 자동 혼합 정밀도 사용 여부
+  gpu_device: "cuda:0"      # GPU 장치 이름
+  parallel_execution: false # 병렬 실행 활성화 여부
+  max_threads: 8            # 최대 스레드 수
+  batch_size: 512           # 배치 크기
+  threading_backend: "threading"  # 스레딩 백엔드 ("threading" 또는 "multiprocessing")
+  cuda_memory_fraction: 0.8  # CUDA 메모리 사용 비율
+  prefetch_buffer_size: 4    # 데이터 로딩 프리페치 버퍼 크기
+  cache_hit_target: 0.9      # 목표 캐시 적중률
+
+# 추천 시스템 설정
+recommendation:
+  use_models:
+    gnn: true
+    rl: true
+    statistical: true
+    unsupervised: true
+    autoencoder: true
+    lstm: true
+
+  model_weights:
+    gnn: 0.20
+    rl: 0.25
+    statistical: 0.20
+    unsupervised: 0.15
+    autoencoder: 0.15
+    lstm: 0.10
+    
+  # 다양성 필터링 설정
+  enable_jaccard_filter: true
+  jaccard_threshold: 0.5
+  use_adjusted_score: true
+  clustering_diversity: true
+  candidate_cluster_method: "agglomerative"  # "dbscan" 또는 "agglomerative"
+
+# ===================
+# 정규화 설정 (새로 추가)
+# ===================
+normalization:
+  feature_vector: "zscore"      # 학습 및 예측 입력용
+  model_score: "minmax"         # 후보 순위 결정용
+  anomaly_filter:
+    enabled: true
+    method: "zscore"
+    z_threshold: 2.5            # 이상치 제외 임계값 (± 기준)
+  fallback:
+    zero_std: 1e-8              # 표준편차가 0일 때 대체값
+    identical_scores: 0.5       # 모든 점수가 동일할 때 기본값
+
+# ===================
+# 후보 생성 설정
+# ===================
+generation:
+  # 구조화된 후보 생성 (쌍 빈도 + 중심성 + 클러스터 기반)
+  enable_structured_generation: true
+  structured_ratio: 0.3  # 30% 구조화된 후보
+  
+  # ROI 기반 후보 생성
+  enable_roi_guided_generation: true
+  roi_ratio: 0.3  # 30% ROI 기반 후보
+  roi_data_path: "data/roi/high_roi_combinations.json"
+  
+  # 모델 기반 후보 생성 (역샘플링)
+  enable_model_guided_generation: true
+  enable_inverse_sampling: true  # 역샘플링 사용 (예측된 번호 확률 기반)
+  model_ratio: 0.3  # 30% 모델 기반 후보
+  
+  # 다양성 설정
+  jaccard_diversity_threshold: 0.5  # 자카드 유사도 임계값
+  min_cluster_diversity: 3  # 최소 클러스터 다양성
+  pure_random_ratio: 0.1  # 예외적인 추천 보장
+
+# ===================
+# 출현율 가중치 설정
+# ===================
+frequency_weights:
+  long_term: 0.6
+  mid_term: 0.25
+  short_term: 0.15
+
+# ===================
+# 필터 설정 (추천 제외 조건)
+# ===================
+filters:
+  allow_duplicates: false
+  exclude_exact_past_match: true
+  max_consecutive: 5
+  min_sum: 90
+  max_sum: 210
+  min_even_numbers: 2
+  max_even_numbers: 4
+  min_low_numbers: 2
+  max_low_numbers: 4
+
+# ===================
+# 특성 필터링 설정
+# ===================
+filtering:
+  remove_low_variance_features: true
+  variance_threshold: 0.01
+
+# ===================
+# 벡터 검증 설정 추가
+# ===================
+validation:
+  validate_vectors: true
+  fail_on_missing_features: true
+  fail_on_dimension_mismatch: true
+  essential_features:
+    - "gap_stddev"
+    - "pair_centrality"
+    - "hot_cold_mix_score"
+    - "segment_entropy"
+    - "roi_group_score"
+    - "duplicate_flag"
+    - "max_overlap_with_past"
+    - "combination_recency_score"
+    - "position_entropy_1"
+    - "position_entropy_2"
+    - "position_entropy_3" 
+    - "position_entropy_4"
+    - "position_entropy_5"
+    - "position_entropy_6"
+    - "position_std_1"
+    - "position_std_2"
+    - "position_std_3"
+    - "position_std_4" 
+    - "position_std_5"
+    - "position_std_6"
+    - "position_variance_avg"
+    - "position_bias_score"
+
+# ===================
+# ROI 가중치 설정
+# ===================
+roi_weighting:
+  enable: true
+  premium_pairs_boost: 0.2
+  low_risk_bonus: 0.1
+  premium_pairs_count: 20
+  min_pairs: 1
+  max_pairs: 2
+  min_cluster_pairs: 2
+
+# ===================
+# 패턴 벡터 구성 요소
+# ===================
+pattern_features:
+  include: 
+  - odd_even_ratio
+  - total_sum
+  - max_consecutive
+  - cluster_score
+  - recent_hit_score
+  - range_density         # 구간별 번호 밀도
+  - pairwise_distance     # 번호 간 거리 분포
+  - hot_cold_mix_score    # 최근/장기 번호 혼합도
+  - pair_centrality_avg   # 번호 쌍 중심성 평균
+  - pair_roi_avg          # 번호 쌍 ROI 평균
+  - position_number_variance  # 위치별 번호 분산
+  - combination_diversity_score  # 조합 다양성 점수
+  - gap_stddev           # 간격 표준편차
+  - roi_group_score      # ROI 그룹 점수
+  - frequent_triplet_flag  # 빈번 삼중 조합 여부
+  - graph_connectivity_score  # 그래프 연결성 점수
+  - outlier_flag         # 이상치 여부
+  thresholds:
+    percentile_threshold: 0.95
+    trend_score_threshold: 0.75
+    risk_score_threshold: 0.65
+
+# ===================
+# 벡터화 설정 추가
+# ===================
+vectorizer:
+  use_cache: true
+  cache_threshold: 1000
+  normalize_output: true
+  # 특성 벡터 설정
+  feature_vector_full:
+    output_path: "data/cache/feature_vectors_full.npy"
+    names_path: "data/cache/feature_vector_full.names.json"
+    min_dimensions: 20  # 최소 차원 수
+    dimension_types:
+      - statistical      # 통계적 특성
+      - pattern_based    # 패턴 기반 특성
+      - centrality       # 중심성/연결성 특성
+      - roi_based        # ROI 기반 특성
+      - position_based   # 위치 기반 특성
+    normalization: "minmax"  # 정규화 방식
+
+# ===================
+# 패턴 분석 설정
+# ===================
+analysis:
+  enable_segment_10: true  # 10구간 빈도 분석 활성화
+  enable_segment_5: true  # 5구간 빈도 분석 활성화
+  enable_gap_stats: true  # 갭 통계 분석 활성화
+  enable_pattern_interval: true  # 패턴 재출현 간격 분석 활성화
+  enable_recent_gap: true  # 번호별 최근 재출현 간격 분석 활성화
+  enable_segment_history: true  # 회차별 구간 빈도 히스토리 생성 활성화
+  enable_pair_centrality: true  # 번호 쌍 중심성 분석 활성화
+  enable_roi_pattern_groups: true  # ROI 패턴 그룹 분석 활성화
+  enable_position_frequency: true  # 위치별 번호 빈도 분석 활성화
+  enable_position_number_stats: true  # 위치별 번호 통계 분석 활성화
+  enable_segment_trend_history: true  # 세그먼트 추세 히스토리 분석 활성화
+  enable_pair_roi_score: true  # 쌍 ROI 점수 분포 분석 활성화
+  enable_frequent_triples: true  # 빈번한 3개 번호 조합 분석 활성화
+  enable_pair_graph_weights: true  # 쌍 그래프 가중치 분석 활성화
+  enable_gap_deviation_score: true  # 간격 표준편차 점수 분석 활성화
+  enable_combination_diversity_score: true  # 조합 다양성 점수 분석 활성화
+  enable_roi_trend_by_pattern: true  # 패턴별 ROI 추세 분석 활성화
+  save_to:
+    json: false  # JSON 형식으로 저장 안함
+    txt: false   # 텍스트 형식으로 저장 안함
+    npy: true   # NumPy 배열 형식으로만 저장
+  paths:
+    result_dir: "data/result/analysis"  # 분석 결과 저장 경로
+    cache_dir: "data/cache"  # 캐시 저장 경로
+    
+# Soft Blending 가중치
+weights:
+  long_term: 0.6  # 장기 출현율 가중치 (60%)
+  mid_term: 0.23  # 중기 출현율 가중치 (23%)
+  short_term: 0.17  # 단기 출현율 가중치 (17%)
+
+# 기간 설정
+periods:
+  mid_term: 0.025  # 중기 = 최근 2.5%
+  short_term: 0.012  # 단기 = 최근 1.2%
+
+# 패턴 제약 설정
+pattern:
+  min_even_numbers: 2  # 최소 짝수 개수
+  max_even_numbers: 4  # 최대 짝수 개수
+  min_low_numbers: 2  # 최소 저범위(1-23) 번호 개수
+  max_low_numbers: 4  # 최대 저범위(1-23) 번호 개수
+  percentile_threshold: 0.95  # 패턴 허용 백분위수 임계값
+
+# 번호 구간 분할
+number_ranges:
+  - [1, 10]
+  - [11, 20]
+  - [21, 30]
+  - [31, 40]
+  - [41, 45]
+
+# 경로 설정
+paths:
+  data_dir: "data"
+  raw_data_dir: "data/raw"
+  processed_data_dir: "data/processed"
+  model_save_dir: "savedModels"
+  cache_dir: "data/cache"
+  result_dir: "data/result"
+  analysis_result_dir: "data/result/analysis"
+  performance_report_dir: "data/result/performance_reports"
+  log_dir: "logs"
+
+# 모델 설정
+models:
+  rl:
+    learning_rate: 0.001
+    batch_size: 32
+    epochs: 100
+    hidden_size: 128
+  gnn:
+    learning_rate: 0.0005
+    batch_size: 64
+    epochs: 200
+    hidden_size: 256
+  lstm:
+    learning_rate: 0.001
+    batch_size: 32
+    epochs: 150
+    hidden_size: 128
+  statistical:
+    frequency_weight: 0.5
+    recency_weight: 0.3
+    pair_weight: 0.2
+  # LightGBM 모델 매개변수 추가
+  lgbm_params:
+    objective: "binary"
+    metric: "auc"
+    boosting_type: "gbdt"
+    num_leaves: 64
+    learning_rate: 0.03
+    feature_fraction: 0.9
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    verbose: -1
+    n_estimators: 300
+  # LightGBM 모델 설정
+  feature_importance_threshold: 0.01
+  prediction_threshold: 0.5
+  use_probability: true
+  save_feature_importance: true
+  validation_size: 0.2
+  # XGBoost 모델 매개변수 추가
+  xgb_params:
+    objective: "binary:logistic"
+    eval_metric: "auc"
+    learning_rate: 0.05
+    max_depth: 6
+    min_child_weight: 1
+    gamma: 0
+    subsample: 0.8
+    colsample_bytree: 0.8
+    n_estimators: 100
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    use_label_encoder: False
+    verbose: 0
+
+# ===================
+# 보고서 설정
+# ===================
+reporting:
+  enable_performance_report: true
+  report_path: "data/result/performance_reports/data_analysis_performance_report.json"
+  report_dir: "logs/reports"
+  save_formats:
+    json: true
+    csv: true
+    txt: false
+  performance_metrics:
+    accuracy: true
+    precision: true
+    recall: true
+    f1: true
+    roi: true
+
+# 실행 모드 설정
+execution:
+  # 모드 1: 추천 생성, 모드 2: 백테스트 실행, 모드 3: 모델 학습
+  default_mode: 1
+  parallel_execution: true
+  max_threads: 8
+  use_gpu: true
+  verbose: true
+  debug_mode: false
+  vector_cache_size: 1000  # 벡터 캐시 최대 크기
+  probability_threshold: 0.6  # 확률 임계값
+
+# ===================
+# 캐시 시스템 설정
+# ===================
+caching:
+  enable_feature_cache: true
+  max_cache_size: 10000
+  cache_log_level: "INFO"
+  cache_metrics:
+    save: true
+    report_interval: 1000
+    file_path: "logs/cache_stats.json"
+  vector_cache:
+    enabled: true
+    clean_on_startup: false
+
+# ===================
+# 클러스터링 설정 추가
+# ===================
+clustering:
+  n_clusters: 5
+  min_silhouette_score: 0.3
+  use_dbscan: false
+  eps: 0.5
+  min_samples: 5
+  enable_auto_tuning: true  # 자동 파라미터 튜닝 활성화
+  save_embeddings: true     # 임베딩 저장 여부
+  max_clusters: 8          # 최대 클러스터 수
+  min_clusters: 3          # 최소 클러스터 수
+  save_feature_vector: true # 클러스터 특성 벡터 저장 여부
+
+# ===================
+# 학습 설정 추가
+# ===================
+training:
+  batch_size: 512
+  use_amp: true
+  learning_rate: 0.001
+  epochs: 100
+  early_stopping: true
+  patience: 10
+  validation_split: 0.2
+  optimizer: "adam"
+  scheduler: "cosine"
+  use_filtered_vector: true  # 저분산 특성이 제거된 필터링된 벡터 사용 여부

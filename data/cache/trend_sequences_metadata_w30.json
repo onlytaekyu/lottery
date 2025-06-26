@@ -1,0 +1,21 @@
+{
+  "window_size": 30,
+  "sequence_shape": [
+    31,
+    30,
+    9
+  ],
+  "feature_names": [
+    "position_trend_slope_1",
+    "position_trend_slope_2",
+    "position_trend_slope_3",
+    "position_trend_slope_4",
+    "position_trend_slope_5",
+    "position_trend_slope_6",
+    "delta_mean",
+    "delta_std",
+    "segment_repeat_score"
+  ],
+  "generated_at": "20250526",
+  "normalized": true
+}

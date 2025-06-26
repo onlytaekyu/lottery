@@ -1,0 +1,9 @@
+{
+  "test_type": "1d_vector",
+  "description": "1D 벡터 테스트",
+  "timestamp": "2025-05-27T10:13:41.969618",
+  "vector_shape": [
+    20
+  ],
+  "feature_count": 20
+}

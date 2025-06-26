@@ -1,0 +1,38 @@
+{
+  "index_to_name": {
+    "0": "feature_5",
+    "1": "feature_6",
+    "2": "feature_7",
+    "3": "feature_8",
+    "4": "feature_9",
+    "5": "feature_10",
+    "6": "feature_11",
+    "7": "feature_12",
+    "8": "feature_13",
+    "9": "feature_14",
+    "10": "feature_15",
+    "11": "feature_16",
+    "12": "feature_17",
+    "13": "feature_18",
+    "14": "feature_19"
+  },
+  "name_to_index": {
+    "feature_5": "0",
+    "feature_6": "1",
+    "feature_7": "2",
+    "feature_8": "3",
+    "feature_9": "4",
+    "feature_10": "5",
+    "feature_11": "6",
+    "feature_12": "7",
+    "feature_13": "8",
+    "feature_14": "9",
+    "feature_15": "10",
+    "feature_16": "11",
+    "feature_17": "12",
+    "feature_18": "13",
+    "feature_19": "14"
+  },
+  "timestamp": "2025-05-27T10:13:41.974618",
+  "feature_count": 15
+}

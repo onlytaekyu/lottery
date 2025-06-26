@@ -1,0 +1,11 @@
+{
+  "source": "test_outlier_detection",
+  "version": "v1.0",
+  "description": "이상치가 포함된 테스트용 벡터 데이터",
+  "timestamp": "2025-05-27T12:24:21.348667",
+  "vector_shape": [
+    100,
+    30
+  ],
+  "feature_count": 30
+}

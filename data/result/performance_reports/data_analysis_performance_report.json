@@ -1,0 +1,172 @@
+{
+  "module": "data_analysis",
+  "timestamp": "2025-05-25T21:58:02.360710",
+  "execution_time_sec": 1.397594690322876,
+  "system": {
+    "platform": "Windows-11-10.0.22631-SP0",
+    "processor": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "python_version": "3.12.3",
+    "cpu": {
+      "usage_percent": 0.0,
+      "cpu_count": 16,
+      "physical_cpu_count": 8
+    },
+    "memory": {
+      "rss_mb": 643.0625,
+      "vms_mb": 1786.453125,
+      "percent": 1.9863612620942537,
+      "system_total_gb": 31.615131378173828,
+      "system_available_gb": 20.915935516357422
+    },
+    "process": {
+      "threads": 51,
+      "pid": 13040,
+      "created_time": "2025-05-25 21:57:58"
+    },
+    "disk": {
+      "free_gb": 812.9976539611816,
+      "total_gb": 922.1972618103027,
+      "percent": 11.8
+    },
+    "gpu": {
+      "name": "NVIDIA GeForce RTX 4090",
+      "count": 1,
+      "current_device": 0,
+      "memory": {
+        "allocated_mb": 0.0,
+        "reserved_mb": 0.0,
+        "max_allocated_mb": 0.0
+      }
+    }
+  },
+  "config": {
+    "hardware": "gpu",
+    "gpu_device": "cuda:0",
+    "torch_amp_enabled": true,
+    "parallel_execution": true,
+    "threading_backend": "OpenMP",
+    "max_threads": 8,
+    "batch_size": 32,
+    "cuda_driver_version": null,
+    "cudnn_version": 90100
+  },
+  "profiler": {
+    "sections": {
+      "total": {
+        "mean": 1.397594690322876,
+        "min": 1.397594690322876,
+        "max": 1.397594690322876,
+        "total": 1.397594690322876,
+        "count": 1
+      },
+      "pattern_analysis": {
+        "mean": 0.131697416305542,
+        "min": 0.131697416305542,
+        "max": 0.131697416305542,
+        "total": 0.131697416305542,
+        "count": 1
+      },
+      "position_analysis": {
+        "mean": 0.004996061325073242,
+        "min": 0.004996061325073242,
+        "max": 0.004996061325073242,
+        "total": 0.004996061325073242,
+        "count": 1
+      },
+      "pair_analysis": {
+        "mean": 0.0009996891021728516,
+        "min": 0.0009996891021728516,
+        "max": 0.0009996891021728516,
+        "total": 0.0009996891021728516,
+        "count": 1
+      },
+      "duplicate_analysis": {
+        "mean": 0.002146482467651367,
+        "min": 0.002146482467651367,
+        "max": 0.002146482467651367,
+        "total": 0.002146482467651367,
+        "count": 1
+      },
+      "cluster_analysis": {
+        "mean": 0.16073107719421387,
+        "min": 0.16073107719421387,
+        "max": 0.16073107719421387,
+        "total": 0.16073107719421387,
+        "count": 1
+      },
+      "vectorization": {
+        "mean": 0.009745121002197266,
+        "min": 0.009745121002197266,
+        "max": 0.009745121002197266,
+        "total": 0.009745121002197266,
+        "count": 1
+      },
+      "save_vectors": {
+        "mean": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "total": 0.0,
+        "count": 1
+      },
+      "segment_history": {
+        "mean": 0.016290903091430664,
+        "min": 0.016290903091430664,
+        "max": 0.016290903091430664,
+        "total": 0.016290903091430664,
+        "count": 1
+      },
+      "duplicate_check": {
+        "mean": 0.0019991397857666016,
+        "min": 0.0019991397857666016,
+        "max": 0.0019991397857666016,
+        "total": 0.0019991397857666016,
+        "count": 1
+      },
+      "vector_validation": {
+        "mean": 0.005928516387939453,
+        "min": 0.005928516387939453,
+        "max": 0.005928516387939453,
+        "total": 0.005928516387939453,
+        "count": 1
+      }
+    },
+    "total_time": 1.397594690322876
+  },
+  "performance": {
+    "error": "성능 추적기에 get_stats 메서드가 없습니다."
+  },
+  "memory": {
+    "system": {
+      "total_gb": 31.615131378173828,
+      "available_gb": 20.915935516357422,
+      "used_gb": 10.699195861816406,
+      "percent": 33.8
+    },
+    "process": {
+      "rss_mb": 643.06640625,
+      "vms_mb": 1786.453125,
+      "percent": 1.9863733281433236
+    },
+    "total_used_mb": 643.06640625,
+    "peak_used_mb": 643.06640625,
+    "gpu": {
+      "allocated_mb": 0.0,
+      "reserved_mb": 0.0,
+      "max_allocated_mb": 0.0,
+      "max_reserved_mb": 0.0
+    }
+  },
+  "cache": {
+    "hit_rate": 0.0,
+    "hit_count": 0,
+    "miss_count": 0,
+    "memory_hit_count": 0,
+    "memory_miss_count": 0,
+    "disk_hit_count": 0,
+    "disk_miss_count": 0
+  },
+  "memory_usage": {
+    "total_mb": 643.06640625,
+    "peak_mb": 643.06640625
+  }
+}

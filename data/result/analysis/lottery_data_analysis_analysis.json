@@ -1,0 +1,30 @@
+{
+  "timestamp": "2025-05-25 21:58:02",
+  "module": "data_analysis",
+  "analysis_date": "2025-05-25",
+  "vector": {
+    "shape": [
+      0
+    ],
+    "feature_count": 0
+  },
+  "outliers": {
+    "count": 0,
+    "ratio": 0.0
+  },
+  "additional_metrics": {
+    "record_count": 1172,
+    "duplicate_rate": 0.0,
+    "cluster_count": 2,
+    "silhouette_score": 0.6137984991073608,
+    "low_variance_features_removed": 190,
+    "essential_features_count": 30,
+    "analysis_time": 3.79520583152771
+  },
+  "feature_modules": {
+    "pattern_analyzer.py": 26,
+    "pair_analyzer.py": 4,
+    "cluster_analyzer.py": 1,
+    "cluster_analyzer": 8
+  }
+}

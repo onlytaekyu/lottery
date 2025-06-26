@@ -1,0 +1,11 @@
+{
+  "source": "test_vector_loader",
+  "version": "v1.0",
+  "description": "테스트용 벡터 데이터",
+  "timestamp": "2025-05-27T12:11:10.935512",
+  "vector_shape": [
+    10,
+    30
+  ],
+  "feature_count": 30
+}

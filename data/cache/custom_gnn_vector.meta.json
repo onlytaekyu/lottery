@@ -1,0 +1,9 @@
+{
+  "vector_type": "custom_gnn",
+  "is_test": true,
+  "timestamp": "2025-05-27T10:07:48.092970",
+  "vector_shape": [
+    64
+  ],
+  "feature_count": 64
+}
