@@ -9,7 +9,8 @@ import sys
 import traceback
 import os
 from pathlib import Path
-from typing import Optional, Dict, Any, Union, Type
+from typing import Optional, Dict, Any, Union, Type, Callable
+from functools import wraps
 
 # 로거 캐시
 _loggers = {}
@@ -265,3 +266,102 @@ def init_logging_system():
 
     # 초기화 완료 플래그 설정
     _logging_initialized = True
+
+
+class StrictErrorHandler:
+    """엄격한 에러 처리 시스템"""
+
+    def __init__(self, logger: Optional[logging.Logger] = None):
+        self.logger = logger or get_logger(__name__)
+        self.error_count = 0
+        self.max_errors = 3  # 최대 허용 에러 수
+
+    def handle_critical_error(
+        self, error: Exception, context: str, exit_immediately: bool = True
+    ):
+        """치명적 에러 처리 - 즉시 시스템 종료"""
+        self.error_count += 1
+
+        error_msg = (
+            f"🚨 치명적 에러 발생 [{self.error_count}/{self.max_errors}]: {context}"
+        )
+        self.logger.critical(error_msg)
+        self.logger.critical(f"에러 유형: {type(error).__name__}")
+        self.logger.critical(f"에러 메시지: {str(error)}")
+        self.logger.critical(f"스택 트레이스:\n{traceback.format_exc()}")
+
+        if exit_immediately or self.error_count >= self.max_errors:
+            self.logger.critical("🛑 시스템을 즉시 종료합니다.")
+            sys.exit(1)
+
+    def handle_validation_error(self, error: Exception, context: str, data: Any = None):
+        """데이터 검증 에러 처리"""
+        self.logger.error(f"❌ 데이터 검증 실패: {context}")
+        self.logger.error(f"에러: {str(error)}")
+        if data is not None:
+            self.logger.error(f"문제 데이터: {data}")
+
+        # 검증 에러는 즉시 시스템 종료
+        self.handle_critical_error(error, f"데이터 검증 실패: {context}")
+
+
+def strict_error_handler(context: str, exit_on_error: bool = True):
+    """엄격한 에러 처리 데코레이터"""
+
+    def decorator(func: Callable):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            handler = StrictErrorHandler()
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                handler.handle_critical_error(
+                    e, f"{context} - {func.__name__}", exit_on_error
+                )
+                return None
+
+        return wrapper
+
+    return decorator
+
+
+def validate_and_fail_fast(condition: bool, error_message: str, data: Any = None):
+    """조건 검증 후 실패 시 즉시 종료"""
+    if not condition:
+        handler = StrictErrorHandler()
+        error = ValueError(error_message)
+        handler.handle_validation_error(error, error_message, data)
+
+
+# 안전 모드 시스템
+class SafeModeManager:
+    """안전 모드 관리자"""
+
+    def __init__(self):
+        self.safe_mode = False
+        self.logger = get_logger(__name__)
+
+    def enable_safe_mode(self, reason: str):
+        """안전 모드 활성화"""
+        self.safe_mode = True
+        self.logger.warning(f"🛡️ 안전 모드 활성화: {reason}")
+
+    def is_safe_mode(self) -> bool:
+        """안전 모드 상태 확인"""
+        return self.safe_mode
+
+    def safe_execute(self, func: Callable, *args, **kwargs):
+        """안전 모드에서 함수 실행"""
+        if self.safe_mode:
+            self.logger.info("🛡️ 안전 모드에서 실행 중...")
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                self.logger.error(f"안전 모드 실행 실패: {str(e)}")
+                return None
+        else:
+            return func(*args, **kwargs)
+
+
+# 전역 안전 모드 관리자
+safe_mode_manager = SafeModeManager()
