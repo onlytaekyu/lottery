@@ -90,6 +90,16 @@ class OverlapAnalyzer(BaseAnalyzer):
             historical_data
         )
 
+        # 3자리 및 4자리 중복 패턴 분석 (신규 추가)
+        results["overlap_3_4_digit_patterns"] = (
+            self._analyze_3_4_digit_overlap_patterns(historical_data)
+        )
+
+        # 중복 패턴 ROI 상관관계 분석 (신규 추가)
+        results["overlap_roi_correlation"] = self._analyze_overlap_roi_correlation(
+            historical_data
+        )
+
         # 결과 캐싱
         self._save_to_cache(cache_key, results)
 
@@ -798,30 +808,300 @@ class OverlapAnalyzer(BaseAnalyzer):
 
     def _get_hot_numbers(self, historical_data: List[LotteryNumber]) -> List[int]:
         """
-        인기 번호 목록을 생성합니다.
+        인기 번호(출현 빈도가 높은 번호)를 추출합니다.
 
         Args:
             historical_data: 분석할 과거 당첨 번호 목록
 
         Returns:
-            List[int]: 인기 번호 목록 (상위 15개)
+            List[int]: 인기 번호 목록 (상위 20개)
         """
-        # 충분한 데이터가 있는지 확인
-        if len(historical_data) < 10:
-            self.logger.warning("인기 번호 목록을 생성하기에 데이터가 부족합니다.")
-            return []
-
         # 번호별 출현 빈도 계산
-        number_counter = Counter()
+        number_counts = Counter()
+        for draw in historical_data:
+            for number in draw.numbers:
+                number_counts[number] += 1
 
-        # 최근 100회 또는 전체 회차 중 더 적은 수를 사용
-        recent_draws = historical_data[-min(100, len(historical_data)) :]
-
-        for draw in recent_draws:
-            number_counter.update(draw.numbers)
-
-        # 상위 15개 인기 번호 선택
-        most_common = number_counter.most_common(15)
-        hot_numbers = [num for num, _ in most_common]
-
+        # 출현 빈도가 높은 상위 20개 번호 반환
+        hot_numbers = [num for num, count in number_counts.most_common(20)]
         return hot_numbers
+
+    def _analyze_3_4_digit_overlap_patterns(
+        self, historical_data: List[LotteryNumber]
+    ) -> Dict[str, Any]:
+        """
+        과거 전체 회차 간 3자리 및 4자리 중복 패턴 통계 분석
+
+        Args:
+            historical_data: 분석할 과거 당첨 번호 목록
+
+        Returns:
+            Dict[str, Any]: 3자리 및 4자리 중복 패턴 분석 결과
+        """
+        result = {}
+
+        # 3자리 패턴 분석
+        overlap_3_patterns = {}
+        overlap_3_frequency = Counter()
+        overlap_3_time_gaps = []
+
+        # 4자리 패턴 분석
+        overlap_4_patterns = {}
+        overlap_4_frequency = Counter()
+        overlap_4_time_gaps = []
+
+        # 모든 회차 조합 간 비교
+        for i in range(len(historical_data)):
+            current_numbers = set(historical_data[i].numbers)
+            current_draw_no = historical_data[i].draw_no
+
+            for j in range(i + 1, len(historical_data)):
+                other_numbers = set(historical_data[j].numbers)
+                other_draw_no = historical_data[j].draw_no
+
+                # 중복 번호 찾기
+                overlap = current_numbers & other_numbers
+                overlap_count = len(overlap)
+
+                # 시간 간격 계산
+                time_gap = abs(current_draw_no - other_draw_no)
+
+                # 3자리 중복 패턴
+                if overlap_count == 3:
+                    pattern_key = tuple(sorted(overlap))
+                    overlap_3_frequency[pattern_key] += 1
+                    overlap_3_time_gaps.append(time_gap)
+
+                    if pattern_key not in overlap_3_patterns:
+                        overlap_3_patterns[pattern_key] = []
+                    overlap_3_patterns[pattern_key].append(
+                        {
+                            "draw1": current_draw_no,
+                            "draw2": other_draw_no,
+                            "time_gap": time_gap,
+                        }
+                    )
+
+                # 4자리 중복 패턴
+                if overlap_count == 4:
+                    pattern_key = tuple(sorted(overlap))
+                    overlap_4_frequency[pattern_key] += 1
+                    overlap_4_time_gaps.append(time_gap)
+
+                    if pattern_key not in overlap_4_patterns:
+                        overlap_4_patterns[pattern_key] = []
+                    overlap_4_patterns[pattern_key].append(
+                        {
+                            "draw1": current_draw_no,
+                            "draw2": other_draw_no,
+                            "time_gap": time_gap,
+                        }
+                    )
+
+        # 3자리 패턴 통계
+        result["overlap_3_patterns"] = {
+            "total_patterns": len(overlap_3_patterns),
+            "total_occurrences": sum(overlap_3_frequency.values()),
+            "most_frequent": dict(overlap_3_frequency.most_common(10)),
+            "avg_frequency": (
+                float(np.mean(list(overlap_3_frequency.values())))
+                if overlap_3_frequency
+                else 0.0
+            ),
+            "frequency_std": (
+                float(np.std(list(overlap_3_frequency.values())))
+                if overlap_3_frequency
+                else 0.0
+            ),
+        }
+
+        # 4자리 패턴 통계 (희귀도 분석)
+        result["overlap_4_patterns"] = {
+            "total_patterns": len(overlap_4_patterns),
+            "total_occurrences": sum(overlap_4_frequency.values()),
+            "rarity_score": 1.0 / (len(overlap_4_patterns) + 1),  # 희귀도 점수
+            "most_frequent": dict(overlap_4_frequency.most_common(5)),
+            "avg_frequency": (
+                float(np.mean(list(overlap_4_frequency.values())))
+                if overlap_4_frequency
+                else 0.0
+            ),
+        }
+
+        # 시간 간격 분석
+        result["overlap_time_gap_analysis"] = {
+            "gap_3_avg": (
+                float(np.mean(overlap_3_time_gaps)) if overlap_3_time_gaps else 0.0
+            ),
+            "gap_3_std": (
+                float(np.std(overlap_3_time_gaps)) if overlap_3_time_gaps else 0.0
+            ),
+            "gap_4_avg": (
+                float(np.mean(overlap_4_time_gaps)) if overlap_4_time_gaps else 0.0
+            ),
+            "gap_4_std": (
+                float(np.std(overlap_4_time_gaps)) if overlap_4_time_gaps else 0.0
+            ),
+            "gap_consistency_3": (
+                1.0 / (1.0 + float(np.std(overlap_3_time_gaps)))
+                if overlap_3_time_gaps
+                else 0.0
+            ),
+            "gap_consistency_4": (
+                1.0 / (1.0 + float(np.std(overlap_4_time_gaps)))
+                if overlap_4_time_gaps
+                else 0.0
+            ),
+        }
+
+        # 패턴 일관성 분석
+        pattern_consistency_3 = 0.0
+        if overlap_3_patterns:
+            consistent_patterns = sum(
+                1
+                for pattern_data in overlap_3_patterns.values()
+                if len(pattern_data) > 1
+            )
+            pattern_consistency_3 = consistent_patterns / len(overlap_3_patterns)
+
+        pattern_consistency_4 = 0.0
+        if overlap_4_patterns:
+            consistent_patterns = sum(
+                1
+                for pattern_data in overlap_4_patterns.values()
+                if len(pattern_data) > 1
+            )
+            pattern_consistency_4 = consistent_patterns / len(overlap_4_patterns)
+
+        result["pattern_consistency"] = {
+            "consistency_3": float(pattern_consistency_3),
+            "consistency_4": float(pattern_consistency_4),
+        }
+
+        return result
+
+    def _analyze_overlap_roi_correlation(
+        self, historical_data: List[LotteryNumber]
+    ) -> Dict[str, Any]:
+        """
+        3~4자리 중복 패턴별 실제 ROI 성능 상관관계 분석
+
+        Args:
+            historical_data: 분석할 과거 당첨 번호 목록
+
+        Returns:
+            Dict[str, Any]: 중복 패턴 ROI 상관관계 분석 결과
+        """
+        result = {}
+
+        # 패턴별 ROI 점수 계산을 위한 기본 설정
+        ticket_price = 1000  # 기본 로또 티켓 가격
+        prize_structure = {
+            6: 2000000000,  # 1등 평균 상금 (20억)
+            5: 1500000,  # 2등 평균 상금 (150만)
+            4: 50000,  # 3등 평균 상금 (5만)
+            3: 5000,  # 4등 평균 상금 (5천)
+        }
+
+        # 3자리 중복 패턴 ROI 분석
+        overlap_3_roi_scores = []
+        overlap_4_roi_scores = []
+
+        # 모든 회차에 대해 중복 패턴과 실제 성과 분석
+        for i in range(len(historical_data)):
+            current_numbers = set(historical_data[i].numbers)
+
+            # 이전 회차들과의 3자리, 4자리 중복 확인
+            has_3_overlap = False
+            has_4_overlap = False
+
+            for j in range(max(0, i - 50), i):  # 최근 50회차 내에서 중복 확인
+                other_numbers = set(historical_data[j].numbers)
+                overlap_count = len(current_numbers & other_numbers)
+
+                if overlap_count == 3:
+                    has_3_overlap = True
+                elif overlap_count == 4:
+                    has_4_overlap = True
+
+            # ROI 점수 계산 (단순화된 백테스트 방식)
+            # 실제로는 다음 회차 당첨 여부를 확인해야 하지만,
+            # 여기서는 패턴의 통계적 성과를 추정
+            if i < len(historical_data) - 1:
+                next_draw = historical_data[i + 1]
+                match_count = len(current_numbers & set(next_draw.numbers))
+
+                # 예상 수익 계산
+                expected_return = 0
+                if match_count in prize_structure:
+                    expected_return = prize_structure[match_count]
+
+                roi = (expected_return - ticket_price) / ticket_price
+
+                if has_3_overlap:
+                    overlap_3_roi_scores.append(roi)
+                if has_4_overlap:
+                    overlap_4_roi_scores.append(roi)
+
+        # 상관관계 계산
+        overlap_3_roi_correlation = 0.0
+        if overlap_3_roi_scores:
+            # 3자리 중복 패턴의 평균 ROI
+            avg_3_roi = np.mean(overlap_3_roi_scores)
+            # 전체 평균 ROI와의 차이를 상관관계로 근사
+            overall_avg_roi = -0.5  # 로또의 일반적인 기대 ROI
+            overlap_3_roi_correlation = min(
+                1.0, max(-1.0, (avg_3_roi - overall_avg_roi) * 2)
+            )
+
+        overlap_4_roi_correlation = 0.0
+        if overlap_4_roi_scores:
+            # 4자리 중복 패턴의 평균 ROI
+            avg_4_roi = np.mean(overlap_4_roi_scores)
+            # 전체 평균 ROI와의 차이를 상관관계로 근사
+            overall_avg_roi = -0.5  # 로또의 일반적인 기대 ROI
+            overlap_4_roi_correlation = min(
+                1.0, max(-1.0, (avg_4_roi - overall_avg_roi) * 2)
+            )
+
+        result["overlap_3_roi_correlation"] = float(overlap_3_roi_correlation)
+        result["overlap_4_roi_correlation"] = float(overlap_4_roi_correlation)
+
+        # 추가 통계 정보
+        result["overlap_3_roi_stats"] = {
+            "sample_count": len(overlap_3_roi_scores),
+            "avg_roi": (
+                float(np.mean(overlap_3_roi_scores)) if overlap_3_roi_scores else 0.0
+            ),
+            "std_roi": (
+                float(np.std(overlap_3_roi_scores)) if overlap_3_roi_scores else 0.0
+            ),
+            "positive_roi_ratio": (
+                float(
+                    sum(1 for roi in overlap_3_roi_scores if roi > 0)
+                    / len(overlap_3_roi_scores)
+                )
+                if overlap_3_roi_scores
+                else 0.0
+            ),
+        }
+
+        result["overlap_4_roi_stats"] = {
+            "sample_count": len(overlap_4_roi_scores),
+            "avg_roi": (
+                float(np.mean(overlap_4_roi_scores)) if overlap_4_roi_scores else 0.0
+            ),
+            "std_roi": (
+                float(np.std(overlap_4_roi_scores)) if overlap_4_roi_scores else 0.0
+            ),
+            "positive_roi_ratio": (
+                float(
+                    sum(1 for roi in overlap_4_roi_scores if roi > 0)
+                    / len(overlap_4_roi_scores)
+                )
+                if overlap_4_roi_scores
+                else 0.0
+            ),
+        }
+
+        return result

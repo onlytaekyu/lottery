@@ -695,7 +695,41 @@ class PatternVectorizer:
             except Exception as e_roi:
                 self.logger.warning(f"ROI 특성 벡터 생성 중 오류 발생: {str(e_roi)}")
 
-            # 12. 물리적 구조 특성 - 추첨기 시뮬레이션을 위한 실제 물리적 특성 추가
+            # 12. 중복 패턴 특성 추가 - 3자리 및 4자리 중복 패턴 분석 결과 벡터화
+            try:
+                overlap_vec, overlap_names = self.extract_overlap_pattern_features(
+                    full_analysis
+                )
+                vector_features["overlap_patterns"] = overlap_vec
+                feature_names_by_group["overlap_patterns"] = overlap_names
+                self.logger.info(
+                    f"[중복패턴] 중복 패턴 벡터 차원: {overlap_vec.shape[0]}, 특성: {len(overlap_names)}개"
+                )
+
+                # 별도 파일로도 저장
+                try:
+                    from ..utils.vector_exporter import save_feature_vector_and_metadata
+
+                    # 중복 패턴 특성 벡터 별도 저장
+                    save_feature_vector_and_metadata(
+                        vector=overlap_vec,
+                        feature_names=overlap_names,
+                        base_path=str(Path(self.cache_dir) / "overlap_pattern_vector"),
+                        metadata={"vector_type": "overlap_patterns"},
+                    )
+                    self.logger.info(
+                        f"중복 패턴 특성 벡터 별도 저장 완료: {len(overlap_names)}개 특성"
+                    )
+                except Exception as e_save:
+                    self.logger.warning(
+                        f"중복 패턴 특성 벡터 저장 중 오류 발생: {str(e_save)}"
+                    )
+            except Exception as e_overlap:
+                self.logger.warning(
+                    f"중복 패턴 특성 벡터 생성 중 오류 발생: {str(e_overlap)}"
+                )
+
+            # 13. 물리적 구조 특성 - 추첨기 시뮬레이션을 위한 실제 물리적 특성 추가
             # 이 벡터는 다음을 포함합니다:
             # - distance_variance: 거리 분산 지표 (평균, 표준편차)
             # - sequential_pair_rate: 연속 쌍 비율
@@ -911,6 +945,21 @@ class PatternVectorizer:
                     )
 
                     self.logger.info("ROI 특성 벡터 저장 완료")
+
+                # 5. 중복 패턴 특성 벡터 저장
+                if "overlap_patterns" in vector_features:
+                    overlap_vector = vector_features["overlap_patterns"]
+                    overlap_feature_names = feature_names_by_group["overlap_patterns"]
+
+                    save_vector_bundle(
+                        vector=overlap_vector,
+                        feature_names=overlap_feature_names,
+                        base_path=str(Path(self.cache_dir) / "overlap_pattern_vector"),
+                        metadata={"vector_type": "overlap_patterns"},
+                        apply_low_variance_filter=False,  # 중복 패턴 특성 벡터는 필터링하지 않음
+                    )
+
+                    self.logger.info("중복 패턴 특성 벡터 저장 완료")
 
             except Exception as e:
                 self.logger.warning(f"벡터 내보내기 중 오류 발생: {e}")
@@ -4087,57 +4136,247 @@ class PatternVectorizer:
         names_path: str = "data/cache/pair_graph_compressed_vector.names.json",
     ) -> Tuple[np.ndarray, List[str]]:
         """
-        GNN/강화학습 입력으로 사용될 pair_graph_compressed_vector를 반환합니다.
+        GNN 벡터와 특성 이름을 로드합니다.
 
         Args:
-            vector_path: .npy 경로
-            names_path: .names.json 경로
+            vector_path: GNN 벡터 파일 경로
+            names_path: GNN 특성 이름 파일 경로
 
         Returns:
-            Tuple[np.ndarray, List[str]]: 벡터 값과 이름 목록
+            Tuple[np.ndarray, List[str]]: GNN 벡터와 특성 이름
         """
-        import numpy as np
-        import json
-        from os.path import exists
-        from pathlib import Path
-
-        self.logger.info(f"GNN 벡터 로드 요청: {vector_path}")
-
-        # 상대 경로인 경우 캐시 디렉토리를 기준으로 변환
-        if not Path(vector_path).is_absolute():
-            vector_path = str(Path(self.cache_dir) / Path(vector_path).name)
-            names_path = str(Path(self.cache_dir) / Path(names_path).name)
-            self.logger.info(f"절대 경로로 변환됨: {vector_path}")
-
-        if not exists(vector_path) or not exists(names_path):
-            error_msg = f"GNN 벡터 또는 이름 파일이 존재하지 않습니다: {vector_path}"
-            self.logger.error(error_msg)
-            raise FileNotFoundError(error_msg)
-
         try:
-            vector = np.load(vector_path)
-            with open(names_path, "r", encoding="utf-8") as f:
-                names = json.load(f)
+            # 벡터 로드
+            if os.path.exists(vector_path):
+                gnn_vector = np.load(vector_path)
+            else:
+                self.logger.warning(f"GNN 벡터 파일이 존재하지 않습니다: {vector_path}")
+                return np.array([]), []
 
-            # 다차원 벡터인 경우 첫 번째 샘플 추출
-            if len(vector.shape) > 1:
-                self.logger.info(
-                    f"다차원 벡터에서 첫 번째 샘플 추출: {vector.shape} → {vector[0].shape}"
-                )
-                vector = vector[0]
-
-            # 차원 및 유효성 검사
-            if len(vector) != len(names):
+            # 특성 이름 로드
+            if os.path.exists(names_path):
+                with open(names_path, "r", encoding="utf-8") as f:
+                    feature_names = json.load(f)
+            else:
                 self.logger.warning(
-                    f"벡터 차원({len(vector)})과 특성 이름 수({len(names)})가 일치하지 않습니다"
+                    f"GNN 특성 이름 파일이 존재하지 않습니다: {names_path}"
                 )
+                feature_names = [f"gnn_feature_{i}" for i in range(len(gnn_vector))]
 
-            self.logger.info(
-                f"GNN 벡터 로드 완료: 차원={len(vector)}, 특성 수={len(names)}"
-            )
-            return vector.astype(np.float32), names
+            return gnn_vector, feature_names
 
         except Exception as e:
-            error_msg = f"GNN 벡터 로드 중 오류 발생: {str(e)}"
-            self.logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            self.logger.error(f"GNN 벡터 로드 중 오류 발생: {e}")
+            return np.array([]), []
+
+    def extract_overlap_pattern_features(
+        self, full_analysis: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """
+        중복 패턴 분석 결과를 벡터화
+
+        Args:
+            full_analysis: 전체 분석 결과 딕셔너리
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 중복 패턴 벡터와 특성 이름
+        """
+        overlap_features = []
+        feature_names = []
+
+        try:
+            # overlap 분석 결과 추출
+            overlap_data = full_analysis.get("overlap", {})
+
+            # 1. 3자리 중복 패턴 특성
+            overlap_3_4_data = overlap_data.get("overlap_3_4_digit_patterns", {})
+
+            # 3자리 패턴 빈도 점수
+            overlap_3_patterns = overlap_3_4_data.get("overlap_3_patterns", {})
+            overlap_3_frequency_score = self.safe_float_conversion(
+                overlap_3_patterns.get("avg_frequency", 0.0)
+            )
+            overlap_features.append(overlap_3_frequency_score)
+            feature_names.append("overlap_3_frequency_score")
+
+            # 3자리 패턴 총 개수 (정규화)
+            total_3_patterns = self.safe_float_conversion(
+                overlap_3_patterns.get("total_patterns", 0)
+            )
+            overlap_3_pattern_count_norm = min(
+                1.0, total_3_patterns / 100.0
+            )  # 최대 100개로 정규화
+            overlap_features.append(overlap_3_pattern_count_norm)
+            feature_names.append("overlap_3_pattern_count_norm")
+
+            # 2. 4자리 중복 패턴 특성 (희귀도)
+            overlap_4_patterns = overlap_3_4_data.get("overlap_4_patterns", {})
+            overlap_4_rarity_score = self.safe_float_conversion(
+                overlap_4_patterns.get("rarity_score", 0.0)
+            )
+            overlap_features.append(overlap_4_rarity_score)
+            feature_names.append("overlap_4_rarity_score")
+
+            # 4자리 패턴 총 개수 (정규화)
+            total_4_patterns = self.safe_float_conversion(
+                overlap_4_patterns.get("total_patterns", 0)
+            )
+            overlap_4_pattern_count_norm = min(
+                1.0, total_4_patterns / 50.0
+            )  # 최대 50개로 정규화
+            overlap_features.append(overlap_4_pattern_count_norm)
+            feature_names.append("overlap_4_pattern_count_norm")
+
+            # 3. 시간 간격 분석 특성
+            time_gap_data = overlap_3_4_data.get("overlap_time_gap_analysis", {})
+
+            # 3자리 패턴 시간 간격 분산 (정규화)
+            gap_3_std = self.safe_float_conversion(time_gap_data.get("gap_3_std", 0.0))
+            overlap_time_gap_variance_3 = min(
+                1.0, gap_3_std / 100.0
+            )  # 최대 100회차로 정규화
+            overlap_features.append(overlap_time_gap_variance_3)
+            feature_names.append("overlap_time_gap_variance_3")
+
+            # 4자리 패턴 시간 간격 분산 (정규화)
+            gap_4_std = self.safe_float_conversion(time_gap_data.get("gap_4_std", 0.0))
+            overlap_time_gap_variance_4 = min(
+                1.0, gap_4_std / 100.0
+            )  # 최대 100회차로 정규화
+            overlap_features.append(overlap_time_gap_variance_4)
+            feature_names.append("overlap_time_gap_variance_4")
+
+            # 4. 패턴 일관성 특성
+            pattern_consistency = overlap_3_4_data.get("pattern_consistency", {})
+
+            # 3자리 패턴 일관성
+            overlap_pattern_consistency_3 = self.safe_float_conversion(
+                pattern_consistency.get("consistency_3", 0.0)
+            )
+            overlap_features.append(overlap_pattern_consistency_3)
+            feature_names.append("overlap_pattern_consistency_3")
+
+            # 4자리 패턴 일관성
+            overlap_pattern_consistency_4 = self.safe_float_conversion(
+                pattern_consistency.get("consistency_4", 0.0)
+            )
+            overlap_features.append(overlap_pattern_consistency_4)
+            feature_names.append("overlap_pattern_consistency_4")
+
+            # 5. ROI 상관관계 특성
+            roi_correlation_data = overlap_data.get("overlap_roi_correlation", {})
+
+            # 3자리 중복 패턴 ROI 상관관계
+            overlap_3_roi_correlation = self.safe_float_conversion(
+                roi_correlation_data.get("overlap_3_roi_correlation", 0.0)
+            )
+            overlap_features.append(overlap_3_roi_correlation)
+            feature_names.append("overlap_3_roi_correlation")
+
+            # 4자리 중복 패턴 ROI 상관관계
+            overlap_4_roi_correlation = self.safe_float_conversion(
+                roi_correlation_data.get("overlap_4_roi_correlation", 0.0)
+            )
+            overlap_features.append(overlap_4_roi_correlation)
+            feature_names.append("overlap_4_roi_correlation")
+
+            # 6. ROI 기대값 특성
+            overlap_3_roi_stats = roi_correlation_data.get("overlap_3_roi_stats", {})
+            overlap_4_roi_stats = roi_correlation_data.get("overlap_4_roi_stats", {})
+
+            # 3자리 패턴 평균 ROI
+            overlap_3_avg_roi = self.safe_float_conversion(
+                overlap_3_roi_stats.get("avg_roi", 0.0)
+            )
+            overlap_features.append(overlap_3_avg_roi)
+            feature_names.append("overlap_3_avg_roi")
+
+            # 4자리 패턴 평균 ROI
+            overlap_4_avg_roi = self.safe_float_conversion(
+                overlap_4_roi_stats.get("avg_roi", 0.0)
+            )
+            overlap_features.append(overlap_4_avg_roi)
+            feature_names.append("overlap_4_avg_roi")
+
+            # 7. ROI 긍정 비율 특성
+            overlap_3_positive_ratio = self.safe_float_conversion(
+                overlap_3_roi_stats.get("positive_roi_ratio", 0.0)
+            )
+            overlap_features.append(overlap_3_positive_ratio)
+            feature_names.append("overlap_3_positive_roi_ratio")
+
+            overlap_4_positive_ratio = self.safe_float_conversion(
+                overlap_4_roi_stats.get("positive_roi_ratio", 0.0)
+            )
+            overlap_features.append(overlap_4_positive_ratio)
+            feature_names.append("overlap_4_positive_roi_ratio")
+
+            # 8. 통합 ROI 기대값 (3자리와 4자리 패턴의 가중 평균)
+            weight_3 = max(1, overlap_3_roi_stats.get("sample_count", 1))
+            weight_4 = max(1, overlap_4_roi_stats.get("sample_count", 1))
+            total_weight = weight_3 + weight_4
+
+            overlap_roi_expectation = (
+                overlap_3_avg_roi * weight_3 + overlap_4_avg_roi * weight_4
+            ) / total_weight
+            overlap_features.append(overlap_roi_expectation)
+            feature_names.append("overlap_roi_expectation")
+
+            # 9. 샘플 신뢰도 (샘플 수 기반)
+            overlap_3_sample_confidence = min(
+                1.0, weight_3 / 50.0
+            )  # 최대 50개 샘플로 정규화
+            overlap_features.append(overlap_3_sample_confidence)
+            feature_names.append("overlap_3_sample_confidence")
+
+            overlap_4_sample_confidence = min(
+                1.0, weight_4 / 20.0
+            )  # 최대 20개 샘플로 정규화
+            overlap_features.append(overlap_4_sample_confidence)
+            feature_names.append("overlap_4_sample_confidence")
+
+            # 10. 추가 중복 특성들 (기존 overlap 분석에서)
+            # 최대 중복도
+            max_overlap_data = overlap_data.get("max_overlap_with_past", {})
+            max_overlap_avg = self.safe_float_conversion(
+                max_overlap_data.get("max_overlap_avg", 0.0)
+            )
+            overlap_features.append(max_overlap_avg / 6.0)  # 6개 번호로 정규화
+            feature_names.append("max_overlap_avg_norm")
+
+            # 중복 플래그
+            duplicate_flag = overlap_data.get("duplicate_flag", {})
+            duplicate_ratio = self.safe_float_conversion(
+                duplicate_flag.get("duplicate_ratio", 0.0)
+            )
+            overlap_features.append(duplicate_ratio)
+            feature_names.append("duplicate_ratio")
+
+            # 최근성 점수
+            recency_score = self.safe_float_conversion(
+                overlap_data.get("recency_score", {}).get("avg_recency", 0.0)
+            )
+            overlap_features.append(recency_score)
+            feature_names.append("recency_score")
+
+            # 벡터 변환 및 NaN 처리
+            overlap_vector = np.array(overlap_features, dtype=np.float32)
+            overlap_vector = np.nan_to_num(
+                overlap_vector, nan=0.0, posinf=1.0, neginf=0.0
+            )
+
+            self.logger.info(
+                f"중복 패턴 특성 벡터 생성 완료: {len(feature_names)}개 특성"
+            )
+            self.logger.info(
+                f"중복 패턴 벡터 통계 - 평균: {np.mean(overlap_vector):.4f}, 최대: {np.max(overlap_vector):.4f}, 최소: {np.min(overlap_vector):.4f}"
+            )
+
+            return overlap_vector, feature_names
+
+        except Exception as e:
+            self.logger.error(f"중복 패턴 특성 벡터 생성 중 오류 발생: {e}")
+            # 오류 발생 시 기본 벡터 반환 (20개 특성)
+            default_vector = np.zeros(20, dtype=np.float32)
+            default_names = [f"overlap_feature_{i+1}" for i in range(20)]
+            return default_vector, default_names

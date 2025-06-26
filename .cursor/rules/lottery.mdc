@@ -172,3 +172,19 @@ vector:
 paths:
   feature_vector_path: data/cache/feature_vector_full.npy
   name_file_path: data/cache/feature_vector_full.names.json
+
+
+새로 설정된 MCP 서버들 (filesystem, github, web-search, firecrawl, fetch)을 적극 활용하여 시스템 개발에 반영할 것.
+
+- Filesystem MCP: 현재 프로젝트의 실제 디렉토리 및 파일 구조를 실시간으로 인식하고, 기존 소스 코드 스타일 및 파일 위치에 맞게 일관성 있게 새로운 코드를 생성하거나 수정할 것.
+
+- Git MCP: 기존 Git 커밋 히스토리와 브랜치 정보를 참고하여, 변경 이력이 있는 파일의 기존 패턴을 유지하고, 충돌 없는 코드 변경을 우선적으로 적용할 것.
+
+- Web-Search MCP 및 Firecrawl MCP: 외부 라이브러리, API 문서, 최신 모범 예제 등을 실시간으로 참조하여 최신 가이드라인에 맞는 구현 방식을 사용할 것.
+
+- Fetch MCP: 외부 API 및 문서 데이터에 실시간 접근이 필요한 경우 반드시 활용할 것.
+
+**필수 준수 사항:**  
+- 모든 파일 생성/수정 시 MCP로 파악한 프로젝트 구조, 파일 종속성, 기존 코딩 스타일, Git 변경 이력, 라이브러리 버전 및 설정 규칙(config.yaml) 등을 반드시 고려할 것.  
+- 사용자가 지정한 경로 외 새로운 디렉토리, 파일명, 설정값 등을 임의로 만들지 말 것.  
+- 시스템 일관성 유지를 위해 MCP 서버로 얻을 수 있는 모든 정보를 최대한 활용할 것.

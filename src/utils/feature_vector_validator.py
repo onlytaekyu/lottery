@@ -119,6 +119,27 @@ ESSENTIAL_FEATURES = [
     "entropy_overall",
     "distribution_balance",
     "number_diversity",
+    # 8. 중복 패턴 기반 특성 (20개)
+    "overlap_3_frequency_score",
+    "overlap_3_pattern_count_norm",
+    "overlap_4_rarity_score",
+    "overlap_4_pattern_count_norm",
+    "overlap_time_gap_variance_3",
+    "overlap_time_gap_variance_4",
+    "overlap_pattern_consistency_3",
+    "overlap_pattern_consistency_4",
+    "overlap_3_roi_correlation",
+    "overlap_4_roi_correlation",
+    "overlap_3_avg_roi",
+    "overlap_4_avg_roi",
+    "overlap_3_positive_roi_ratio",
+    "overlap_4_positive_roi_ratio",
+    "overlap_roi_expectation",
+    "overlap_3_sample_confidence",
+    "overlap_4_sample_confidence",
+    "max_overlap_avg_norm",
+    "duplicate_ratio",
+    "recency_score",
 ]
 
 

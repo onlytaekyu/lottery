@@ -198,6 +198,33 @@ def main():
             logger.info(
                 f"저위험 보너스 플래그 항목 수: {len(roi_features.get('low_risk_bonus_flag', {}).get('low_risk_bonus_flag', {}))}"
             )
+
+        # 중복 패턴 특성 벡터 확인
+        overlap_patterns = analysis_result.get("overlap_3_4_digit_patterns", {})
+        if overlap_patterns:
+            logger.info("중복 패턴 특성이 분석 결과에 포함되어 있습니다.")
+            overlap_3_patterns = overlap_patterns.get("overlap_3_patterns", {})
+            overlap_4_patterns = overlap_patterns.get("overlap_4_patterns", {})
+            
+            logger.info(
+                f"3자리 중복 패턴 수: {len(overlap_3_patterns.get('most_frequent', {}))}"
+            )
+            logger.info(
+                f"4자리 중복 패턴 수: {len(overlap_4_patterns.get('most_frequent', {}))}"
+            )
+            
+            # 중복 패턴 ROI 상관관계 확인
+            overlap_roi_correlation = analysis_result.get("overlap_roi_correlation", {})
+            if overlap_roi_correlation:
+                logger.info("중복 패턴 ROI 상관관계 분석이 포함되어 있습니다.")
+                logger.info(
+                    f"3자리 패턴 ROI 상관관계: {overlap_roi_correlation.get('overlap_3_roi_correlation', 0.0):.4f}"
+                )
+                logger.info(
+                    f"4자리 패턴 ROI 상관관계: {overlap_roi_correlation.get('overlap_4_roi_correlation', 0.0):.4f}"
+                )
+        else:
+            logger.warning("중복 패턴 특성이 분석 결과에 포함되지 않았습니다.")
             logger.info(
                 f"ROI 패턴 그룹 ID 항목 수: {len(roi_features.get('roi_pattern_group_id', {}))}"
             )
