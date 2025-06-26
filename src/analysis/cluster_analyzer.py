@@ -567,5 +567,289 @@ class ClusterAnalyzer:
 
         return feature_vector
 
+    def extract_cluster_features(
+        self, data: List[List[int]]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """
+        클러스터 분석 결과를 10차원 특성 벡터로 추출
+
+        Args:
+            data: 로또 번호 이력 데이터
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 10차원 클러스터 특성 벡터와 특성 이름
+        """
+        self.logger.info("클러스터 특성 추출 시작...")
+
+        try:
+            # 데이터 부족 시 기본값 반환
+            if not data or len(data) < 10:
+                self.logger.warning("데이터 부족으로 기본 클러스터 특성 반환")
+                return self._get_default_cluster_features()
+
+            # 1. 번호별 임베딩 생성
+            embeddings = self._create_number_embeddings(data)
+
+            # 2. 여러 K 값으로 클러스터링 수행 및 품질 지표 계산
+            cluster_qualities = {}
+
+            # K-means 클러스터링 (k=3,4,5)
+            for k in [3, 4, 5]:
+                try:
+                    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                    labels = kmeans.fit_predict(embeddings)
+
+                    # 품질 지표 계산
+                    quality = self._compute_cluster_quality(embeddings, labels)
+                    cluster_qualities[f"k{k}"] = quality
+
+                except Exception as e:
+                    self.logger.warning(f"K={k} 클러스터링 실패: {e}")
+                    cluster_qualities[f"k{k}"] = {
+                        "silhouette_score": 0.0,
+                        "cluster_score": 0.0,
+                    }
+
+            # 3. 10차원 특성 벡터 구성
+            features = []
+            feature_names = []
+
+            # 실루엣 점수 (3개)
+            for k in [3, 4, 5]:
+                silhouette = cluster_qualities.get(f"k{k}", {}).get(
+                    "silhouette_score", 0.0
+                )
+                # -1~1 범위를 0~1로 정규화
+                normalized_silhouette = max(0.0, (silhouette + 1) / 2)
+                features.append(normalized_silhouette)
+                feature_names.append(f"cluster_silhouette_k{k}")
+
+            # 칼린스키-하라바즈 지수 (3개)
+            for k in [3, 4, 5]:
+                try:
+                    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                    labels = kmeans.fit_predict(embeddings)
+
+                    from sklearn.metrics import calinski_harabasz_score
+
+                    ch_score = calinski_harabasz_score(embeddings, labels)
+                    # 정규화 (일반적으로 0~1000 범위)
+                    normalized_ch = min(1.0, ch_score / 1000.0)
+                    features.append(normalized_ch)
+                    feature_names.append(f"cluster_ch_score_k{k}")
+
+                except Exception as e:
+                    self.logger.warning(
+                        f"칼린스키-하라바즈 점수 계산 실패 (k={k}): {e}"
+                    )
+                    features.append(0.0)
+                    feature_names.append(f"cluster_ch_score_k{k}")
+
+            # 클러스터 균형도 (1개)
+            try:
+                # 최적 K 선택 (실루엣 점수 기준)
+                best_k = 3
+                best_silhouette = -1
+                for k in [3, 4, 5]:
+                    sil = cluster_qualities.get(f"k{k}", {}).get("silhouette_score", -1)
+                    if sil > best_silhouette:
+                        best_silhouette = sil
+                        best_k = k
+
+                kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
+                labels = kmeans.fit_predict(embeddings)
+
+                # 클러스터별 크기 균형도 계산
+                unique, counts = np.unique(labels, return_counts=True)
+                balance_score = (
+                    1.0 - np.std(counts) / np.mean(counts) if len(counts) > 1 else 0.0
+                )
+                balance_score = max(0.0, min(1.0, balance_score))
+
+                features.append(balance_score)
+                feature_names.append("cluster_balance_score")
+
+            except Exception as e:
+                self.logger.warning(f"클러스터 균형도 계산 실패: {e}")
+                features.append(0.0)
+                feature_names.append("cluster_balance_score")
+
+            # 클러스터 분리도 (1개)
+            try:
+                # 클러스터 중심 간 평균 거리
+                centers = kmeans.cluster_centers_
+                if len(centers) > 1:
+                    distances = []
+                    for i in range(len(centers)):
+                        for j in range(i + 1, len(centers)):
+                            dist = np.linalg.norm(centers[i] - centers[j])
+                            distances.append(dist)
+
+                    separation_score = np.mean(distances)
+                    # 정규화 (임베딩 차원 고려)
+                    separation_score = min(1.0, separation_score / 10.0)
+                else:
+                    separation_score = 0.0
+
+                features.append(separation_score)
+                feature_names.append("cluster_separation_score")
+
+            except Exception as e:
+                self.logger.warning(f"클러스터 분리도 계산 실패: {e}")
+                features.append(0.0)
+                feature_names.append("cluster_separation_score")
+
+            # 클러스터 내부 분산 (1개)
+            try:
+                intra_variance = 0.0
+                for cluster_id in unique:
+                    cluster_points = embeddings[labels == cluster_id]
+                    if len(cluster_points) > 1:
+                        cluster_center = np.mean(cluster_points, axis=0)
+                        variance = np.mean(
+                            np.sum((cluster_points - cluster_center) ** 2, axis=1)
+                        )
+                        intra_variance += variance
+
+                intra_variance /= len(unique)
+                # 정규화
+                intra_variance = min(1.0, intra_variance / 100.0)
+
+                features.append(intra_variance)
+                feature_names.append("cluster_intra_variance")
+
+            except Exception as e:
+                self.logger.warning(f"클러스터 내부 분산 계산 실패: {e}")
+                features.append(0.0)
+                feature_names.append("cluster_intra_variance")
+
+            # 클러스터 간 거리 (1개)
+            try:
+                inter_distance = 0.0
+                if len(centers) > 1:
+                    min_distances = []
+                    for i, center in enumerate(centers):
+                        other_centers = np.delete(centers, i, axis=0)
+                        min_dist = np.min(
+                            [np.linalg.norm(center - other) for other in other_centers]
+                        )
+                        min_distances.append(min_dist)
+
+                    inter_distance = np.mean(min_distances)
+                    # 정규화
+                    inter_distance = min(1.0, inter_distance / 10.0)
+
+                features.append(inter_distance)
+                feature_names.append("cluster_inter_distance")
+
+            except Exception as e:
+                self.logger.warning(f"클러스터 간 거리 계산 실패: {e}")
+                features.append(0.0)
+                feature_names.append("cluster_inter_distance")
+
+            # 최종 검증 (정확히 10차원인지 확인)
+            if len(features) != 10:
+                self.logger.warning(f"클러스터 특성 차원 불일치: {len(features)} != 10")
+                # 10차원으로 조정
+                if len(features) < 10:
+                    features.extend([0.0] * (10 - len(features)))
+                    feature_names.extend(
+                        [f"cluster_padding_{i}" for i in range(10 - len(feature_names))]
+                    )
+                else:
+                    features = features[:10]
+                    feature_names = feature_names[:10]
+
+            result_vector = np.array(features, dtype=np.float32)
+
+            # NaN/Inf 처리
+            result_vector = np.nan_to_num(
+                result_vector, nan=0.0, posinf=1.0, neginf=0.0
+            )
+            result_vector = np.clip(result_vector, 0.0, 1.0)
+
+            self.logger.info(f"클러스터 특성 추출 완료: {len(result_vector)}차원")
+            return result_vector, feature_names
+
+        except Exception as e:
+            self.logger.error(f"클러스터 특성 추출 중 오류: {e}")
+            return self._get_default_cluster_features()
+
+    def _create_number_embeddings(self, data: List[List[int]]) -> np.ndarray:
+        """
+        번호별 임베딩 생성
+
+        Args:
+            data: 로또 번호 이력
+
+        Returns:
+            np.ndarray: 45x4 임베딩 행렬 (각 번호당 4차원 특성)
+        """
+        embeddings = np.zeros((45, 4), dtype=np.float32)
+
+        try:
+            # 각 번호(1~45)에 대한 특성 계산
+            for num in range(1, 46):
+                # 1. 출현 빈도
+                frequency = sum(1 for draw in data if num in draw)
+                embeddings[num - 1, 0] = frequency / len(data) if data else 0.0
+
+                # 2. 평균 위치 (번호가 나타나는 평균 위치)
+                positions = []
+                for draw in data:
+                    if num in draw:
+                        try:
+                            pos = draw.index(num)
+                            positions.append(pos)
+                        except ValueError:
+                            continue
+
+                avg_position = (
+                    np.mean(positions) / 5.0 if positions else 0.5
+                )  # 0~1 정규화
+                embeddings[num - 1, 1] = avg_position
+
+                # 3. 위치 분산
+                pos_variance = (
+                    np.var(positions) / 25.0 if len(positions) > 1 else 0.0
+                )  # 0~1 정규화
+                embeddings[num - 1, 2] = min(1.0, pos_variance)
+
+                # 4. 최근 출현율 (최근 20회 중 출현 비율)
+                recent_data = data[-20:] if len(data) >= 20 else data
+                recent_frequency = sum(1 for draw in recent_data if num in draw)
+                recent_rate = (
+                    recent_frequency / len(recent_data) if recent_data else 0.0
+                )
+                embeddings[num - 1, 3] = recent_rate
+
+        except Exception as e:
+            self.logger.warning(f"임베딩 생성 중 오류: {e}")
+
+        return embeddings
+
+    def _get_default_cluster_features(self) -> Tuple[np.ndarray, List[str]]:
+        """
+        기본 클러스터 특성 반환 (데이터 부족 시)
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 기본 10차원 벡터와 특성 이름
+        """
+        features = [0.0] * 10
+        feature_names = [
+            "cluster_silhouette_k3",
+            "cluster_silhouette_k4",
+            "cluster_silhouette_k5",
+            "cluster_ch_score_k3",
+            "cluster_ch_score_k4",
+            "cluster_ch_score_k5",
+            "cluster_balance_score",
+            "cluster_separation_score",
+            "cluster_intra_variance",
+            "cluster_inter_distance",
+        ]
+
+        return np.array(features, dtype=np.float32), feature_names
+
 
 __all__ = ["ClusterAnalyzer", "build_pair_graph", "create_default_gnn_model"]

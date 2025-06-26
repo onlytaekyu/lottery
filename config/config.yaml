@@ -224,6 +224,11 @@ analysis:
   enable_gap_deviation_score: true  # 간격 표준편차 점수 분석 활성화
   enable_combination_diversity_score: true  # 조합 다양성 점수 분석 활성화
   enable_roi_trend_by_pattern: true  # 패턴별 ROI 추세 분석 활성화
+  # 신규 패턴 분석 항목들 (추가)
+  enable_position_bias_analysis: true  # 추첨 순서 편향 분석 활성화
+  enable_overlap_time_gap_analysis: true  # 중복 패턴 시간적 주기성 분석 활성화
+  enable_conditional_interaction_analysis: true  # 번호 간 조건부 상호작용 분석 활성화
+  enable_micro_bias_analysis: true  # 홀짝 및 구간별 미세 편향성 분석 활성화
   save_to:
     json: false  # JSON 형식으로 저장 안함
     txt: false   # 텍스트 형식으로 저장 안함
@@ -372,19 +377,41 @@ caching:
     clean_on_startup: false
 
 # ===================
-# 클러스터링 설정 추가
+# 클러스터링 설정
 # ===================
 clustering:
   n_clusters: 5
   min_silhouette_score: 0.3
   use_dbscan: false
-  eps: 0.5
-  min_samples: 5
-  enable_auto_tuning: true  # 자동 파라미터 튜닝 활성화
-  save_embeddings: true     # 임베딩 저장 여부
-  max_clusters: 8          # 최대 클러스터 수
-  min_clusters: 3          # 최소 클러스터 수
-  save_feature_vector: true # 클러스터 특성 벡터 저장 여부
+  dbscan:
+    eps: 0.5
+    min_samples: 3
+  auto_adjust_clusters: true
+  min_clusters: 2
+  max_clusters: 8
+
+# ===================
+# 벡터 청사진 시스템 설정
+# ===================
+vector_blueprint:
+  total_expected_dims: 95
+  groups:
+    pattern_analysis: 25
+    distribution_pattern: 10
+    segment_frequency: 15
+    centrality_consecutive: 12
+    gap_reappearance: 8
+    roi_features: 15
+    cluster_features: 10
+    overlap_patterns: 20
+    physical_structure: 11
+    pair_graph_vector: 20
+  
+  validation:
+    enforce_dimensions: true
+    nan_inf_threshold: 0.01
+    min_entropy_score: 0.1
+    auto_fix_dimensions: true
 
 # ===================
 # 학습 설정 추가

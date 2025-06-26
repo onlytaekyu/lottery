@@ -109,6 +109,280 @@ class PatternVectorizer:
 
         self.vector_cache = get_cache(self.config)
 
+        # 벡터 차원 청사진 시스템 초기화
+        self._initialize_vector_blueprint()
+
+        logger.info(
+            f"벡터 청사진 시스템 초기화 완료: 총 {self.total_expected_dims}차원"
+        )
+
+    def _initialize_vector_blueprint(self):
+        """
+        벡터 차원 청사진 시스템 초기화
+        각 그룹별 고정 차원을 사전 정의하여 차원 불일치 문제 해결
+        """
+        # 그룹별 고정 차원 정의 (총 95차원으로 표준화)
+        self.vector_blueprint = {
+            # 기본 패턴 분석 (25차원)
+            "pattern_analysis": 25,
+            # 분포 패턴 (10차원)
+            "distribution_pattern": 10,
+            # 세그먼트 빈도 (15차원: 10구간 + 5구간)
+            "segment_frequency": 15,
+            # 중심성 및 연속성 (12차원)
+            "centrality_consecutive": 12,
+            # 갭 통계 및 재출현 (8차원)
+            "gap_reappearance": 8,
+            # ROI 특성 (15차원)
+            "roi_features": 15,
+            # 클러스터 품질 (10차원)
+            "cluster_features": 10,
+            # 중복 패턴 특성 (20차원)
+            "overlap_patterns": 20,
+            # 물리적 구조 특성 (11차원)
+            "physical_structure": 11,
+            # 쌍 그래프 압축 벡터 (최대 20차원)
+            "pair_graph_vector": 20,
+        }
+
+        # 총 예상 차원 계산
+        self.total_expected_dims = sum(self.vector_blueprint.values())
+
+        # 그룹별 특성 이름 템플릿
+        self.feature_name_templates = {
+            "pattern_analysis": [f"pattern_{i+1}" for i in range(25)],
+            "distribution_pattern": [f"dist_{i+1}" for i in range(10)],
+            "segment_frequency": [f"seg10_{i+1}" for i in range(10)]
+            + [f"seg5_{i+1}" for i in range(5)],
+            "centrality_consecutive": [f"centrality_{i+1}" for i in range(6)]
+            + [f"consecutive_{i+1}" for i in range(6)],
+            "gap_reappearance": [f"gap_{i+1}" for i in range(4)]
+            + [f"reappear_{i+1}" for i in range(4)],
+            "roi_features": [f"roi_{i+1}" for i in range(15)],
+            "cluster_features": [f"cluster_{i+1}" for i in range(10)],
+            "overlap_patterns": [f"overlap_{i+1}" for i in range(20)],
+            "physical_structure": [f"physical_{i+1}" for i in range(11)],
+            "pair_graph_vector": [f"pair_graph_{i+1}" for i in range(20)],
+        }
+
+        self.logger.info(
+            f"벡터 청사진 정의 완료: {len(self.vector_blueprint)}개 그룹, 총 {self.total_expected_dims}차원"
+        )
+
+    def _vectorize_group_safe(
+        self, group_name: str, data: Any, vectorize_func
+    ) -> Tuple[np.ndarray, List[str]]:
+        """
+        그룹별 안전한 벡터화 수행
+        예상 차원과 일치하지 않으면 패딩 또는 절단하여 차원 보장
+
+        Args:
+            group_name: 그룹 이름
+            data: 벡터화할 데이터
+            vectorize_func: 벡터화 함수
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 차원이 보장된 벡터와 특성 이름
+        """
+        try:
+            # 벡터화 수행
+            if vectorize_func is None:
+                # 기본 벡터화 (모든 값을 0으로)
+                vector = np.zeros(self.vector_blueprint[group_name], dtype=np.float32)
+                feature_names = self.feature_name_templates[group_name][
+                    : self.vector_blueprint[group_name]
+                ]
+            else:
+                vector, feature_names = vectorize_func(data)
+
+            expected_dims = self.vector_blueprint.get(group_name, len(vector))
+
+            # 차원 조정
+            vector, feature_names = self._pad_or_truncate_vector(
+                vector, feature_names, expected_dims, group_name
+            )
+
+            # NaN/Inf 검증 및 처리
+            vector = self._sanitize_vector(vector, group_name)
+
+            self.logger.debug(f"그룹 '{group_name}' 벡터화 완료: {len(vector)}차원")
+            return vector, feature_names
+
+        except Exception as e:
+            self.logger.warning(f"그룹 '{group_name}' 벡터화 중 오류 발생: {e}")
+            # 오류 시 기본 벡터 반환
+            expected_dims = self.vector_blueprint.get(group_name, 10)
+            vector = np.zeros(expected_dims, dtype=np.float32)
+            feature_names = self.feature_name_templates.get(
+                group_name, [f"{group_name}_{i+1}" for i in range(expected_dims)]
+            )[:expected_dims]
+            return vector, feature_names
+
+    def _pad_or_truncate_vector(
+        self,
+        vector: np.ndarray,
+        feature_names: List[str],
+        expected_dims: int,
+        group_name: str,
+    ) -> Tuple[np.ndarray, List[str]]:
+        """
+        벡터를 예상 차원에 맞게 패딩 또는 절단
+
+        Args:
+            vector: 원본 벡터
+            feature_names: 원본 특성 이름
+            expected_dims: 예상 차원
+            group_name: 그룹 이름
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 조정된 벡터와 특성 이름
+        """
+        current_dims = len(vector)
+
+        if current_dims == expected_dims:
+            return vector, feature_names
+        elif current_dims < expected_dims:
+            # 패딩 (부족한 차원을 0으로 채움)
+            padding_size = expected_dims - current_dims
+            padded_vector = np.pad(
+                vector, (0, padding_size), mode="constant", constant_values=0.0
+            )
+
+            # 특성 이름도 패딩
+            template_names = self.feature_name_templates.get(
+                group_name, [f"{group_name}_{i+1}" for i in range(expected_dims)]
+            )
+            padded_names = feature_names + template_names[current_dims:expected_dims]
+
+            self.logger.debug(
+                f"그룹 '{group_name}': {current_dims}차원 → {expected_dims}차원으로 패딩"
+            )
+            return padded_vector.astype(np.float32), padded_names
+        else:
+            # 절단 (초과 차원 제거)
+            truncated_vector = vector[:expected_dims]
+            truncated_names = feature_names[:expected_dims]
+
+            self.logger.debug(
+                f"그룹 '{group_name}': {current_dims}차원 → {expected_dims}차원으로 절단"
+            )
+            return truncated_vector.astype(np.float32), truncated_names
+
+    def _sanitize_vector(self, vector: np.ndarray, group_name: str) -> np.ndarray:
+        """
+        벡터의 NaN/Inf 값을 처리하여 안전한 벡터로 변환
+
+        Args:
+            vector: 원본 벡터
+            group_name: 그룹 이름
+
+        Returns:
+            np.ndarray: 정제된 벡터
+        """
+        # NaN을 0으로 대체
+        nan_count = np.isnan(vector).sum()
+        if nan_count > 0:
+            vector = np.nan_to_num(vector, nan=0.0)
+            self.logger.debug(f"그룹 '{group_name}': {nan_count}개 NaN 값을 0으로 대체")
+
+        # Inf를 유한한 값으로 대체
+        inf_count = np.isinf(vector).sum()
+        if inf_count > 0:
+            vector = np.nan_to_num(vector, posinf=1.0, neginf=-1.0)
+            self.logger.debug(
+                f"그룹 '{group_name}': {inf_count}개 Inf 값을 유한값으로 대체"
+            )
+
+        # 값 범위 제한 (-10 ~ 10)
+        vector = np.clip(vector, -10.0, 10.0)
+
+        return vector.astype(np.float32)
+
+    def validate_vector_integrity(
+        self, vector: np.ndarray, feature_names: List[str]
+    ) -> bool:
+        """
+        벡터 무결성 검증
+
+        Args:
+            vector: 검증할 벡터
+            feature_names: 특성 이름 리스트
+
+        Returns:
+            bool: 검증 통과 여부
+        """
+        try:
+            # 차원 일치 확인
+            if len(vector) != len(feature_names):
+                self.logger.error(
+                    f"벡터 차원 불일치: 벡터 {len(vector)}차원 vs 특성명 {len(feature_names)}개"
+                )
+                return False
+
+            # 예상 총 차원과 일치 확인
+            if len(vector) != self.total_expected_dims:
+                self.logger.error(
+                    f"총 차원 불일치: 예상 {self.total_expected_dims}차원 vs 실제 {len(vector)}차원"
+                )
+                return False
+
+            # NaN/Inf 비율 확인 (1% 초과 시 실패)
+            nan_inf_ratio = (np.isnan(vector).sum() + np.isinf(vector).sum()) / len(
+                vector
+            )
+            if nan_inf_ratio > 0.01:
+                self.logger.error(f"NaN/Inf 비율 초과: {nan_inf_ratio:.4f} > 0.01")
+                return False
+
+            # 특성 다양성 엔트로피 계산 (정보 품질 검증)
+            entropy_score = self._calculate_feature_entropy(vector)
+            if entropy_score < 0.1:
+                self.logger.warning(
+                    f"특성 다양성 부족: 엔트로피 {entropy_score:.4f} < 0.1"
+                )
+
+            self.logger.info(
+                f"벡터 무결성 검증 통과: {len(vector)}차원, 엔트로피 {entropy_score:.4f}"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"벡터 무결성 검증 중 오류: {e}")
+            return False
+
+    def _calculate_feature_entropy(self, vector: np.ndarray) -> float:
+        """
+        특성 벡터의 정보 엔트로피 계산
+
+        Args:
+            vector: 특성 벡터
+
+        Returns:
+            float: 엔트로피 점수 (0~1)
+        """
+        try:
+            # 벡터를 히스토그램으로 변환
+            hist, _ = np.histogram(vector, bins=50, density=True)
+
+            # 0이 아닌 확률만 사용
+            hist = hist[hist > 0]
+
+            if len(hist) == 0:
+                return 0.0
+
+            # 엔트로피 계산
+            entropy = -np.sum(hist * np.log2(hist + 1e-10))
+
+            # 0~1 범위로 정규화
+            max_entropy = np.log2(len(hist))
+            normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
+
+            return float(normalized_entropy)
+
+        except Exception as e:
+            self.logger.warning(f"엔트로피 계산 중 오류: {e}")
+            return 0.0
+
     def _get_config_value(self, key_path: str, default_value: Any) -> Any:
         """설정 값을 가져옵니다."""
         # ConfigProxy 객체인 경우
@@ -729,7 +1003,81 @@ class PatternVectorizer:
                     f"중복 패턴 특성 벡터 생성 중 오류 발생: {str(e_overlap)}"
                 )
 
-            # 13. 물리적 구조 특성 - 추첨기 시뮬레이션을 위한 실제 물리적 특성 추가
+            # 14. 추첨 순서 편향 분석 특성 추가 (Position Bias)
+            try:
+                position_vec, position_names = self.extract_position_bias_features(
+                    full_analysis
+                )
+                vector_features["position_bias"] = position_vec
+                feature_names_by_group["position_bias"] = position_names
+                self.logger.info(
+                    f"추첨 순서 편향 벡터 추가: {len(position_names)}개 특성"
+                )
+
+                # 별도 파일로도 저장
+                self.save_vector_to_file(position_vec, "position_bias_vector.npy")
+            except Exception as e_position:
+                self.logger.warning(
+                    f"추첨 순서 편향 특성 벡터 생성 중 오류 발생: {str(e_position)}"
+                )
+
+            # 15. 중복 패턴 시간적 주기성 특성 추가 (Overlap Time Gaps)
+            try:
+                time_gap_vec, time_gap_names = self.extract_overlap_time_gap_features(
+                    full_analysis
+                )
+                vector_features["overlap_time_gaps"] = time_gap_vec
+                feature_names_by_group["overlap_time_gaps"] = time_gap_names
+                self.logger.info(
+                    f"중복 패턴 시간적 주기성 벡터 추가: {len(time_gap_names)}개 특성"
+                )
+
+                # 별도 파일로도 저장
+                self.save_vector_to_file(time_gap_vec, "overlap_time_gap_vector.npy")
+            except Exception as e_time_gap:
+                self.logger.warning(
+                    f"중복 패턴 시간적 주기성 특성 벡터 생성 중 오류 발생: {str(e_time_gap)}"
+                )
+
+            # 16. 번호 간 조건부 상호작용 특성 추가 (Conditional Interaction)
+            try:
+                conditional_vec, conditional_names = (
+                    self.extract_conditional_interaction_features(full_analysis)
+                )
+                vector_features["conditional_interaction"] = conditional_vec
+                feature_names_by_group["conditional_interaction"] = conditional_names
+                self.logger.info(
+                    f"번호 간 조건부 상호작용 벡터 추가: {len(conditional_names)}개 특성"
+                )
+
+                # 별도 파일로도 저장
+                self.save_vector_to_file(
+                    conditional_vec, "conditional_interaction_vector.npy"
+                )
+            except Exception as e_conditional:
+                self.logger.warning(
+                    f"번호 간 조건부 상호작용 특성 벡터 생성 중 오류 발생: {str(e_conditional)}"
+                )
+
+            # 17. 홀짝 및 구간별 미세 편향성 특성 추가 (Micro Bias)
+            try:
+                micro_bias_vec, micro_bias_names = self.extract_micro_bias_features(
+                    full_analysis
+                )
+                vector_features["micro_bias"] = micro_bias_vec
+                feature_names_by_group["micro_bias"] = micro_bias_names
+                self.logger.info(
+                    f"미세 편향성 벡터 추가: {len(micro_bias_names)}개 특성"
+                )
+
+                # 별도 파일로도 저장
+                self.save_vector_to_file(micro_bias_vec, "micro_bias_vector.npy")
+            except Exception as e_micro_bias:
+                self.logger.warning(
+                    f"미세 편향성 특성 벡터 생성 중 오류 발생: {str(e_micro_bias)}"
+                )
+
+            # 18. 물리적 구조 특성 - 추첨기 시뮬레이션을 위한 실제 물리적 특성 추가
             # 이 벡터는 다음을 포함합니다:
             # - distance_variance: 거리 분산 지표 (평균, 표준편차)
             # - sequential_pair_rate: 연속 쌍 비율
@@ -3730,95 +4078,339 @@ class PatternVectorizer:
         self, analysis_data: Dict[str, Any], pair_data: Optional[Dict[str, Any]] = None
     ) -> Tuple[np.ndarray, List[str]]:
         """
-        패턴 분석 결과의 특성들을 확장된 벡터 형태로 변환합니다.
-        기본 패턴 특성 외에 추가적인 특성을 포함합니다.
+        청사진 시스템을 사용한 안전한 확장 특성 벡터화
+        각 그룹별로 고정 차원을 보장하여 차원 불일치 문제 해결
 
         Args:
             analysis_data: 패턴 분석 결과 딕셔너리
             pair_data: 쌍 분석 결과 딕셔너리 (선택적)
 
         Returns:
-            np.ndarray: 확장된 특성 벡터
-            List[str]: 특성 이름 목록
+            Tuple[np.ndarray, List[str]]: 95차원 고정 벡터와 특성 이름
         """
-        # 특성 이름 목록
-        feature_names = []
-
-        # 물리적 구조 특성 기본값
-        physical_structure_features = []
+        self.logger.info("청사진 기반 확장 특성 벡터화 시작...")
 
         try:
-            # 위치별 엔트로피 특성 (6개)
-            position_entropy_features = [0.0] * 6
-            for i in range(6):
-                key = f"position_entropy_{i+1}"
-                if key in analysis_data:
-                    position_entropy_features[i] = analysis_data[key]
-                feature_names.append(key)
+            # 그룹별 벡터 수집
+            group_vectors = {}
+            all_feature_names = []
 
-            # 위치별 표준편차 특성 (6개)
-            position_std_features = [0.0] * 6
-            for i in range(6):
-                key = f"position_std_{i+1}"
-                if key in analysis_data:
-                    position_std_features[i] = analysis_data[key]
-                feature_names.append(key)
-
-            # ROI 추세 특성 벡터화
-            roi_trend_features = []
-            if "roi_trend_by_pattern" in analysis_data:
-                try:
-                    roi_trend_vector = self._vectorize_roi_trend_by_pattern(
-                        analysis_data["roi_trend_by_pattern"]
-                    )
-                    roi_trend_features = roi_trend_vector.tolist()
-                    # 특성 이름 추가
-                    for i in range(len(roi_trend_features)):
-                        feature_names.append(f"roi_trend_{i+1}")
-                except Exception as e:
-                    self.logger.error(f"ROI 추세 벡터화 중 오류: {e}")
-
-            # 물리적 구조 특성 벡터화
-            if "physical_structure_features" in analysis_data:
-                try:
-                    physical_structure_vector = (
-                        self._vectorize_physical_structure_features(
-                            analysis_data["physical_structure_features"]
-                        )
-                    )
-                    physical_structure_features = physical_structure_vector.tolist()
-                    # 특성 이름 추가
-                    for i in range(len(physical_structure_features)):
-                        feature_names.append(f"physical_structure_{i+1}")
-                except Exception as e:
-                    self.logger.error(f"물리적 구조 특성 벡터화 중 오류: {e}")
-
-            # 모든 특성 결합
-            combined_features = (
-                position_entropy_features
-                + position_std_features
-                + roi_trend_features
-                + physical_structure_features
+            # 1. 기본 패턴 분석 (25차원)
+            pattern_vec, pattern_names = self._vectorize_group_safe(
+                "pattern_analysis",
+                analysis_data.get("pattern_analysis", {}),
+                lambda data: self._extract_basic_pattern_features(data),
             )
+            group_vectors["pattern_analysis"] = pattern_vec
+            all_feature_names.extend(pattern_names)
 
-            # 특성 이름 수와 특성 값 수가 일치하는지 확인
-            if len(feature_names) != len(combined_features):
-                self.logger.warning(
-                    f"특성 이름 개수({len(feature_names)})와 특성 값 개수({len(combined_features)})가 일치하지 않습니다."
-                )
-                # 기본 이름으로 보정
-                feature_names = [
-                    f"extended_feature_{i+1}" for i in range(len(combined_features))
-                ]
+            # 2. 분포 패턴 (10차원)
+            dist_vec, dist_names = self._vectorize_group_safe(
+                "distribution_pattern",
+                analysis_data.get("distribution_pattern", {}),
+                lambda data: self._extract_distribution_features(data),
+            )
+            group_vectors["distribution_pattern"] = dist_vec
+            all_feature_names.extend(dist_names)
 
-            # numpy 배열로 변환
-            return np.array(combined_features, dtype=np.float32), feature_names
+            # 3. 세그먼트 빈도 (15차원: 10구간 + 5구간)
+            seg_vec, seg_names = self._vectorize_group_safe(
+                "segment_frequency",
+                {
+                    "segment_10": analysis_data.get("segment_10_frequency", {}),
+                    "segment_5": analysis_data.get("segment_5_frequency", {}),
+                },
+                lambda data: self._extract_segment_frequency_features(data),
+            )
+            group_vectors["segment_frequency"] = seg_vec
+            all_feature_names.extend(seg_names)
+
+            # 4. 중심성 및 연속성 (12차원)
+            cent_vec, cent_names = self._vectorize_group_safe(
+                "centrality_consecutive",
+                {
+                    "centrality": analysis_data.get("segment_centrality", {}),
+                    "consecutive": analysis_data.get(
+                        "segment_consecutive_patterns", {}
+                    ),
+                },
+                lambda data: self._extract_centrality_consecutive_features(data),
+            )
+            group_vectors["centrality_consecutive"] = cent_vec
+            all_feature_names.extend(cent_names)
+
+            # 5. 갭 통계 및 재출현 (8차원)
+            gap_vec, gap_names = self._vectorize_group_safe(
+                "gap_reappearance",
+                {
+                    "gap_stats": analysis_data.get("gap_statistics", {}),
+                    "reappearance": analysis_data.get("pattern_reappearance", {}),
+                },
+                lambda data: self._extract_gap_reappearance_features(data),
+            )
+            group_vectors["gap_reappearance"] = gap_vec
+            all_feature_names.extend(gap_names)
+
+            # 6. ROI 특성 (15차원)
+            roi_vec, roi_names = self._vectorize_group_safe(
+                "roi_features",
+                analysis_data.get("roi_features", {}),
+                lambda data: self.extract_roi_features({"roi_features": data}),
+            )
+            group_vectors["roi_features"] = roi_vec
+            all_feature_names.extend(roi_names)
+
+            # 7. 클러스터 품질 (10차원)
+            cluster_vec, cluster_names = self._vectorize_group_safe(
+                "cluster_features",
+                analysis_data.get("cluster_quality", {}),
+                lambda data: self.extract_cluster_features({"cluster_quality": data}),
+            )
+            group_vectors["cluster_features"] = cluster_vec
+            all_feature_names.extend(cluster_names)
+
+            # 8. 중복 패턴 특성 (20차원)
+            overlap_vec, overlap_names = self._vectorize_group_safe(
+                "overlap_patterns",
+                analysis_data.get("overlap", {}),
+                lambda data: self.extract_overlap_pattern_features({"overlap": data}),
+            )
+            group_vectors["overlap_patterns"] = overlap_vec
+            all_feature_names.extend(overlap_names)
+
+            # 9. 물리적 구조 특성 (11차원)
+            phys_vec, phys_names = self._vectorize_group_safe(
+                "physical_structure",
+                analysis_data.get("physical_structure_features", {}),
+                lambda data: self._extract_physical_structure_features(data),
+            )
+            group_vectors["physical_structure"] = phys_vec
+            all_feature_names.extend(phys_names)
+
+            # 10. 쌍 그래프 압축 벡터 (20차원)
+            pair_vec, pair_names = self._vectorize_group_safe(
+                "pair_graph_vector",
+                analysis_data.get("pair_graph_compressed_vector", []),
+                lambda data: self._extract_pair_graph_features(data),
+            )
+            group_vectors["pair_graph_vector"] = pair_vec
+            all_feature_names.extend(pair_names)
+
+            # 모든 그룹 벡터 결합
+            combined_vector = np.concatenate(list(group_vectors.values()))
+
+            # 최종 검증
+            if not self.validate_vector_integrity(combined_vector, all_feature_names):
+                raise ValueError("벡터 무결성 검증 실패")
+
+            self.logger.info(
+                f"청사진 기반 벡터화 완료: {len(combined_vector)}차원, {len(all_feature_names)}개 특성"
+            )
+            return combined_vector, all_feature_names
 
         except Exception as e:
-            self.logger.error(f"확장 특성 벡터화 중 오류: {str(e)}")
-            # 오류 발생 시 기본 벡터 반환
-            empty_vector = np.zeros(20, dtype=np.float32)
-            return empty_vector, [f"default_feature_{i+1}" for i in range(20)]
+            self.logger.error(f"확장 특성 벡터화 중 오류: {e}")
+            # 오류 시 기본 청사진 벡터 반환
+            default_vector = np.zeros(self.total_expected_dims, dtype=np.float32)
+            default_names = []
+            for group_name, dims in self.vector_blueprint.items():
+                default_names.extend(self.feature_name_templates[group_name][:dims])
+
+            return default_vector, default_names
+
+    def _extract_basic_pattern_features(
+        self, pattern_data: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """기본 패턴 특성 추출 (25차원)"""
+        features = []
+        names = []
+
+        # 기본 통계 특성들 (10개)
+        basic_stats = [
+            "frequency_sum",
+            "frequency_mean",
+            "frequency_std",
+            "frequency_max",
+            "frequency_min",
+            "gap_mean",
+            "gap_std",
+            "gap_max",
+            "gap_min",
+            "total_draws",
+        ]
+
+        for stat in basic_stats:
+            value = self.safe_float_conversion(pattern_data.get(stat, 0.0))
+            features.append(value)
+            names.append(f"pattern_{stat}")
+
+        # 추가 패턴 특성들 (15개)
+        for i in range(15):
+            features.append(0.0)  # 기본값
+            names.append(f"pattern_extra_{i+1}")
+
+        return np.array(features, dtype=np.float32), names
+
+    def _extract_distribution_features(
+        self, dist_data: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """분포 패턴 특성 추출 (10차원)"""
+        features = []
+        names = []
+
+        # 분포 특성들
+        dist_stats = [
+            "entropy",
+            "balance_score",
+            "diversity",
+            "uniformity",
+            "skewness",
+            "kurtosis",
+            "range_ratio",
+            "concentration",
+            "dispersion",
+            "variance",
+        ]
+
+        for stat in dist_stats:
+            value = self.safe_float_conversion(dist_data.get(stat, 0.0))
+            features.append(value)
+            names.append(f"dist_{stat}")
+
+        return np.array(features, dtype=np.float32), names
+
+    def _extract_segment_frequency_features(
+        self, seg_data: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """세그먼트 빈도 특성 추출 (15차원)"""
+        features = []
+        names = []
+
+        # 10구간 빈도 (10차원)
+        seg_10 = seg_data.get("segment_10", {})
+        for i in range(1, 11):
+            value = self.safe_float_conversion(seg_10.get(str(i), 0.0))
+            features.append(value)
+            names.append(f"seg10_{i}")
+
+        # 5구간 빈도 (5차원)
+        seg_5 = seg_data.get("segment_5", {})
+        for i in range(1, 6):
+            value = self.safe_float_conversion(seg_5.get(str(i), 0.0))
+            features.append(value)
+            names.append(f"seg5_{i}")
+
+        return np.array(features, dtype=np.float32), names
+
+    def _extract_centrality_consecutive_features(
+        self, cent_data: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """중심성 및 연속성 특성 추출 (12차원)"""
+        features = []
+        names = []
+
+        # 중심성 특성 (6차원)
+        centrality = cent_data.get("centrality", {})
+        cent_stats = ["mean", "std", "max", "min", "median", "range"]
+        for stat in cent_stats:
+            value = self.safe_float_conversion(centrality.get(stat, 0.0))
+            features.append(value)
+            names.append(f"centrality_{stat}")
+
+        # 연속성 특성 (6차원)
+        consecutive = cent_data.get("consecutive", {})
+        cons_stats = [
+            "count",
+            "avg_length",
+            "max_length",
+            "frequency",
+            "density",
+            "ratio",
+        ]
+        for stat in cons_stats:
+            value = self.safe_float_conversion(consecutive.get(stat, 0.0))
+            features.append(value)
+            names.append(f"consecutive_{stat}")
+
+        return np.array(features, dtype=np.float32), names
+
+    def _extract_gap_reappearance_features(
+        self, gap_data: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """갭 통계 및 재출현 특성 추출 (8차원)"""
+        features = []
+        names = []
+
+        # 갭 통계 (4차원)
+        gap_stats = gap_data.get("gap_stats", {})
+        gap_metrics = ["mean", "std", "max", "min"]
+        for metric in gap_metrics:
+            value = self.safe_float_conversion(gap_stats.get(metric, 0.0))
+            features.append(value)
+            names.append(f"gap_{metric}")
+
+        # 재출현 특성 (4차원)
+        reappearance = gap_data.get("reappearance", {})
+        reapp_metrics = ["frequency", "interval", "consistency", "trend"]
+        for metric in reapp_metrics:
+            value = self.safe_float_conversion(reappearance.get(metric, 0.0))
+            features.append(value)
+            names.append(f"reappear_{metric}")
+
+        return np.array(features, dtype=np.float32), names
+
+    def _extract_physical_structure_features(
+        self, phys_data: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """물리적 구조 특성 추출 (11차원)"""
+        features = []
+        names = []
+
+        # 물리적 특성들
+        phys_stats = [
+            "distance_variance_avg",
+            "distance_variance_std",
+            "sequential_pair_avg",
+            "zscore_mean",
+            "zscore_std",
+            "binomial_match_score",
+            "number_std_score",
+            "balance_score",
+            "uniformity",
+            "concentration",
+            "dispersion",
+        ]
+
+        for stat in phys_stats:
+            value = self.safe_float_conversion(phys_data.get(stat, 0.0))
+            features.append(value)
+            names.append(f"physical_{stat}")
+
+        return np.array(features, dtype=np.float32), names
+
+    def _extract_pair_graph_features(
+        self, pair_data: Any
+    ) -> Tuple[np.ndarray, List[str]]:
+        """쌍 그래프 특성 추출 (20차원)"""
+        features = []
+        names = []
+
+        if isinstance(pair_data, (list, np.ndarray)) and len(pair_data) > 0:
+            # 기존 압축 벡터 사용
+            pair_vector = np.array(pair_data, dtype=np.float32)
+            # 20차원으로 조정
+            if len(pair_vector) >= 20:
+                features = pair_vector[:20].tolist()
+            else:
+                features = pair_vector.tolist() + [0.0] * (20 - len(pair_vector))
+        else:
+            # 기본값
+            features = [0.0] * 20
+
+        # 특성 이름 생성
+        names = [f"pair_graph_{i+1}" for i in range(20)]
+
+        return np.array(features, dtype=np.float32), names
 
     def _extract_position_entropy_std_features(
         self, analysis_data: Dict[str, Any]
@@ -4379,4 +4971,316 @@ class PatternVectorizer:
             # 오류 발생 시 기본 벡터 반환 (20개 특성)
             default_vector = np.zeros(20, dtype=np.float32)
             default_names = [f"overlap_feature_{i+1}" for i in range(20)]
+            return default_vector, default_names
+
+    def extract_position_bias_features(
+        self, full_analysis: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """
+        추첨 순서 편향 분석 결과를 벡터화합니다.
+
+        Args:
+            full_analysis: 전체 분석 결과
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 추첨 순서 편향 벡터와 특성 이름
+        """
+        try:
+            position_bias_data = full_analysis.get("position_bias_features", {})
+
+            if not position_bias_data:
+                self.logger.warning(
+                    "추첨 순서 편향 데이터가 없습니다. 기본값으로 대체합니다."
+                )
+                position_bias_data = {}
+
+            # 추첨 순서 편향 특성 추출 (5개)
+            features = []
+            feature_names = []
+
+            # 1. 위치별 평균값 특성
+            position_min_value_mean = position_bias_data.get(
+                "position_min_value_mean", 0.0
+            )
+            position_max_value_mean = position_bias_data.get(
+                "position_max_value_mean", 0.0
+            )
+            position_gap_mean = position_bias_data.get("position_gap_mean", 0.0)
+
+            features.extend(
+                [
+                    np.clip(position_min_value_mean / 45.0, 0, 1),  # 정규화
+                    np.clip(position_max_value_mean / 45.0, 0, 1),  # 정규화
+                    np.clip(position_gap_mean / 40.0, 0, 1),  # 최대 간격 40으로 정규화
+                ]
+            )
+
+            feature_names.extend(
+                [
+                    "position_min_value_mean",
+                    "position_max_value_mean",
+                    "position_gap_mean",
+                ]
+            )
+
+            # 2. 홀짝 및 구간 비율 특성
+            position_even_odd_ratio = position_bias_data.get(
+                "position_even_odd_ratio", 0.5
+            )
+            position_low_high_ratio = position_bias_data.get(
+                "position_low_high_ratio", 0.5
+            )
+
+            features.extend(
+                [
+                    np.clip(position_even_odd_ratio, 0, 1),
+                    np.clip(position_low_high_ratio, 0, 1),
+                ]
+            )
+
+            feature_names.extend(["position_even_odd_ratio", "position_low_high_ratio"])
+
+            # NaN/Inf 체크 및 수정
+            features = [self.safe_float_conversion(f) for f in features]
+            position_vector = np.array(features, dtype=np.float32)
+
+            self.logger.info(f"추첨 순서 편향 벡터화 완료: {len(features)}개 특성")
+            return position_vector, feature_names
+
+        except Exception as e:
+            self.logger.error(f"추첨 순서 편향 벡터화 중 오류 발생: {str(e)}")
+            # 기본값 반환
+            default_vector = np.zeros(5, dtype=np.float32)
+            default_names = [
+                "position_min_value_mean",
+                "position_max_value_mean",
+                "position_gap_mean",
+                "position_even_odd_ratio",
+                "position_low_high_ratio",
+            ]
+            return default_vector, default_names
+
+    def extract_overlap_time_gap_features(
+        self, full_analysis: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """
+        중복 패턴 시간적 주기성 분석 결과를 벡터화합니다.
+
+        Args:
+            full_analysis: 전체 분석 결과
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 시간적 주기성 벡터와 특성 이름
+        """
+        try:
+            overlap_time_data = full_analysis.get("overlap_time_gaps", {})
+
+            if not overlap_time_data:
+                self.logger.warning(
+                    "중복 패턴 시간적 주기성 데이터가 없습니다. 기본값으로 대체합니다."
+                )
+                overlap_time_data = {}
+
+            # 시간적 주기성 특성 추출 (5개)
+            features = []
+            feature_names = []
+
+            # 1. 3매치/4매치 평균 간격
+            overlap_3_time_gap_mean = overlap_time_data.get(
+                "overlap_3_time_gap_mean", 0.0
+            )
+            overlap_4_time_gap_mean = overlap_time_data.get(
+                "overlap_4_time_gap_mean", 0.0
+            )
+
+            # 간격을 100회차로 정규화 (보통 10-50회차 간격)
+            features.extend(
+                [
+                    np.clip(overlap_3_time_gap_mean / 100.0, 0, 1),
+                    np.clip(overlap_4_time_gap_mean / 100.0, 0, 1),
+                ]
+            )
+
+            feature_names.extend(["overlap_3_time_gap_mean", "overlap_4_time_gap_mean"])
+
+            # 2. 간격 표준편차
+            overlap_time_gap_stddev = overlap_time_data.get(
+                "overlap_time_gap_stddev", 0.0
+            )
+            features.append(
+                np.clip(overlap_time_gap_stddev / 50.0, 0, 1)
+            )  # 표준편차 50으로 정규화
+            feature_names.append("overlap_time_gap_stddev")
+
+            # 3. 최근 중복 발생 횟수
+            recent_overlap_3_count = overlap_time_data.get("recent_overlap_3_count", 0)
+            recent_overlap_4_count = overlap_time_data.get("recent_overlap_4_count", 0)
+
+            features.extend(
+                [
+                    np.clip(recent_overlap_3_count / 10.0, 0, 1),  # 최대 10회로 정규화
+                    np.clip(recent_overlap_4_count / 5.0, 0, 1),  # 최대 5회로 정규화
+                ]
+            )
+
+            feature_names.extend(["recent_overlap_3_count", "recent_overlap_4_count"])
+
+            # NaN/Inf 체크 및 수정
+            features = [self.safe_float_conversion(f) for f in features]
+            time_gap_vector = np.array(features, dtype=np.float32)
+
+            self.logger.info(
+                f"중복 패턴 시간적 주기성 벡터화 완료: {len(features)}개 특성"
+            )
+            return time_gap_vector, feature_names
+
+        except Exception as e:
+            self.logger.error(f"중복 패턴 시간적 주기성 벡터화 중 오류 발생: {str(e)}")
+            # 기본값 반환
+            default_vector = np.zeros(5, dtype=np.float32)
+            default_names = [
+                "overlap_3_time_gap_mean",
+                "overlap_4_time_gap_mean",
+                "overlap_time_gap_stddev",
+                "recent_overlap_3_count",
+                "recent_overlap_4_count",
+            ]
+            return default_vector, default_names
+
+    def extract_conditional_interaction_features(
+        self, full_analysis: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """
+        번호 간 조건부 상호작용 분석 결과를 벡터화합니다.
+
+        Args:
+            full_analysis: 전체 분석 결과
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 조건부 상호작용 벡터와 특성 이름
+        """
+        try:
+            conditional_data = full_analysis.get("conditional_interaction_features", {})
+
+            if not conditional_data:
+                self.logger.warning(
+                    "번호 간 조건부 상호작용 데이터가 없습니다. 기본값으로 대체합니다."
+                )
+                conditional_data = {}
+
+            # 조건부 상호작용 특성 추출 (3개)
+            features = []
+            feature_names = []
+
+            # 1. 끌림 점수 (Attraction Score)
+            number_attraction_score = conditional_data.get(
+                "number_attraction_score", 0.0
+            )
+            features.append(np.clip(number_attraction_score, 0, 1))
+            feature_names.append("number_attraction_score")
+
+            # 2. 회피 점수 (Repulsion Score)
+            number_repulsion_score = conditional_data.get("number_repulsion_score", 0.0)
+            features.append(np.clip(number_repulsion_score, 0, 1))
+            feature_names.append("number_repulsion_score")
+
+            # 3. 조건부 의존성 강도
+            conditional_dependency_strength = conditional_data.get(
+                "conditional_dependency_strength", 0.0
+            )
+            features.append(np.clip(conditional_dependency_strength, 0, 1))
+            feature_names.append("conditional_dependency_strength")
+
+            # NaN/Inf 체크 및 수정
+            features = [self.safe_float_conversion(f) for f in features]
+            conditional_vector = np.array(features, dtype=np.float32)
+
+            self.logger.info(
+                f"번호 간 조건부 상호작용 벡터화 완료: {len(features)}개 특성"
+            )
+            return conditional_vector, feature_names
+
+        except Exception as e:
+            self.logger.error(f"번호 간 조건부 상호작용 벡터화 중 오류 발생: {str(e)}")
+            # 기본값 반환
+            default_vector = np.zeros(3, dtype=np.float32)
+            default_names = [
+                "number_attraction_score",
+                "number_repulsion_score",
+                "conditional_dependency_strength",
+            ]
+            return default_vector, default_names
+
+    def extract_micro_bias_features(
+        self, full_analysis: Dict[str, Any]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """
+        홀짝 및 구간별 미세 편향성 분석 결과를 벡터화합니다.
+
+        Args:
+            full_analysis: 전체 분석 결과
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 미세 편향성 벡터와 특성 이름
+        """
+        try:
+            odd_even_data = full_analysis.get("odd_even_micro_bias", {})
+            range_data = full_analysis.get("range_micro_bias", {})
+
+            if not odd_even_data:
+                self.logger.warning(
+                    "홀짝 미세 편향성 데이터가 없습니다. 기본값으로 대체합니다."
+                )
+                odd_even_data = {}
+
+            if not range_data:
+                self.logger.warning(
+                    "구간별 미세 편향성 데이터가 없습니다. 기본값으로 대체합니다."
+                )
+                range_data = {}
+
+            # 미세 편향성 특성 추출 (4개)
+            features = []
+            feature_names = []
+
+            # 1. 홀짝 편향 점수
+            odd_even_bias_score = odd_even_data.get("odd_even_bias_score", 0.0)
+            features.append(np.clip(odd_even_bias_score, 0, 1))
+            feature_names.append("odd_even_bias_score")
+
+            # 2. 구간 균형 편향 점수
+            segment_balance_bias_score = range_data.get(
+                "segment_balance_bias_score", 0.0
+            )
+            features.append(np.clip(segment_balance_bias_score, 0, 1))
+            feature_names.append("segment_balance_bias_score")
+
+            # 3. 구간 편향 이동 평균
+            range_bias_moving_avg = range_data.get("range_bias_moving_avg", 0.0)
+            features.append(np.clip(range_bias_moving_avg, 0, 1))
+            feature_names.append("range_bias_moving_avg")
+
+            # 4. 홀짝 변화율 (최근 vs 과거)
+            odd_ratio_change_rate = odd_even_data.get("odd_ratio_change_rate", 0.0)
+            # 변화율을 [-0.5, 0.5] 범위로 가정하고 [0, 1]로 정규화
+            features.append(np.clip((odd_ratio_change_rate + 0.5), 0, 1))
+            feature_names.append("odd_ratio_change_rate")
+
+            # NaN/Inf 체크 및 수정
+            features = [self.safe_float_conversion(f) for f in features]
+            micro_bias_vector = np.array(features, dtype=np.float32)
+
+            self.logger.info(f"미세 편향성 벡터화 완료: {len(features)}개 특성")
+            return micro_bias_vector, feature_names
+
+        except Exception as e:
+            self.logger.error(f"미세 편향성 벡터화 중 오류 발생: {str(e)}")
+            # 기본값 반환
+            default_vector = np.zeros(4, dtype=np.float32)
+            default_names = [
+                "odd_even_bias_score",
+                "segment_balance_bias_score",
+                "range_bias_moving_avg",
+                "odd_ratio_change_rate",
+            ]
             return default_vector, default_names

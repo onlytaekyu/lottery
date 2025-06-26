@@ -1,0 +1,131 @@
+# 신규 패턴 분석 항목 설정
+# DAEBAK_AI 프로젝트 - 추첨 순서 편향, 시간적 주기성, 번호 간 상호작용, 미세 편향성 분석
+
+# ===================
+# 신규 패턴 분석 설정
+# ===================
+new_pattern_analysis:
+  # 1. 추첨 순서 편향 분석 (Position Bias)
+  position_bias:
+    enabled: true
+    enable_position_statistics: true  # 위치별 통계 분석
+    enable_gap_analysis: true  # 간격 분석
+    enable_ratio_analysis: true  # 홀짝/구간 비율 분석
+    min_max_normalization: true  # 최소/최대값 정규화
+    position_count: 6  # 위치 개수 (1~6)
+    
+  # 2. 중복 패턴 시간적 주기성 분석 (Overlap Time Gaps)
+  overlap_time_gaps:
+    enabled: true
+    analysis_window: 100  # 최근 100회차 분석
+    min_overlap_count: 3  # 최소 중복 개수
+    enable_periodicity_detection: true  # 주기성 탐지
+    gap_normalization_factor: 100  # 간격 정규화 인수
+    stddev_normalization_factor: 50  # 표준편차 정규화 인수
+    max_recent_count_3: 10  # 3매치 최대 카운트
+    max_recent_count_4: 5   # 4매치 최대 카운트
+    
+  # 3. 번호 간 조건부 상호작용 분석 (Conditional Interaction)
+  conditional_interaction:
+    enabled: true
+    enable_chi_square_test: true  # 카이제곱 검정 활성화
+    significance_level: 0.05  # 유의수준
+    top_k_pairs: 10  # 상위 K개 쌍 분석
+    min_occurrence_threshold: 5  # 최소 발생 횟수
+    enable_attraction_analysis: true  # 끌림 분석
+    enable_repulsion_analysis: true  # 회피 분석
+    
+  # 4. 홀짝 및 구간별 미세 편향성 분석 (Micro Bias)
+  micro_bias:
+    enabled: true
+    bias_threshold: 0.05  # 편향 임계값
+    moving_average_window: 50  # 이동평균 윈도우
+    enable_trend_analysis: true  # 추세 분석
+    theoretical_odd_ratio: 0.5  # 이론적 홀수 비율
+    change_rate_range: 0.5  # 변화율 범위 (±0.5)
+    enable_segment_analysis: true  # 구간별 분석
+    
+# ===================
+# 벡터화 설정
+# ===================
+vectorization:
+  # 각 분석 항목별 벡터 차원
+  position_bias_dims: 5
+  overlap_time_gaps_dims: 5
+  conditional_interaction_dims: 3
+  micro_bias_dims: 4
+  
+  # 정규화 설정
+  normalization:
+    position_bias: "minmax"  # 0-1 범위 정규화
+    overlap_time_gaps: "minmax"
+    conditional_interaction: "clip"  # 클리핑 정규화
+    micro_bias: "custom"  # 사용자 정의 정규화
+    
+  # 저장 설정
+  save_individual_vectors: true  # 개별 벡터 저장
+  save_combined_vector: true     # 통합 벡터 저장
+  
+# ===================
+# 필수 피처 목록
+# ===================
+essential_features:
+  position_bias:
+    - "position_min_value_mean"
+    - "position_max_value_mean"
+    - "position_gap_mean"
+    - "position_even_odd_ratio"
+    - "position_low_high_ratio"
+    
+  overlap_time_gaps:
+    - "overlap_3_time_gap_mean"
+    - "overlap_4_time_gap_mean"
+    - "overlap_time_gap_stddev"
+    - "recent_overlap_3_count"
+    - "recent_overlap_4_count"
+    
+  conditional_interaction:
+    - "number_attraction_score"
+    - "number_repulsion_score"
+    - "conditional_dependency_strength"
+    
+  micro_bias:
+    - "odd_even_bias_score"
+    - "segment_balance_bias_score"
+    - "range_bias_moving_avg"
+    - "odd_ratio_change_rate"
+
+# ===================
+# 저장 경로 설정
+# ===================
+storage_paths:
+  vector_dir: "data/cache"
+  analysis_result_dir: "data/result/analysis"
+  individual_vectors:
+    position_bias: "position_bias_vector.npy"
+    overlap_time_gaps: "overlap_time_gap_vector.npy"
+    conditional_interaction: "conditional_interaction_vector.npy"
+    micro_bias: "micro_bias_vector.npy"
+  feature_names:
+    position_bias: "position_bias_vector.names.json"
+    overlap_time_gaps: "overlap_time_gap_vector.names.json"
+    conditional_interaction: "conditional_interaction_vector.names.json"
+    micro_bias: "micro_bias_vector.names.json"
+
+# ===================
+# 성능 최적화 설정
+# ===================
+performance:
+  enable_parallel_processing: false  # 병렬 처리 (현재 비활성화)
+  cache_analysis_results: true       # 분석 결과 캐싱
+  use_numpy_optimizations: true      # NumPy 최적화 사용
+  memory_efficient_mode: true        # 메모리 효율 모드
+  
+# ===================
+# 로깅 설정
+# ===================
+logging:
+  enable_debug_logging: true
+  log_vector_statistics: true
+  log_analysis_progress: true
+  log_level: "INFO" 
