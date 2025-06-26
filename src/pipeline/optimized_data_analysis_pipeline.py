@@ -8,7 +8,8 @@
 - 중복 함수 통합 및 제거
 - 세분화된 캐싱 시스템
 - 메모리 효율적 청크 처리
-- 병렬 처리 지원
+- 병렬 처리 지원 (ProcessPool 통합)
+- 하이브리드 최적화 시스템
 - 성능 모니터링 및 최적화
 """
 
@@ -43,6 +44,12 @@ from src.utils.state_vector_cache import get_cache
 from src.utils.data_loader import load_draw_history, LotteryJSONEncoder
 from src.utils.config_loader import load_config
 from src.utils.profiler import get_profiler
+
+# 최적화 시스템 import
+from src.utils.process_pool_manager import get_process_pool_manager
+from src.utils.hybrid_optimizer import get_hybrid_optimizer, optimize
+from src.utils.memory_manager import get_memory_manager
+
 from src.analysis.pattern_analyzer import PatternAnalyzer
 from src.analysis.pattern_vectorizer import PatternVectorizer
 from src.utils.report_writer import safe_convert, save_physical_performance_report
@@ -84,6 +91,42 @@ CACHE_STRATEGY = {
 # 전역 엄격한 에러 핸들러
 strict_handler = StrictErrorHandler()
 
+# 전역 최적화 시스템들
+process_pool_manager = None
+hybrid_optimizer = None
+memory_manager = None
+
+
+def initialize_optimization_systems(config: Dict[str, Any]):
+    """최적화 시스템들 초기화"""
+    global process_pool_manager, hybrid_optimizer, memory_manager
+
+    try:
+        # 최적화 설정 로드
+        optimization_config = config.get("optimization", {})
+
+        # ProcessPool 관리자 초기화
+        process_pool_config = optimization_config.get("process_pool", {})
+        process_pool_manager = get_process_pool_manager(process_pool_config)
+        logger.info("ProcessPool 관리자 초기화 완료")
+
+        # 메모리 관리자 초기화
+        memory_config = optimization_config.get("memory_pool", {})
+        memory_manager = get_memory_manager(memory_config)
+        logger.info("메모리 관리자 초기화 완료")
+
+        # 하이브리드 최적화 시스템 초기화
+        hybrid_config = optimization_config.get("hybrid", {})
+        hybrid_optimizer = get_hybrid_optimizer(hybrid_config)
+        logger.info("하이브리드 최적화 시스템 초기화 완료")
+
+    except Exception as e:
+        logger.error(f"최적화 시스템 초기화 실패: {e}")
+        # 최적화 시스템 없이도 동작할 수 있도록 None으로 설정
+        process_pool_manager = None
+        hybrid_optimizer = None
+        memory_manager = None
+
 
 class OptimizedPerformanceTracker:
     """최적화된 성능 추적기"""
@@ -94,6 +137,7 @@ class OptimizedPerformanceTracker:
         self.cache_misses = 0
         self.memory_usage = []
         self.processing_times = {}
+        self.optimization_stats = {}
 
     def track_cache_hit(self):
         self.cache_hits += 1
@@ -120,6 +164,23 @@ class OptimizedPerformanceTracker:
             self.processing_times[operation] = []
         self.processing_times[operation].append(duration)
 
+    def track_optimization_result(self, operation: str, strategy: str, speedup: float):
+        """최적화 결과 추적"""
+        if operation not in self.optimization_stats:
+            self.optimization_stats[operation] = {}
+
+        if strategy not in self.optimization_stats[operation]:
+            self.optimization_stats[operation][strategy] = {
+                "count": 0,
+                "total_speedup": 0.0,
+                "avg_speedup": 0.0,
+            }
+
+        stats = self.optimization_stats[operation][strategy]
+        stats["count"] += 1
+        stats["total_speedup"] += speedup
+        stats["avg_speedup"] = stats["total_speedup"] / stats["count"]
+
     def get_performance_summary(self) -> Dict[str, Any]:
         return {
             "cache_hit_rate": self.get_cache_hit_rate(),
@@ -138,7 +199,53 @@ class OptimizedPerformanceTracker:
                 }
                 for op, times in self.processing_times.items()
             },
+            "optimization_stats": self.optimization_stats,
         }
+
+
+@optimize(
+    task_info={
+        "function_type": "analysis",
+        "parallelizable": True,
+        "gpu_compatible": False,
+    }
+)
+def optimized_pattern_analysis(
+    data_chunk: List, analyzer: PatternAnalyzer
+) -> Dict[str, Any]:
+    """최적화된 패턴 분석"""
+    try:
+        # 메모리 관리 스코프 내에서 실행
+        if memory_manager:
+            with memory_manager.allocation_scope():
+                return analyzer.analyze(data_chunk)
+        else:
+            return analyzer.analyze(data_chunk)
+    except Exception as e:
+        logger.error(f"패턴 분석 실패: {e}")
+        return {}
+
+
+@optimize(
+    task_info={
+        "function_type": "vectorize",
+        "parallelizable": True,
+        "gpu_compatible": False,
+    }
+)
+def optimized_vectorization(
+    patterns: List, vectorizer: PatternVectorizer
+) -> Tuple[np.ndarray, List[str]]:
+    """최적화된 벡터화"""
+    try:
+        if memory_manager:
+            with memory_manager.allocation_scope():
+                return vectorizer.vectorize(patterns)
+        else:
+            return vectorizer.vectorize(patterns)
+    except Exception as e:
+        logger.error(f"벡터화 실패: {e}")
+        return np.array([]), []
 
 
 def generate_cache_key(data_info: str, operation: str, **kwargs) -> str:
@@ -158,8 +265,22 @@ def check_memory_usage() -> bool:
     return memory_info.percent < (CHUNK_PROCESSING_CONFIG["memory_threshold"] * 100)
 
 
-def process_data_chunks(data: List, chunk_size: int, process_func, **kwargs):
-    """청크 단위로 데이터 처리"""
+def process_data_chunks_optimized(data: List, chunk_size: int, process_func, **kwargs):
+    """최적화된 청크 단위 데이터 처리"""
+    global process_pool_manager
+
+    # ProcessPool이 사용 가능하고 데이터가 충분히 큰 경우 병렬 처리
+    if process_pool_manager and len(data) > 200:
+        try:
+            chunks = process_pool_manager.chunk_and_split(data, chunk_size)
+            results = process_pool_manager.parallel_analyze(
+                chunks, process_func, **kwargs
+            )
+            return process_pool_manager.merge_results(results)
+        except Exception as e:
+            logger.warning(f"병렬 처리 실패, 순차 처리로 전환: {e}")
+
+    # 순차 처리 (기존 방식)
     results = []
     total_chunks = len(data) // chunk_size + (1 if len(data) % chunk_size else 0)
 
@@ -233,6 +354,10 @@ def run_optimized_data_analysis() -> bool:
 
                 logger.info(f"설정_로드 완료 ({time.time() - start_time:.2f}초)")
                 logger.info("✅ 설정 로드 완료")
+
+                # 1.5. 최적화 시스템 초기화
+                initialize_optimization_systems(config)
+                logger.info("✅ 최적화 시스템 초기화 완료")
 
             # 2. 데이터 로드 및 검증 - 실패 시 즉시 종료
             with profiler.profile("데이터_로드"):
@@ -339,7 +464,7 @@ def run_optimized_data_analysis() -> bool:
                     logger.info(
                         f"대용량 데이터 감지: {len(historical_data)}개 -> {chunk_size} 단위로 처리"
                     )
-                    chunk_results = process_data_chunks(
+                    chunk_results = process_data_chunks_optimized(
                         historical_data, chunk_size, analyze_chunk
                     )
                     validate_and_fail_fast(

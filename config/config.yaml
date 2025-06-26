@@ -229,6 +229,23 @@ analysis:
   enable_overlap_time_gap_analysis: true  # 중복 패턴 시간적 주기성 분석 활성화
   enable_conditional_interaction_analysis: true  # 번호 간 조건부 상호작용 분석 활성화
   enable_micro_bias_analysis: true  # 홀짝 및 구간별 미세 편향성 분석 활성화
+  # 신규 분석 항목 세부 설정
+  position_bias:
+    enable_position_statistics: true  # 위치별 통계 분석
+    enable_gap_analysis: true  # 간격 분석
+    enable_ratio_analysis: true  # 홀짝/구간 비율 분석
+  overlap_time_gaps:
+    analysis_window: 100  # 최근 100회차 분석
+    min_overlap_count: 3  # 최소 중복 개수
+    enable_periodicity_detection: true  # 주기성 탐지
+  conditional_interaction:
+    enable_chi_square_test: true  # 카이제곱 검정 활성화
+    significance_level: 0.05  # 유의수준
+    top_k_pairs: 10  # 상위 K개 쌍 분석
+  micro_bias:
+    bias_threshold: 0.05  # 편향 임계값
+    moving_average_window: 50  # 이동평균 윈도우
+    enable_trend_analysis: true  # 추세 분석
   save_to:
     json: false  # JSON 형식으로 저장 안함
     txt: false   # 텍스트 형식으로 저장 안함
@@ -427,3 +444,68 @@ training:
   optimizer: "adam"
   scheduler: "cosine"
   use_filtered_vector: true  # 저분산 특성이 제거된 필터링된 벡터 사용 여부
+
+# ===================
+# 신규 패턴 분석 설정 (추가)
+# ===================
+new_pattern_analysis:
+  # 1. 추첨 순서 편향 분석 (Position Bias)
+  position_bias:
+    enabled: true
+    enable_position_statistics: true  # 위치별 통계 분석
+    enable_gap_analysis: true  # 간격 분석
+    enable_ratio_analysis: true  # 홀짝/구간 비율 분석
+    min_max_normalization: true  # 최소/최대값 정규화
+    position_count: 6  # 위치 개수 (1~6)
+    
+  # 2. 중복 패턴 시간적 주기성 분석 (Overlap Time Gaps)
+  overlap_time_gaps:
+    enabled: true
+    analysis_window: 100  # 최근 100회차 분석
+    min_overlap_count: 3  # 최소 중복 개수
+    enable_periodicity_detection: true  # 주기성 탐지
+    gap_normalization_factor: 100  # 간격 정규화 인수
+    stddev_normalization_factor: 50  # 표준편차 정규화 인수
+    max_recent_count_3: 10  # 3매치 최대 카운트
+    max_recent_count_4: 5   # 4매치 최대 카운트
+    
+  # 3. 번호 간 조건부 상호작용 분석 (Conditional Interaction)
+  conditional_interaction:
+    enabled: true
+    enable_chi_square_test: true  # 카이제곱 검정 활성화
+    significance_level: 0.05  # 유의수준
+    top_k_pairs: 10  # 상위 K개 쌍 분석
+    min_occurrence_threshold: 5  # 최소 발생 횟수
+    enable_attraction_analysis: true  # 끌림 분석
+    enable_repulsion_analysis: true  # 회피 분석
+    
+  # 4. 홀짝 및 구간별 미세 편향성 분석 (Micro Bias)
+  micro_bias:
+    enabled: true
+    bias_threshold: 0.05  # 편향 임계값
+    moving_average_window: 50  # 이동평균 윈도우
+    enable_trend_analysis: true  # 추세 분석
+    theoretical_odd_ratio: 0.5  # 이론적 홀수 비율
+    change_rate_range: 0.5  # 변화율 범위 (±0.5)
+    enable_segment_analysis: true  # 구간별 분석
+
+# ===================
+# 신규 분석 벡터화 설정
+# ===================
+new_vectorization:
+  # 각 분석 항목별 벡터 차원
+  position_bias_dims: 5
+  overlap_time_gaps_dims: 5
+  conditional_interaction_dims: 3
+  micro_bias_dims: 4
+  
+  # 정규화 설정
+  normalization:
+    position_bias: "minmax"  # 0-1 범위 정규화
+    overlap_time_gaps: "minmax"
+    conditional_interaction: "clip"  # 클리핑 정규화
+    micro_bias: "custom"  # 사용자 정의 정규화
+    
+  # 저장 설정
+  save_individual_vectors: true  # 개별 벡터 저장
+  save_combined_vector: true     # 통합 벡터 저장
