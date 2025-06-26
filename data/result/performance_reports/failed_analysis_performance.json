@@ -1,0 +1,26 @@
+{
+  "total_time": 2.1008310317993164,
+  "total_memory_increase": 169.046875,
+  "stage_breakdown": {
+    "times": {
+      "전체_파이프라인": 2.1008310317993164
+    },
+    "memory": {
+      "전체_파이프라인": 169.046875
+    }
+  },
+  "slowest_stage": [
+    "전체_파이프라인",
+    2.1008310317993164
+  ],
+  "memory_intensive_stage": [
+    "전체_파이프라인",
+    169.046875
+  ],
+  "timestamp": 1750924265.361038,
+  "system_info": {
+    "cpu_count": 16,
+    "memory_total": 31.615131378173828,
+    "memory_available": 20.960918426513672
+  }
+}

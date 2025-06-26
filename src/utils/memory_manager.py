@@ -27,10 +27,12 @@ import traceback
 from contextlib import contextmanager
 import os
 import random
+import json
 
 # 상대경로 임포트로 변경
 from .error_handler import get_logger
 from .performance_tracker import Profiler, ProfilerConfig
+from .config_loader import ConfigProxy
 
 logger = get_logger(__name__)
 
@@ -1459,3 +1461,46 @@ class MemoryManager:
             logger.error(f"안전한 배치 크기 계산 중 오류 발생: {str(e)}")
             # 오류 발생 시 보수적인 값 반환
             return max(1, min(8, getattr(self.config, "min_batch_size", 1)))
+
+
+def cleanup_analysis():
+    """명시적 메모리 해제 함수"""
+    try:
+        # Python 가비지 컬렉션 실행
+        gc.collect()
+
+        # CUDA 메모리 해제
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+        # 메모리 사용량 로깅
+        memory_info = psutil.virtual_memory()
+        logger.info(
+            f"메모리 정리 완료 - 사용량: {memory_info.percent:.1f}%, 사용가능: {memory_info.available / (1024**3):.1f}GB"
+        )
+
+    except Exception as e:
+        logger.error(f"메모리 정리 중 오류: {str(e)}")
+
+
+@contextmanager
+def memory_managed_analysis():
+    """메모리 관리 컨텍스트 매니저"""
+    try:
+        # 시작 전 메모리 상태 기록
+        start_memory = psutil.virtual_memory()
+        logger.info(f"분석 시작 - 메모리 사용량: {start_memory.percent:.1f}%")
+
+        yield
+
+    except Exception as e:
+        logger.error(f"분석 중 오류 발생: {str(e)}")
+        raise
+    finally:
+        # 종료 후 메모리 정리
+        cleanup_analysis()
+
+        # 최종 메모리 상태 기록
+        end_memory = psutil.virtual_memory()
+        logger.info(f"분석 완료 - 메모리 사용량: {end_memory.percent:.1f}%")

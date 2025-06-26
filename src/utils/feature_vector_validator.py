@@ -2196,95 +2196,97 @@ def validate_vector_integrity_enhanced(
 ) -> Dict[str, Any]:
     """
     강화된 벡터 무결성 검증
-    
+
     Args:
         vector_path: 벡터 파일 경로
-        names_path: 특성 이름 파일 경로  
+        names_path: 특성 이름 파일 경로
         expected_dims: 예상 차원 수
-        
+
     Returns:
         Dict[str, Any]: 검증 결과 및 통계
     """
     logger.info("강화된 벡터 무결성 검증 시작...")
-    
+
     result = {
         "validation_passed": False,
         "dimension_check": False,
         "nan_inf_check": False,
         "entropy_check": False,
-        "statistics": {}
+        "statistics": {},
     }
-    
+
     try:
         # 1. 파일 존재 확인
         if not os.path.exists(vector_path):
             raise FileNotFoundError(f"벡터 파일이 존재하지 않습니다: {vector_path}")
         if not os.path.exists(names_path):
             raise FileNotFoundError(f"특성 이름 파일이 존재하지 않습니다: {names_path}")
-        
+
         # 2. 벡터 및 특성 이름 로드
         vector = np.load(vector_path)
         with open(names_path, "r", encoding="utf-8") as f:
             feature_names = json.load(f)
-        
+
         # 3. 차원 일치 확인
         if len(vector) == len(feature_names) == expected_dims:
             result["dimension_check"] = True
             logger.info(f"차원 검증 통과: {len(vector)}차원")
         else:
-            logger.error(f"차원 불일치: 벡터 {len(vector)}, 특성명 {len(feature_names)}, 예상 {expected_dims}")
+            logger.error(
+                f"차원 불일치: 벡터 {len(vector)}, 특성명 {len(feature_names)}, 예상 {expected_dims}"
+            )
             result["statistics"]["vector_dims"] = len(vector)
             result["statistics"]["names_count"] = len(feature_names)
             result["statistics"]["expected_dims"] = expected_dims
-        
+
         # 4. NaN/Inf 비율 확인 (1% 초과 시 실패)
         nan_count = np.isnan(vector).sum()
         inf_count = np.isinf(vector).sum()
         total_invalid = nan_count + inf_count
         invalid_ratio = total_invalid / len(vector)
-        
+
         result["statistics"]["nan_count"] = int(nan_count)
         result["statistics"]["inf_count"] = int(inf_count)
         result["statistics"]["invalid_ratio"] = float(invalid_ratio)
-        
+
         if invalid_ratio <= 0.01:
             result["nan_inf_check"] = True
             logger.info(f"NaN/Inf 검증 통과: {invalid_ratio:.6f} <= 0.01")
         else:
             logger.error(f"NaN/Inf 비율 초과: {invalid_ratio:.6f} > 0.01")
-        
+
         # 5. 특성 다양성 엔트로피 계산
         entropy_score = calculate_feature_entropy(vector)
         result["statistics"]["entropy_score"] = entropy_score
-        
+
         if entropy_score >= 0.1:
             result["entropy_check"] = True
             logger.info(f"엔트로피 검증 통과: {entropy_score:.4f} >= 0.1")
         else:
             logger.warning(f"특성 다양성 부족: 엔트로피 {entropy_score:.4f} < 0.1")
             result["entropy_check"] = True  # 경고만 하고 통과
-        
+
         # 6. 추가 통계 계산
         result["statistics"]["vector_mean"] = float(np.mean(vector))
         result["statistics"]["vector_std"] = float(np.std(vector))
         result["statistics"]["vector_min"] = float(np.min(vector))
         result["statistics"]["vector_max"] = float(np.max(vector))
         result["statistics"]["zero_ratio"] = float(np.sum(vector == 0) / len(vector))
-        
+
         # 7. 최종 검증 결과
         result["validation_passed"] = (
-            result["dimension_check"] and 
-            result["nan_inf_check"] and 
-            result["entropy_check"]
+            result["dimension_check"]
+            and result["nan_inf_check"]
+            and result["entropy_check"]
         )
-        
+
         if result["validation_passed"]:
             logger.info("강화된 벡터 무결성 검증 통과")
         else:
             logger.error("강화된 벡터 무결성 검증 실패")
-        
+
         return result
-        
+
     except Exception as e:
         logger.error(f"벡터 무결성 검증 중 오류: {e}")
         result["error"] = str(e)
@@ -2294,32 +2296,32 @@ def validate_vector_integrity_enhanced(
 def calculate_feature_entropy(vector: np.ndarray) -> float:
     """
     특성 벡터의 정보 엔트로피 계산
-    
+
     Args:
         vector: 특성 벡터
-        
+
     Returns:
         float: 엔트로피 점수 (0~1)
     """
     try:
         # 벡터를 히스토그램으로 변환
         hist, _ = np.histogram(vector, bins=50, density=True)
-        
+
         # 0이 아닌 확률만 사용
         hist = hist[hist > 0]
-        
+
         if len(hist) == 0:
             return 0.0
-        
+
         # 엔트로피 계산
         entropy = -np.sum(hist * np.log2(hist + 1e-10))
-        
+
         # 0~1 범위로 정규화
         max_entropy = np.log2(len(hist))
         normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
-        
+
         return float(normalized_entropy)
-        
+
     except Exception as e:
         logger.warning(f"엔트로피 계산 중 오류: {e}")
         return 0.0
@@ -2330,61 +2332,77 @@ def fix_vector_dimensions(
 ) -> bool:
     """
     벡터 차원을 목표 차원에 맞게 수정
-    
+
     Args:
         vector_path: 벡터 파일 경로
         names_path: 특성 이름 파일 경로
         target_dims: 목표 차원 수
-        
+
     Returns:
         bool: 수정 성공 여부
     """
     try:
         logger.info(f"벡터 차원 수정 시작: 목표 {target_dims}차원")
-        
+
         # 기존 데이터 로드
         vector = np.load(vector_path)
         with open(names_path, "r", encoding="utf-8") as f:
             feature_names = json.load(f)
-        
+
         current_dims = len(vector)
         current_names = len(feature_names)
-        
+
         logger.info(f"현재 상태: 벡터 {current_dims}차원, 특성명 {current_names}개")
-        
+
         # 차원 조정
         if current_dims < target_dims:
             # 패딩
             padding_size = target_dims - current_dims
-            padded_vector = np.pad(vector, (0, padding_size), mode='constant', constant_values=0.0)
-            
+            padded_vector = np.pad(
+                vector, (0, padding_size), mode="constant", constant_values=0.0
+            )
+
             # 특성 이름도 패딩
-            padded_names = feature_names + [f"padded_feature_{i+1}" for i in range(padding_size)]
-            
+            padded_names = feature_names + [
+                f"padded_feature_{i+1}" for i in range(padding_size)
+            ]
+
             logger.info(f"벡터 패딩: {current_dims} → {target_dims}차원")
-            
+
         elif current_dims > target_dims:
             # 절단
             padded_vector = vector[:target_dims]
             padded_names = feature_names[:target_dims]
-            
+
             logger.info(f"벡터 절단: {current_dims} → {target_dims}차원")
-            
+
         else:
             # 이미 올바른 차원
             padded_vector = vector
             padded_names = feature_names
             logger.info("벡터 차원이 이미 올바릅니다.")
-        
+
         # 특성 이름 수 조정
         if len(padded_names) < target_dims:
-            padded_names.extend([f"auto_feature_{i+1}" for i in range(target_dims - len(padded_names))])
+            padded_names.extend(
+                [f"auto_feature_{i+1}" for i in range(target_dims - len(padded_names))]
+            )
         elif len(padded_names) > target_dims:
             padded_names = padded_names[:target_dims]
-        
+
         # NaN/Inf 정리
         padded_vector = np.nan_to_num(padded_vector, nan=0.0, posinf=1.0, neginf=-1.0)
         padded_vector = np.clip(padded_vector, -10.0, 10.0)
-        
+
         # 저장
         np.save(vector_path, padded_vector.astype(np.float32))
+
+        with open(names_path, "w", encoding="utf-8") as f:
+            json.dump(padded_names, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"벡터 차원 수정 완료: {target_dims}차원")
+        return True
+
+    except Exception as e:
+        logger.error(f"벡터 차원 수정 중 오류: {e}")
+        return False

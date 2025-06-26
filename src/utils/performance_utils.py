@@ -16,6 +16,7 @@ from typing import Dict, Any, Optional, Callable, List, Union
 from pathlib import Path
 import logging
 from contextlib import contextmanager
+import json
 
 from .error_handler import get_logger
 
@@ -273,3 +274,75 @@ def train_with_amp(
         num_batches += 1
 
     return {"loss": total_loss / num_batches}
+
+
+class PerformanceMonitor:
+    """실시간 성능 추적 클래스"""
+
+    def __init__(self):
+        self.stage_times = {}
+        self.memory_usage = {}
+        self.start_times = {}
+
+    def track_stage(self, stage_name: str):
+        """성능 추적 컨텍스트 매니저 반환"""
+        return self.timer_context(stage_name)
+
+    @contextmanager
+    def timer_context(self, name: str):
+        """타이머 컨텍스트 매니저"""
+        start = time.time()
+        memory_before = psutil.virtual_memory().used
+
+        try:
+            logger.info(f"[성능추적] {name} 시작")
+            yield
+        finally:
+            duration = time.time() - start
+            memory_after = psutil.virtual_memory().used
+            memory_increase = (memory_after - memory_before) / 1024 / 1024  # MB
+
+            # 결과 저장
+            self.stage_times[name] = duration
+            self.memory_usage[name] = memory_increase
+
+            logger.info(
+                f"[성능추적] {name}: {duration:.2f}초, "
+                f"메모리 증가: {memory_increase:.1f}MB"
+            )
+
+    def get_summary(self) -> Dict[str, Any]:
+        """성능 요약 반환"""
+        total_time = sum(self.stage_times.values())
+        total_memory = sum(self.memory_usage.values())
+
+        return {
+            "total_time": total_time,
+            "total_memory_increase": total_memory,
+            "stage_breakdown": {"times": self.stage_times, "memory": self.memory_usage},
+            "slowest_stage": (
+                max(self.stage_times.items(), key=lambda x: x[1])
+                if self.stage_times
+                else None
+            ),
+            "memory_intensive_stage": (
+                max(self.memory_usage.items(), key=lambda x: x[1])
+                if self.memory_usage
+                else None
+            ),
+        }
+
+    def save_report(self, file_path: str):
+        """성능 보고서 저장"""
+        summary = self.get_summary()
+        summary["timestamp"] = time.time()
+        summary["system_info"] = {
+            "cpu_count": psutil.cpu_count(),
+            "memory_total": psutil.virtual_memory().total / (1024**3),  # GB
+            "memory_available": psutil.virtual_memory().available / (1024**3),  # GB
+        }
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"성능 보고서 저장 완료: {file_path}")

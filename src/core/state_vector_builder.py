@@ -327,51 +327,69 @@ class StateVectorBuilder:
             ValueError: 입력 데이터가 유효하지 않거나 필수 속성이 누락된 경우
             RuntimeError: 임베딩 계산 중 오류 발생 시
         """
-        # 번호 목록으로 변환
-        number_lists = []
-        for draw in draw_history:
-            # LotteryNumber 객체에서 numbers 속성만 추출하여 정렬
-            if hasattr(draw, "numbers"):
-                number_lists.append(sorted(draw.numbers))  # 번호 오름차순 정렬 보장
-            # 리스트나 다른 타입인 경우
-            elif isinstance(draw, list) and all(isinstance(n, int) for n in draw):
-                number_lists.append(sorted(draw))  # 리스트인 경우 정렬
-            else:
-                error_msg = f"지원되지 않는 데이터 형식: {type(draw)}"
+        cooccurrence = None
+        adjacency_matrix = None
+
+        try:
+            # 번호 목록으로 변환
+            number_lists = []
+            for draw in draw_history:
+                # LotteryNumber 객체에서 numbers 속성만 추출하여 정렬
+                if hasattr(draw, "numbers"):
+                    number_lists.append(sorted(draw.numbers))  # 번호 오름차순 정렬 보장
+                # 리스트나 다른 타입인 경우
+                elif isinstance(draw, list) and all(isinstance(n, int) for n in draw):
+                    number_lists.append(sorted(draw))  # 리스트인 경우 정렬
+                else:
+                    error_msg = f"지원되지 않는 데이터 형식: {type(draw)}"
+                    logger.error(error_msg)
+                    raise TypeError(error_msg)
+
+            # 유효한 데이터가 없는 경우
+            if not number_lists:
+                error_msg = "유효한 번호 데이터가 없습니다."
                 logger.error(error_msg)
-                raise TypeError(error_msg)
+                raise ValueError(error_msg)
 
-        # 유효한 데이터가 없는 경우
-        if not number_lists:
-            error_msg = "유효한 번호 데이터가 없습니다."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            # 클러스터 분석기를 사용하여 클러스터 정보 획득
+            cluster_result = self.cluster_analyzer.analyze_clusters(number_lists)
 
-        # 클러스터 분석기를 사용하여 클러스터 정보 획득
-        cluster_result = self.cluster_analyzer.analyze_clusters(number_lists)
+            # 임베딩 추출
+            embeddings = np.array(cluster_result.get("embeddings", []))
 
-        # 임베딩 추출
-        embeddings = np.array(cluster_result.get("embeddings", []))
+            # 임베딩 크기 확인
+            if embeddings.size == 0 or embeddings.shape[0] != 45:
+                error_msg = f"클러스터 임베딩 생성 실패: 예상 행 수=45, 실제={embeddings.shape[0] if embeddings.size > 0 else 0}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
-        # 임베딩 크기 확인
-        if embeddings.size == 0 or embeddings.shape[0] != 45:
-            error_msg = f"클러스터 임베딩 생성 실패: 예상 행 수=45, 실제={embeddings.shape[0] if embeddings.size > 0 else 0}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            # 인접 행렬을 사용하여 임베딩 보강
+            adjacency_matrix = build_pair_graph(number_lists)
 
-        # 인접 행렬을 사용하여 임베딩 보강
-        adjacency_matrix = build_pair_graph(number_lists)
+            # 고유값 분해로 보조 임베딩 생성
+            eigenvalues, eigenvectors = np.linalg.eigh(adjacency_matrix)
+            # 상위 8개 고유벡터 선택
+            top_eigenvectors = eigenvectors[:, -8:]
 
-        # 고유값 분해로 보조 임베딩 생성
-        eigenvalues, eigenvectors = np.linalg.eigh(adjacency_matrix)
-        # 상위 8개 고유벡터 선택
-        top_eigenvectors = eigenvectors[:, -8:]
+            # 임베딩에 통합
+            if embeddings.shape[1] >= 8:
+                embeddings[:, :8] = 0.5 * embeddings[:, :8] + 0.5 * top_eigenvectors
 
-        # 임베딩에 통합
-        if embeddings.shape[1] >= 8:
-            embeddings[:, :8] = 0.5 * embeddings[:, :8] + 0.5 * top_eigenvectors
+            return embeddings
 
-        return embeddings
+        finally:
+            # 메모리 해제
+            if cooccurrence is not None:
+                del cooccurrence
+            if adjacency_matrix is not None:
+                del adjacency_matrix
+
+            # 가비지 컬렉션 실행
+            gc.collect()
+
+            # CUDA 메모리 정리 (필요시)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _generate_cache_key(self, recent_draws: List[LotteryNumber]) -> str:
         """캐시 키 생성"""

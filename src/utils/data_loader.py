@@ -52,117 +52,218 @@ _DRAW_HISTORY_CACHE: Dict[str, List[LotteryNumber]] = {}
 _VECTORIZED_DATA_CACHE: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
 
 
+class DataQualityValidator:
+    """데이터 품질 검증 클래스"""
+
+    def __init__(self):
+        self.logger = get_logger(__name__)
+
+    def validate_lottery_data(self, data: List[LotteryNumber]) -> Dict[str, Any]:
+        """
+        로또 데이터 품질 검증
+
+        Args:
+            data: 로또 번호 데이터 리스트
+
+        Returns:
+            검증 결과 딕셔너리
+        """
+        validation_result = {
+            "is_valid": True,
+            "errors": [],
+            "warnings": [],
+            "stats": {
+                "total_records": len(data),
+                "valid_records": 0,
+                "invalid_records": 0,
+            },
+        }
+
+        if not data:
+            validation_result["is_valid"] = False
+            validation_result["errors"].append("데이터가 비어 있습니다")
+            return validation_result
+
+        valid_count = 0
+        invalid_count = 0
+        draw_numbers = set()
+
+        for i, lottery_draw in enumerate(data):
+            record_valid = True
+
+            # 1. 번호 범위 검증 (1-45)
+            if hasattr(lottery_draw, "numbers"):
+                numbers = lottery_draw.numbers
+                for num in numbers:
+                    if not isinstance(num, int) or num < 1 or num > 45:
+                        validation_result["errors"].append(
+                            f"회차 {i+1}: 잘못된 번호 범위 - {num} (1-45 범위 벗어남)"
+                        )
+                        record_valid = False
+
+                # 2. 중복 번호 검증
+                if len(numbers) != len(set(numbers)):
+                    validation_result["errors"].append(
+                        f"회차 {i+1}: 중복 번호 발견 - {numbers}"
+                    )
+                    record_valid = False
+
+                # 3. 번호 개수 검증 (6개)
+                if len(numbers) != 6:
+                    validation_result["errors"].append(
+                        f"회차 {i+1}: 번호 개수 오류 - {len(numbers)}개 (6개 필요)"
+                    )
+                    record_valid = False
+            else:
+                validation_result["errors"].append(f"회차 {i+1}: 번호 속성이 없습니다")
+                record_valid = False
+
+            # 4. 회차 연속성 검증
+            if hasattr(lottery_draw, "draw_no"):
+                draw_no = lottery_draw.draw_no
+                if draw_no in draw_numbers:
+                    validation_result["errors"].append(f"중복 회차 번호: {draw_no}")
+                    record_valid = False
+                draw_numbers.add(draw_no)
+
+            if record_valid:
+                valid_count += 1
+            else:
+                invalid_count += 1
+
+        # 5. 데이터 완정성 검증
+        if len(draw_numbers) != len(data):
+            validation_result["warnings"].append(
+                "회차 번호 불일치: 일부 회차에 번호가 없거나 중복됩니다"
+            )
+
+        # 통계 업데이트
+        validation_result["stats"]["valid_records"] = valid_count
+        validation_result["stats"]["invalid_records"] = invalid_count
+
+        # 전체 유효성 판단
+        if invalid_count > 0:
+            validation_result["is_valid"] = False
+
+        # 경고 임계값 검사
+        if invalid_count / len(data) > 0.05:  # 5% 이상 오류
+            validation_result["warnings"].append(
+                f"높은 오류율: {invalid_count}/{len(data)} ({invalid_count/len(data)*100:.1f}%)"
+            )
+
+        return validation_result
+
+    def log_validation_result(self, result: Dict[str, Any]):
+        """검증 결과 로깅"""
+        if result["is_valid"]:
+            self.logger.info(
+                f"✅ 데이터 검증 통과: {result['stats']['valid_records']}개 유효 레코드"
+            )
+        else:
+            self.logger.error(
+                f"❌ 데이터 검증 실패: {len(result['errors'])}개 오류 발견"
+            )
+            for error in result["errors"][:5]:  # 최대 5개만 표시
+                self.logger.error(f"  - {error}")
+
+            if len(result["errors"]) > 5:
+                self.logger.error(f"  ... 및 {len(result['errors']) - 5}개 추가 오류")
+
+        if result["warnings"]:
+            for warning in result["warnings"]:
+                self.logger.warning(f"⚠️ {warning}")
+
+
 def load_draw_history(
-    file_path: Optional[str] = None, force_reload: bool = False
+    file_path: Optional[str] = None, validate_data: bool = True
 ) -> List[LotteryNumber]:
     """
-    로또 당첨 번호 이력을 불러옵니다.
-    CSV 파일에서 회차 번호(seqNum)와 당첨 번호(num1~num6)를 읽어옵니다.
+    로또 당첨 번호 이력을 로드합니다.
 
     Args:
-        file_path (Optional[str]): 로또 당첨 번호 CSV 파일 경로, None인 경우 기본 경로 사용
-        force_reload (bool): 캐시를 무시하고 강제로 다시 로드할지 여부
+        file_path: CSV 파일 경로 (None이면 기본 경로 사용)
+        validate_data: 데이터 품질 검증 여부
 
     Returns:
-        List[LotteryNumber]: 당첨 번호 목록
+        당첨 번호 이력 리스트
+
+    Raises:
+        FileNotFoundError: 파일을 찾을 수 없는 경우
+        ValueError: 데이터 검증 실패 시
     """
-    global _DRAW_HISTORY_CACHE
+    logger = get_logger(__name__)
 
-    # 경로가 지정되지 않았으면 기본 경로 사용
+    # 기본 파일 경로 설정
     if file_path is None:
-        # 상대 경로 사용
-        file_path = str(
-            Path(__file__).parent.parent.parent / "data" / "raw" / "lottery.csv"
-        )
+        project_root = Path(__file__).parent.parent.parent
+        file_path = project_root / "data" / "raw" / "lottery.csv"
 
-    # 캐시 확인 (파일 변경 없으면 캐시 사용)
-    if not force_reload and file_path in _DRAW_HISTORY_CACHE:
-        logger.info(
-            f"캐시된 로또 번호 데이터({len(_DRAW_HISTORY_CACHE[file_path])})개 사용"
-        )
-        return _DRAW_HISTORY_CACHE[file_path]
+    if not Path(file_path).exists():
+        error_msg = f"로또 데이터 파일을 찾을 수 없습니다: {file_path}"
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+
+    logger.info(f"로또 데이터 로드 중: {file_path}")
 
     try:
-        # 파일 존재 확인
-        if not os.path.exists(file_path):
-            logger.error(f"로또 당첨 번호 파일을 찾을 수 없음: {file_path}")
-            return []
+        # CSV 파일 읽기
+        import pandas as pd
 
-        # CSV 파일 로드
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, encoding="utf-8")
 
-        # 필수 컬럼 확인 (seqNum과 num1~num6)
-        required_columns = ["seqNum"] + [f"num{i}" for i in range(1, 7)]
+        # 컬럼 확인 - 실제 CSV 파일의 컬럼명에 맞게 수정
+        required_columns = ["seqNum", "num1", "num2", "num3", "num4", "num5", "num6"]
         missing_columns = [col for col in required_columns if col not in df.columns]
 
         if missing_columns:
-            logger.error(f"CSV 파일에 필요한 컬럼이 없습니다: {missing_columns}")
-            return []
+            error_msg = f"필수 컬럼이 없습니다: {missing_columns}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
-        # 결과 리스트 생성
+        # LotteryNumber 객체 생성
         lottery_numbers = []
-
-        # 각 행을 처리
         for _, row in df.iterrows():
             try:
-                # 회차 번호 추출
-                draw_number = int(row["seqNum"])
+                numbers = [
+                    int(row["num1"]),
+                    int(row["num2"]),
+                    int(row["num3"]),
+                    int(row["num4"]),
+                    int(row["num5"]),
+                    int(row["num6"]),
+                ]
 
-                # 당첨 번호 추출 (num1~num6)
-                numbers = []
-                for i in range(1, 7):
-                    col_name = f"num{i}"
-                    num_value = row[col_name]
+                lottery_number = LotteryNumber(
+                    draw_no=int(row["seqNum"]),  # seqNum을 draw_no로 매핑
+                    numbers=numbers,
+                )
 
-                    # 숫자인지 확인하고 변환
-                    if pd.notna(num_value):  # NaN이 아닌 경우
-                        try:
-                            num_int = int(num_value)
-                            if 1 <= num_int <= 45:  # 유효한 로또 번호 범위
-                                numbers.append(num_int)
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                f"회차 {draw_number}의 {col_name} 값을 숫자로 변환할 수 없음: {num_value}"
-                            )
+                lottery_numbers.append(lottery_number)
 
-                # 유효한 번호 세트인지 확인 (6개 숫자가 모두 있어야 함)
-                if len(numbers) == 6:
-                    # 날짜 정보 (있는 경우)
-                    date_str = None
-                    for date_col in ["date", "draw_date", "추첨일"]:
-                        if date_col in row and pd.notna(row[date_col]):
-                            date_str = str(row[date_col])
-                            break
-
-                    # LotteryNumber 객체 생성 및 추가
-                    lottery_numbers.append(
-                        LotteryNumber(
-                            draw_no=draw_number,
-                            numbers=sorted(numbers),  # 번호를 오름차순으로 정렬
-                            date=date_str,
-                        )
-                    )
-                else:
-                    logger.warning(
-                        f"회차 {draw_number}의 번호가 유효하지 않음: {numbers}, 길이: {len(numbers)}"
-                    )
-
-            except Exception as e:
-                logger.error(f"데이터 처리 중 오류 발생: {e}")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"행 {row.name} 처리 중 오류: {e}")
                 continue
 
-        # 최신 회차가 먼저 오도록 정렬 (내림차순)
-        lottery_numbers.sort(key=lambda x: x.draw_no, reverse=True)
+        logger.info(f"데이터 로드 완료: {len(lottery_numbers)}개 회차")
 
-        # 캐시에 저장
-        _DRAW_HISTORY_CACHE[file_path] = lottery_numbers
+        # 데이터 품질 검증
+        if validate_data:
+            validator = DataQualityValidator()
+            validation_result = validator.validate_lottery_data(lottery_numbers)
+            validator.log_validation_result(validation_result)
 
-        logger.info(f"{len(lottery_numbers)}개의 로또 당첨 번호 데이터 로드 완료")
+            if not validation_result["is_valid"]:
+                error_msg = (
+                    f"데이터 품질 검증 실패: {len(validation_result['errors'])}개 오류"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
         return lottery_numbers
 
     except Exception as e:
-        logger.error(f"로또 당첨 번호 로딩 중 오류 발생: {e}")
-        return []
+        logger.error(f"데이터 로드 중 오류 발생: {str(e)}")
+        raise
 
 
 def clear_draw_history_cache() -> None:

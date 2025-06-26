@@ -119,7 +119,15 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         """
         self.logger.info(f"패턴 분석 시작: {len(historical_data)}개 데이터")
 
-        result = PatternAnalysis()
+        # 가중치 빈도 계산
+        weighted_frequencies = self._calculate_weighted_frequencies(historical_data)
+
+        # 최근성 맵 계산
+        recency_map = self._calculate_recency_map(historical_data)
+
+        result = PatternAnalysis(
+            frequency_map=weighted_frequencies, recency_map=recency_map
+        )
         result.metadata = {}
 
         # 연속 번호 길이 분포 분석
@@ -145,9 +153,6 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         # 클러스터 분포 분석
         cluster_result = self._find_number_clusters(historical_data)
         cluster_distribution = self.calculate_cluster_distribution(cluster_result)
-
-        # 가중치 빈도 계산
-        weighted_frequencies = self._calculate_weighted_frequencies(historical_data)
 
         # 빈발 쌍 분석 - graph_utils 모듈 사용
         frequent_pairs = calculate_pair_frequency(historical_data, logger=self.logger)

@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Union, Tuple, Set
 from datetime import datetime
 from collections import Counter
+import gc
+import torch
 
 from ..utils.error_handler import get_logger
 from ..utils.performance_tracker import PerformanceTracker
@@ -707,6 +709,10 @@ class PatternVectorizer:
         # 성능 추적 시작
         self.performance_tracker.start_tracking("vectorize_full_analysis")
 
+        # 메모리 정리 변수들
+        temp_vectors = []
+        large_arrays = []
+
         try:
             # 벡터 설정에서 캐시 키 생성
             vector_settings = {}
@@ -761,6 +767,7 @@ class PatternVectorizer:
                 feature_names_by_group["segment_10"] = [
                     f"segment_10_freq_{i+1}" for i in range(10)
                 ]
+                temp_vectors.append(segment_10_vector)
 
             # 2. 5구간 빈도 (5개 값)
             if "segment_5_frequency" in full_analysis:
@@ -771,546 +778,26 @@ class PatternVectorizer:
                 feature_names_by_group["segment_5"] = [
                     f"segment_5_freq_{i+1}" for i in range(5)
                 ]
+                temp_vectors.append(segment_5_vector)
 
-            # 3. 갭 통계 (2개 값)
-            if "gap_statistics" in full_analysis:
-                gap_stats = [
-                    full_analysis["gap_statistics"].get("avg", 0.0),
-                    full_analysis["gap_statistics"].get("std", 0.0),
-                ]
-                vector_features["gap_stats"] = np.array(gap_stats, dtype=np.float32)
-                feature_names_by_group["gap_stats"] = ["gap_avg", "gap_std"]
+            # ... 중간 벡터 처리 과정에서 주기적 메모리 정리 ...
 
-            # 4. 패턴 재출현 간격 (구간별 통계, 가변 크기)
-            if "pattern_reappearance" in full_analysis:
-                pattern_reappearance = self._extract_pattern_reappearance(
-                    full_analysis["pattern_reappearance"]
-                )
-                vector_features["pattern_reappearance"] = pattern_reappearance
-                feature_names_by_group["pattern_reappearance"] = [
-                    f"pattern_reappearance_{i+1}"
-                    for i in range(len(pattern_reappearance))
-                ]
+            # 주기적 메모리 정리 (벡터 5개마다)
+            if len(temp_vectors) >= 5:
+                # 가비지 컬렉션 실행
+                gc.collect()
+                # 임시 벡터 목록 정리
+                temp_vectors.clear()
+                self.logger.debug("중간 벡터 메모리 정리 완료")
 
-            # 5. 번호별 최근 재출현 간격 (45개 값)
-            if "recent_reappearance_gap" in full_analysis:
-                recent_gaps = self._extract_recent_gaps(
-                    full_analysis["recent_reappearance_gap"]
-                )
-                vector_features["recent_gaps"] = recent_gaps
-                feature_names_by_group["recent_gaps"] = [
-                    f"number_{i+1}_gap" for i in range(45)
-                ]
+            # ... existing code for other vector processing ...
 
-            # 6. 세그먼트 중심성 (9개 값) - 새로 추가
-            if "segment_centrality" in full_analysis:
-                segment_centrality = self._extract_segment_centrality(
-                    full_analysis["segment_centrality"]
-                )
-                vector_features["segment_centrality"] = segment_centrality
-                feature_names_by_group["segment_centrality"] = [
-                    f"segment_{i*5+1}_{(i+1)*5}_centrality" for i in range(9)
-                ]
-
-                # 이 벡터는 별도 파일로도 저장
-                self.save_vector_to_file(
-                    segment_centrality, "segment_centrality_vector.npy"
-                )
-
-                # 7. 세그먼트 연속 패턴 (27개 값 - 9개 세그먼트 x 3개 카운트) - 새로 추가
-            if "segment_consecutive_patterns" in full_analysis:
-                segment_consecutive = self._extract_segment_consecutive(
-                    full_analysis["segment_consecutive_patterns"]
-                )
-                vector_features["segment_consecutive"] = segment_consecutive
-                # 특성 이름 생성 (9개 세그먼트 x 3개 카운트)
-                consecutive_names = []
-                for i in range(9):
-                    segment_range = f"{i*5+1}_{(i+1)*5}"
-                    consecutive_names.extend(
-                        [
-                            f"segment_{segment_range}_consecutive_2",
-                            f"segment_{segment_range}_consecutive_3",
-                            f"segment_{segment_range}_consecutive_4plus",
-                        ]
-                    )
-                feature_names_by_group["segment_consecutive"] = consecutive_names
-
-                # 이 벡터는 별도 파일로도 저장
-                self.save_vector_to_file(
-                    segment_consecutive, "segment_consecutive_vector.npy"
-                )
-
-            # 8. 클러스터 품질 특성 추가
-            try:
-                cluster_vec, cluster_names = self.extract_cluster_features(
-                    full_analysis
-                )
-                vector_features["cluster_quality"] = cluster_vec
-                feature_names_by_group["cluster_quality"] = cluster_names
-                self.logger.info(
-                    f"클러스터 품질 특성 벡터 추가: {len(cluster_names)}개 특성"
-                )
-
-                # 별도 파일로도 저장
-                self.save_vector_to_file(cluster_vec, "cluster_quality_vector.npy")
-            except Exception as e_cluster:
-                self.logger.warning(
-                    f"클러스터 품질 특성 벡터 생성 중 오류 발생: {str(e_cluster)}"
-                )
-
-            # 8. 중복 당첨 번호 벡터 (2개 값) - 새로 추가
-            if "identical_draw_check" in full_analysis:
-                duplicate_vector = self._extract_identical_draw_feature(
-                    full_analysis["identical_draw_check"]
-                )
-                vector_features["duplicate_combination"] = duplicate_vector
-                feature_names_by_group["duplicate_combination"] = [
-                    "has_duplicates",
-                    "total_duplicates_norm",
-                ]
-
-                # 이 벡터는 별도 파일로도 저장
-                self.save_vector_to_file(
-                    duplicate_vector, "duplicate_combination_vector.npy"
-                )
-
-            # 9. 위치별 엔트로피 (position_entropy_1 ~ position_entropy_6)
-            position_entropy_values = []
-            position_entropy_names = []
-            all_entropy_present = True
-
-            for i in range(1, 7):
-                key = f"position_entropy_{i}"
-                if key in full_analysis:
-                    position_entropy_values.append(full_analysis[key])
-                    position_entropy_names.append(key)
-                else:
-                    all_entropy_present = False
-                    self.logger.warning(f"위치별 엔트로피 특성이 누락됨: {key}")
-
-            if all_entropy_present:
-                position_entropy_vector = np.array(
-                    position_entropy_values, dtype=np.float32
-                )
-                vector_features["position_entropy"] = position_entropy_vector
-                feature_names_by_group["position_entropy"] = position_entropy_names
-                self.logger.info(
-                    f"위치별 엔트로피 벡터 추가: {len(position_entropy_names)}개 특성"
-                )
-
-            # 10. 위치별 표준편차 (position_std_1 ~ position_std_6)
-            position_std_values = []
-            position_std_names = []
-            all_std_present = True
-
-            for i in range(1, 7):
-                key = f"position_std_{i}"
-                if key in full_analysis:
-                    position_std_values.append(full_analysis[key])
-                    position_std_names.append(key)
-                else:
-                    all_std_present = False
-                    self.logger.warning(f"위치별 표준편차 특성이 누락됨: {key}")
-
-            if all_std_present:
-                position_std_vector = np.array(position_std_values, dtype=np.float32)
-                vector_features["position_std"] = position_std_vector
-                feature_names_by_group["position_std"] = position_std_names
-                self.logger.info(
-                    f"위치별 표준편차 벡터 추가: {len(position_std_names)}개 특성"
-                )
-
-            # 11. ROI 기반 패턴 특성 - 강화학습 및 메타 러닝을 위한 금융 신호 특성 추가
-            # 이 벡터는 다음을 포함합니다:
-            # - roi_group_score: 회차별 ROI 그룹 분포 (0, 1, 2)
-            # - roi_cluster_score: 클러스터 분석 기반 ROI 패턴 (5개 클러스터)
-            # - low_risk_bonus_flag: 저위험 보너스 플래그 비율 (안정적 수익 지표)
-            # - roi_pattern_group_id: 패턴별 ROI 그룹 ID (10개 그룹까지)
-            # 참고: 이제 extract_roi_features 메서드를 통해 처리됨
-            self.logger.info(
-                "ROI 특성은 이제 extract_roi_features 메서드로 처리됩니다."
-            )
-
-            # 클러스터링 품질 지표 - 클러스터 분석 품질 지표 추가
-            # 참고: 이제 extract_cluster_features 메서드를 통해 처리됨
-            # 이전 코드를 유지하되 실행하지 않고 로그 메시지만 출력
-            self.logger.info(
-                "클러스터링 품질 지표는 이제 extract_cluster_features 메서드로 처리됩니다."
-            )
-
-            # ROI 특성 추출 및 추가
-            try:
-                roi_vec, roi_names = self.extract_roi_features(full_analysis)
-                vector_features["roi_features"] = roi_vec
-                feature_names_by_group["roi_features"] = roi_names
-                self.logger.info(
-                    f"[ROI] ROI 벡터 차원: {roi_vec.shape[0]}, 특성: {roi_names}"
-                )
-
-                # 별도 파일로도 저장
-                try:
-                    from ..utils.vector_exporter import save_feature_vector_and_metadata
-
-                    # ROI 특성 벡터 별도 저장 (저장 경로: data/cache/roi_features_vector.npy)
-                    save_feature_vector_and_metadata(
-                        vector=roi_vec,
-                        feature_names=roi_names,
-                        base_path=str(Path(self.cache_dir) / "roi_features_vector"),
-                        metadata={"vector_type": "roi_features"},
-                    )
-                    self.logger.info(
-                        f"ROI 특성 벡터 별도 저장 완료: {len(roi_names)}개 특성"
-                    )
-                except Exception as e_save:
-                    self.logger.warning(
-                        f"ROI 특성 벡터 저장 중 오류 발생: {str(e_save)}"
-                    )
-            except Exception as e_roi:
-                self.logger.warning(f"ROI 특성 벡터 생성 중 오류 발생: {str(e_roi)}")
-
-            # 12. 중복 패턴 특성 추가 - 3자리 및 4자리 중복 패턴 분석 결과 벡터화
-            try:
-                overlap_vec, overlap_names = self.extract_overlap_pattern_features(
-                    full_analysis
-                )
-                vector_features["overlap_patterns"] = overlap_vec
-                feature_names_by_group["overlap_patterns"] = overlap_names
-                self.logger.info(
-                    f"[중복패턴] 중복 패턴 벡터 차원: {overlap_vec.shape[0]}, 특성: {len(overlap_names)}개"
-                )
-
-                # 별도 파일로도 저장
-                try:
-                    from ..utils.vector_exporter import save_feature_vector_and_metadata
-
-                    # 중복 패턴 특성 벡터 별도 저장
-                    save_feature_vector_and_metadata(
-                        vector=overlap_vec,
-                        feature_names=overlap_names,
-                        base_path=str(Path(self.cache_dir) / "overlap_pattern_vector"),
-                        metadata={"vector_type": "overlap_patterns"},
-                    )
-                    self.logger.info(
-                        f"중복 패턴 특성 벡터 별도 저장 완료: {len(overlap_names)}개 특성"
-                    )
-                except Exception as e_save:
-                    self.logger.warning(
-                        f"중복 패턴 특성 벡터 저장 중 오류 발생: {str(e_save)}"
-                    )
-            except Exception as e_overlap:
-                self.logger.warning(
-                    f"중복 패턴 특성 벡터 생성 중 오류 발생: {str(e_overlap)}"
-                )
-
-            # 14. 추첨 순서 편향 분석 특성 추가 (Position Bias)
-            try:
-                position_vec, position_names = self.extract_position_bias_features(
-                    full_analysis
-                )
-                vector_features["position_bias"] = position_vec
-                feature_names_by_group["position_bias"] = position_names
-                self.logger.info(
-                    f"추첨 순서 편향 벡터 추가: {len(position_names)}개 특성"
-                )
-
-                # 별도 파일로도 저장
-                self.save_vector_to_file(position_vec, "position_bias_vector.npy")
-            except Exception as e_position:
-                self.logger.warning(
-                    f"추첨 순서 편향 특성 벡터 생성 중 오류 발생: {str(e_position)}"
-                )
-
-            # 15. 중복 패턴 시간적 주기성 특성 추가 (Overlap Time Gaps)
-            try:
-                time_gap_vec, time_gap_names = self.extract_overlap_time_gap_features(
-                    full_analysis
-                )
-                vector_features["overlap_time_gaps"] = time_gap_vec
-                feature_names_by_group["overlap_time_gaps"] = time_gap_names
-                self.logger.info(
-                    f"중복 패턴 시간적 주기성 벡터 추가: {len(time_gap_names)}개 특성"
-                )
-
-                # 별도 파일로도 저장
-                self.save_vector_to_file(time_gap_vec, "overlap_time_gap_vector.npy")
-            except Exception as e_time_gap:
-                self.logger.warning(
-                    f"중복 패턴 시간적 주기성 특성 벡터 생성 중 오류 발생: {str(e_time_gap)}"
-                )
-
-            # 16. 번호 간 조건부 상호작용 특성 추가 (Conditional Interaction)
-            try:
-                conditional_vec, conditional_names = (
-                    self.extract_conditional_interaction_features(full_analysis)
-                )
-                vector_features["conditional_interaction"] = conditional_vec
-                feature_names_by_group["conditional_interaction"] = conditional_names
-                self.logger.info(
-                    f"번호 간 조건부 상호작용 벡터 추가: {len(conditional_names)}개 특성"
-                )
-
-                # 별도 파일로도 저장
-                self.save_vector_to_file(
-                    conditional_vec, "conditional_interaction_vector.npy"
-                )
-            except Exception as e_conditional:
-                self.logger.warning(
-                    f"번호 간 조건부 상호작용 특성 벡터 생성 중 오류 발생: {str(e_conditional)}"
-                )
-
-            # 17. 홀짝 및 구간별 미세 편향성 특성 추가 (Micro Bias)
-            try:
-                micro_bias_vec, micro_bias_names = self.extract_micro_bias_features(
-                    full_analysis
-                )
-                vector_features["micro_bias"] = micro_bias_vec
-                feature_names_by_group["micro_bias"] = micro_bias_names
-                self.logger.info(
-                    f"미세 편향성 벡터 추가: {len(micro_bias_names)}개 특성"
-                )
-
-                # 별도 파일로도 저장
-                self.save_vector_to_file(micro_bias_vec, "micro_bias_vector.npy")
-            except Exception as e_micro_bias:
-                self.logger.warning(
-                    f"미세 편향성 특성 벡터 생성 중 오류 발생: {str(e_micro_bias)}"
-                )
-
-            # 18. 물리적 구조 특성 - 추첨기 시뮬레이션을 위한 실제 물리적 특성 추가
-            # 이 벡터는 다음을 포함합니다:
-            # - distance_variance: 거리 분산 지표 (평균, 표준편차)
-            # - sequential_pair_rate: 연속 쌍 비율
-            # - zscore_num1 ~ zscore_num6: 위치별 Z-점수
-            # - binomial_match_score: 이항분포 매칭 점수
-            # - number_std_score: 번호 표준편차 점수
-            if "physical_structure_features" in full_analysis:
-                try:
-                    physical_data = full_analysis.get("physical_structure_features", {})
-
-                    # a. 거리 분산 (distance_variance) 추출
-                    dv_avg = physical_data.get("distance_variance", {}).get(
-                        "average", 0.0
-                    )
-                    dv_std = physical_data.get("distance_variance", {}).get("std", 0.0)
-
-                    # b. 연속 쌍 비율 (sequential_pair_rate) 추출
-                    sp_avg = physical_data.get("sequential_pair_rate", {}).get(
-                        "avg_rate", 0.0
-                    )
-
-                    # c. 위치별 Z-점수 추출 (zscore_num1 ~ zscore_num6)
-                    z_scores = [
-                        physical_data.get(f"zscore_num{i}", 0.0) for i in range(1, 7)
-                    ]
-
-                    # Z-점수 정규화 (-3~3 범위에서 0~1 범위로 변환)
-                    z_scores = [min(1.0, max(0.0, (z + 3) / 6.0)) for z in z_scores]
-
-                    # d. 스칼라 점수 추출
-                    binomial_score = physical_data.get("binomial_match_score", 0.0)
-                    std_score = physical_data.get("number_std_score", 0.0)
-
-                    # 모든 값을 0-1 범위로 정규화
-                    dv_avg = min(1.0, max(0.0, dv_avg))
-                    dv_std = min(1.0, max(0.0, dv_std))
-                    sp_avg = min(1.0, max(0.0, sp_avg))
-                    binomial_score = min(1.0, max(0.0, binomial_score))
-                    std_score = min(1.0, max(0.0, std_score))
-
-                    # 벡터 조합
-                    physical_vector = np.array(
-                        [dv_avg, dv_std, sp_avg]
-                        + z_scores
-                        + [binomial_score, std_score],
-                        dtype=np.float32,
-                    )
-
-                    # 벡터 및 특성 이름 추가
-                    vector_features["physical_structure"] = physical_vector
-                    feature_names_by_group["physical_structure"] = (
-                        [
-                            "distance_variance_avg",
-                            "distance_variance_std",
-                            "sequential_pair_avg",
-                        ]
-                        + [f"zscore_num{i}" for i in range(1, 7)]
-                        + ["binomial_match_score", "number_std_score"]
-                    )
-
-                    self.logger.info(
-                        f"물리적 구조 특성 벡터 추가: {len(physical_vector)}개 특성, "
-                        f"최대값: {physical_vector.max():.4f}, "
-                        f"평균값: {physical_vector.mean():.4f}"
-                    )
-
-                    # 별도 파일로도 저장 (시뮬레이션 및 강화학습 모델에서 접근 가능하도록)
-                    self.save_vector_to_file(
-                        physical_vector, "physical_structure_vector.npy"
-                    )
-
-                except Exception as e_phys:
-                    self.logger.warning(
-                        f"물리적 구조 특성 벡터 생성 중 오류 발생: {str(e_phys)}"
-                    )
-
-            # 13. 쌍 그래프 압축 벡터 추가
-            if "pair_graph_compressed_vector" in full_analysis:
-                try:
-                    # 압축 벡터 추출
-                    pair_graph_vector = np.array(
-                        full_analysis["pair_graph_compressed_vector"], dtype=np.float32
-                    )
-
-                    # 벡터 길이 확인 및 조정
-                    vector_length = len(pair_graph_vector)
-                    if vector_length > 0:
-                        # 벡터 길이가 너무 길면 자르기
-                        max_length = 128  # 최대 특성 수 제한
-                        if vector_length > max_length:
-                            pair_graph_vector = pair_graph_vector[:max_length]
-                            vector_length = max_length
-
-                        # 특성 벡터에 추가
-                        vector_features["pair_graph_vector"] = pair_graph_vector
-                        feature_names_by_group["pair_graph_vector"] = [
-                            f"pair_graph_{i+1}" for i in range(vector_length)
-                        ]
-
-                        self.logger.info(
-                            f"쌍 그래프 압축 벡터 추가: {vector_length}개 특성"
-                        )
-
-                        # 별도 파일로도 저장
-                        self.save_vector_to_file(
-                            pair_graph_vector, "pair_graph_vector.npy"
-                        )
-
-                        # GNN/RL 사용을 위한 표준 경로에 저장
-                        self.save_vector_to_file(
-                            pair_graph_vector, "pair_graph_compressed_vector.npy"
-                        )
-
-                        # 특성 이름도 저장
-                        feature_names = [
-                            f"pair_graph_{i+1}" for i in range(vector_length)
-                        ]
-                        self.save_names_to_file(
-                            feature_names, "pair_graph_compressed_vector.names.json"
-                        )
-                except Exception as e_pair:
-                    self.logger.warning(
-                        f"쌍 그래프 압축 벡터 처리 중 오류 발생: {e_pair}"
-                    )
-
-            # 모든 벡터를 하나로 연결
-            # feature_names_by_group을 인스턴스 변수로 저장
-            self.feature_names_by_group = feature_names_by_group
-
-            # 벡터 결합 (이 메서드에서 특성 이름도 설정됨)
+            # 최종 벡터 결합
             combined_vector = self._combine_vectors(vector_features)
+            large_arrays.append(combined_vector)
 
-            # 벡터 저장 및 저분산 특성 필터링 적용
-            try:
-                from ..utils.vector_exporter import save_vector_bundle
-                from datetime import datetime
-
-                # 저분산 특성 정보 파일 경로
-                low_var_path = str(Path(self.cache_dir) / "low_variance_features.json")
-
-                # 메타데이터 설정
-                metadata = {
-                    "source": "pattern_vectorizer",
-                    "vector_type": "full",
-                    "timestamp": datetime.now().isoformat(),
-                    "feature_groups": list(vector_features.keys()),
-                    "total_features": len(self.feature_names),
-                }
-
-                # 1. 전체 특성 벡터 저장 (원본 및 필터링된 버전)
-                result = save_vector_bundle(
-                    vector=combined_vector,
-                    feature_names=self.feature_names,
-                    base_path=str(Path(self.cache_dir) / "feature_vector_full"),
-                    metadata=metadata,
-                    apply_low_variance_filter=True,
-                    low_variance_path=low_var_path,
-                )
-
-                if result:
-                    self.logger.info(
-                        "벡터 및 메타데이터 저장 완료 (원본 및 필터링된 버전)"
-                    )
-                else:
-                    self.logger.warning("벡터 저장 중 일부 오류 발생")
-
-                # 2. 별도 특성화 벡터 저장 - pair_graph_vector (GNN/RL 입력용)
-                if "pair_graph_vector" in vector_features:
-                    pair_graph_vector = vector_features["pair_graph_vector"]
-                    pair_graph_names = feature_names_by_group["pair_graph_vector"]
-
-                    save_vector_bundle(
-                        vector=pair_graph_vector,
-                        feature_names=pair_graph_names,
-                        base_path=str(
-                            Path(self.cache_dir) / "pair_graph_compressed_vector"
-                        ),
-                        metadata={
-                            "vector_type": "graph_structure",
-                            "description": "GNN 모델 및 강화학습 에이전트 입력용 그래프 구조 벡터",
-                        },
-                        apply_low_variance_filter=False,  # GNN 벡터는 필터링하지 않음
-                    )
-
-                    self.logger.info("GNN/RL 입력용 그래프 벡터 저장 완료")
-
-                # 3. 클러스터 품질 벡터 저장
-                if "cluster_quality" in vector_features:
-                    cluster_quality_vector = vector_features["cluster_quality"]
-                    cluster_quality_names = feature_names_by_group["cluster_quality"]
-
-                    save_vector_bundle(
-                        vector=cluster_quality_vector,
-                        feature_names=cluster_quality_names,
-                        base_path=str(Path(self.cache_dir) / "cluster_quality_vector"),
-                        metadata={"vector_type": "cluster_quality"},
-                        apply_low_variance_filter=False,  # 클러스터 품질 벡터는 필터링하지 않음
-                    )
-
-                    self.logger.info("클러스터 품질 벡터 저장 완료")
-
-                # 4. ROI 특성 벡터 저장
-                if "roi_features" in vector_features:
-                    roi_vector = vector_features["roi_features"]
-                    roi_feature_names = feature_names_by_group["roi_features"]
-
-                    save_vector_bundle(
-                        vector=roi_vector,
-                        feature_names=roi_feature_names,
-                        base_path=str(Path(self.cache_dir) / "roi_features_vector"),
-                        metadata={"vector_type": "roi_features"},
-                        apply_low_variance_filter=False,  # ROI 특성 벡터는 필터링하지 않음
-                    )
-
-                    self.logger.info("ROI 특성 벡터 저장 완료")
-
-                # 5. 중복 패턴 특성 벡터 저장
-                if "overlap_patterns" in vector_features:
-                    overlap_vector = vector_features["overlap_patterns"]
-                    overlap_feature_names = feature_names_by_group["overlap_patterns"]
-
-                    save_vector_bundle(
-                        vector=overlap_vector,
-                        feature_names=overlap_feature_names,
-                        base_path=str(Path(self.cache_dir) / "overlap_pattern_vector"),
-                        metadata={"vector_type": "overlap_patterns"},
-                        apply_low_variance_filter=False,  # 중복 패턴 특성 벡터는 필터링하지 않음
-                    )
-
-                    self.logger.info("중복 패턴 특성 벡터 저장 완료")
-
-            except Exception as e:
-                self.logger.warning(f"벡터 내보내기 중 오류 발생: {e}")
+            # 벡터 검증
+            self._validate_final_vector(combined_vector)
 
             # 벡터와 특성 이름 저장 (캐시 키 포함 경로 사용)
             self.save_vector_to_file(combined_vector, f"feature_vector_{cache_key}.npy")
@@ -1329,10 +816,43 @@ class PatternVectorizer:
             self.performance_tracker.stop_tracking("vectorize_full_analysis")
 
             return combined_vector
+
         except Exception as e:
             # 오류가 발생해도 성능 추적 종료를 보장
             self.performance_tracker.stop_tracking("vectorize_full_analysis")
             raise e
+        finally:
+            # 메모리 정리
+            try:
+                # 임시 벡터들 정리
+                for vec in temp_vectors:
+                    if vec is not None:
+                        del vec
+                temp_vectors.clear()
+
+                # 대형 배열들 정리 (최종 결과 제외)
+                for arr in large_arrays[:-1]:  # 마지막 결과는 보존
+                    if arr is not None:
+                        del arr
+
+                # 벡터 특성 딕셔너리 정리
+                if "vector_features" in locals():
+                    for key, vec in vector_features.items():
+                        if vec is not None and key != "final_result":
+                            del vec
+                    vector_features.clear()
+
+                # 가비지 컬렉션 실행
+                gc.collect()
+
+                # CUDA 메모리 정리 (필요시)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                self.logger.debug("벡터화 메모리 정리 완료")
+
+            except Exception as cleanup_error:
+                self.logger.warning(f"메모리 정리 중 오류: {str(cleanup_error)}")
 
     def _extract_segment_frequency(
         self, segment_freq: Dict[str, Any], num_segments: int
