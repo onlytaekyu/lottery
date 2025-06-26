@@ -686,32 +686,7 @@ def run_data_analysis() -> bool:
         return False
 
 
-def calculate_pair_frequency(data):
-    """
-    번호 쌍의 출현 빈도를 계산합니다.
-
-    Args:
-        data: 분석할 과거 당첨 번호 목록
-
-    Returns:
-        번호 쌍별 출현 빈도 (정규화된 값)
-    """
-    total_draws = len(data)
-    pair_counts = {}
-
-    # 모든 번호 쌍의 출현 횟수 계산
-    for draw in data:
-        numbers = draw.numbers
-        for i in range(len(numbers)):
-            for j in range(i + 1, len(numbers)):
-                num1, num2 = min(numbers[i], numbers[j]), max(numbers[i], numbers[j])
-                pair = (num1, num2)
-                pair_counts[pair] = pair_counts.get(pair, 0) + 1
-
-    # 빈도로 변환 (출현 횟수 / 전체 추첨 횟수)
-    pair_frequency = {pair: count / total_draws for pair, count in pair_counts.items()}
-
-    return pair_frequency
+# calculate_pair_frequency 함수는 src.shared.graph_utils로 통합됨
 
 
 def calculate_segment_centrality(data, segments=9):
