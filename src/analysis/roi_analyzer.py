@@ -74,11 +74,9 @@ class ROIAnalyzer(BaseAnalyzer):
         Args:
             config: 분석에 사용할 설정
         """
-        super().__init__(config, analyzer_type="roi")
+        super().__init__(config or {}, "roi")
 
-        # ConfigProxy 변환
-        if not isinstance(self.config, ConfigProxy):
-            self.config = ConfigProxy(self.config)
+        self.logger.info("ROIAnalyzer 초기화 완료")
 
         # 성능 최적화 시스템 초기화
         from src.utils.memory_manager import get_memory_manager
@@ -104,8 +102,6 @@ class ROIAnalyzer(BaseAnalyzer):
             4: 50000,  # 3등 (평균 5만원)
             3: 5000,  # 4등 (평균 5천원)
         }
-
-        logger.info("ROIAnalyzer 초기화 완료")
 
     @performance_monitor
     def analyze(self, historical_data: List[LotteryNumber]) -> Dict[str, Any]:

@@ -14,7 +14,6 @@ from .base_analyzer import BaseAnalyzer
 from src.shared.types import LotteryNumber
 from src.utils.error_handler_refactored import get_logger
 from src.utils.unified_performance import performance_monitor
-from src.utils.unified_config import ConfigProxy
 
 logger = get_logger(__name__)
 
@@ -56,10 +55,6 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
             config: 분포 분석에 사용할 설정
         """
         super().__init__(config or {}, "distribution")
-
-        # ConfigProxy 변환
-        if not isinstance(self.config, ConfigProxy):
-            self.config = ConfigProxy(self.config)
 
         # 성능 최적화 시스템 초기화
         from src.utils.memory_manager import get_memory_manager

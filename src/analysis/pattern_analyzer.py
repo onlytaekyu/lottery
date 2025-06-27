@@ -120,10 +120,6 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         self.scoped_analyses = {}  # 스코프별 분석 결과 저장
         self.logger = get_logger(__name__)  # 로거 명시적 초기화
 
-        # ConfigProxy로 변환
-        if not isinstance(self.config, ConfigProxy):
-            self.config = ConfigProxy(self.config)
-
         self.logger.info("🎉 PatternAnalyzer 성능 최적화 시스템 초기화 완료")
 
     def load_data(self, limit: Optional[int] = None) -> List[LotteryNumber]:

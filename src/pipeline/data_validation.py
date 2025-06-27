@@ -617,7 +617,13 @@ class DataValidator:
             },
         }
 
-        save_analysis_performance_report(report_data, str(output_path))
+        save_analysis_performance_report(
+            profiler=None,  # 프로파일러 없음
+            performance_tracker=None,  # 성능 추적기 없음
+            config={},  # 빈 설정
+            module_name="data_validation",
+            data_metrics=report_data,
+        )
         logger.info(f"데이터 품질 보고서 저장: {output_path}")
 
         return output_path

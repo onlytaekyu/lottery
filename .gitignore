@@ -70,3 +70,4 @@ data/predictions/*.csv
 *.bak 
 
 *.toml
+*.json

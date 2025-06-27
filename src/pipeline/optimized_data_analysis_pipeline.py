@@ -356,8 +356,39 @@ def run_optimized_data_analysis() -> bool:
         def init_analyzer(analyzer_type: str):
             """분석기 초기화 헬퍼 함수"""
             try:
-                # ConfigProxy 대신 딕셔너리 설정 직접 전달
-                config_dict = config if isinstance(config, dict) else config._config
+                # ConfigProxy를 딕셔너리로 안전하게 변환
+                if hasattr(config, "_config"):
+                    config_dict = config._config
+                elif hasattr(config, "to_dict"):
+                    config_dict = config.to_dict()
+                elif isinstance(config, dict):
+                    config_dict = config
+                else:
+                    # ConfigProxy 객체의 속성을 딕셔너리로 변환
+                    config_dict = {}
+                    if hasattr(config, "__dict__"):
+                        for key, value in config.__dict__.items():
+                            if not key.startswith("_"):
+                                config_dict[key] = value
+
+                    # 기본 설정 추가
+                    if not config_dict:
+                        config_dict = {
+                            "analysis": {},
+                            "paths": {
+                                "cache_dir": "data/cache",
+                                "result_dir": "data/result",
+                            },
+                            "vectorizer": {"use_cache": True, "normalize_output": True},
+                            "filtering": {
+                                "remove_low_variance_features": True,
+                                "variance_threshold": 0.01,
+                            },
+                            "caching": {
+                                "enable_feature_cache": True,
+                                "max_cache_size": 10000,
+                            },
+                        }
 
                 if analyzer_type == "pattern":
                     return PatternAnalyzer(config_dict)

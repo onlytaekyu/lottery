@@ -56,7 +56,6 @@ class PatternVectorizer:
                 max_memory_usage=0.8,
                 use_memory_pooling=True,
                 pool_size=32,
-                auto_cleanup=True,
             )
             self.memory_manager = MemoryManager(memory_config)
 

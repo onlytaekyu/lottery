@@ -18,6 +18,7 @@ from ..utils.error_handler_refactored import get_logger
 from ..shared.types import LotteryNumber
 from ..analysis.base_analyzer import BaseAnalyzer
 from ..utils.unified_config import ConfigProxy
+from ..utils.unified_performance import performance_monitor
 from ..shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality
 
 # 로그 설정
@@ -35,11 +36,8 @@ class PairAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             config: 번호 쌍 분석에 사용할 설정
         """
         super().__init__(config or {}, "pair")
-        self.logger = get_logger(__name__)
 
-        # ConfigProxy로 변환
-        if not isinstance(self.config, ConfigProxy):
-            self.config = ConfigProxy(self.config)
+        self.logger.info("PairAnalyzer 초기화 완료")
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs

@@ -116,7 +116,6 @@ class MLCandidateGenerator:
                 max_memory_usage=0.85,  # ML 후보 생성은 더 많은 메모리 사용
                 use_memory_pooling=True,
                 pool_size=256,  # 대용량 후보 생성을 위한 큰 풀
-                auto_cleanup=True,
             )
             self.memory_manager = MemoryManager(memory_config)
             self.logger.info("✅ ML 후보 생성기 메모리 관리자 초기화 완료")
