@@ -2,10 +2,16 @@
 로또 번호 예측 시스템 - 통합 유틸리티
 
 이 패키지는 중복 제거 및 통합을 통해 최적화된 유틸리티 기능을 제공합니다.
+모든 구형 시스템은 통합 시스템으로 대체되었습니다.
 """
 
-# 통합 시스템들 import
-from .unified_logging import UnifiedLogger, LogLevel, get_logger, log_exception
+# 🎯 통합 시스템들 (우선순위 1)
+from .unified_logging import (
+    UnifiedLogger,
+    LogLevel,
+    get_logger,
+    log_exception,
+)
 from .unified_performance import (
     UnifiedPerformanceTracker,
     PerformanceMetrics,
@@ -15,6 +21,10 @@ from .unified_performance import (
     profile,
     clear_memory,
     get_device_info,
+    # 기존 호환성
+    Profiler,
+    PerformanceTracker,
+    MemoryTracker,
 )
 from .unified_config import (
     UnifiedConfigManager,
@@ -35,14 +45,16 @@ from .unified_report import (
     save_evaluation_report,
     save_analysis_performance_report,
     get_system_info,
+    safe_convert,
 )
 from .error_handler_refactored import (
     StrictErrorHandler,
     strict_error_handler,
     SafeModeManager,
+    get_error_handler,
 )
 
-# 기존 유지할 유틸리티들
+# 🔧 기존 유지 시스템들 (우선순위 2)
 from .config_loader import load_config, ConfigProxy
 from .data_loader import load_draw_history
 from .cache_paths import get_cache_dir, CACHE_DIR
@@ -52,9 +64,10 @@ from .cuda_optimizers import CudaConfig
 from .model_saver import ModelSaver
 from .cache_manager import CacheManager
 from .normalizer import Normalizer
+from .feature_name_tracker import save_feature_names, load_feature_names
 
 
-# 편의 함수들
+# 🚀 편의 함수들
 def initialize_unified_systems():
     """통합 시스템들을 초기화합니다."""
     logger = get_logger("utils.init")
@@ -77,11 +90,11 @@ def initialize_unified_systems():
         report_writer = UnifiedReportWriter()
         logger.info("보고서 작성기 초기화 완료")
 
-        logger.info("통합 시스템 초기화 완료")
+        logger.info("✅ 통합 시스템 초기화 완료")
         return True
 
     except Exception as e:
-        logger.error(f"통합 시스템 초기화 실패: {e}")
+        logger.error(f"❌ 통합 시스템 초기화 실패: {e}")
         return False
 
 
@@ -139,17 +152,17 @@ def cleanup_resources():
         tracker.clear()
         logger.info("성능 추적기 정리 완료")
 
-        logger.info("시스템 리소스 정리 완료")
+        logger.info("✅ 시스템 리소스 정리 완료")
         return True
 
     except Exception as e:
-        logger.error(f"시스템 리소스 정리 실패: {e}")
+        logger.error(f"❌ 시스템 리소스 정리 실패: {e}")
         return False
 
 
-# 전체 시스템 상태 확인
+# 📋 전체 시스템 export
 __all__ = [
-    # 통합 시스템들
+    # 🎯 통합 시스템들 (우선순위)
     "UnifiedLogger",
     "LogLevel",
     "get_logger",
@@ -162,6 +175,9 @@ __all__ = [
     "profile",
     "clear_memory",
     "get_device_info",
+    "Profiler",  # 호환성
+    "PerformanceTracker",  # 호환성
+    "MemoryTracker",  # 호환성
     "UnifiedConfigManager",
     "get_paths",
     "get_unified_config",
@@ -176,10 +192,12 @@ __all__ = [
     "save_evaluation_report",
     "save_analysis_performance_report",
     "get_system_info",
+    "safe_convert",
     "StrictErrorHandler",
     "strict_error_handler",
     "SafeModeManager",
-    # 기존 유지 시스템들
+    "get_error_handler",
+    # 🔧 기존 유지 시스템들
     "load_config",
     "ConfigProxy",
     "load_draw_history",
@@ -192,8 +210,14 @@ __all__ = [
     "ModelSaver",
     "CacheManager",
     "Normalizer",
-    # 시스템 관리 함수들
+    "save_feature_names",
+    "load_feature_names",
+    # 🚀 시스템 관리 함수들
     "initialize_unified_systems",
     "get_system_status",
     "cleanup_resources",
 ]
+
+# 🎉 시스템 초기화 메시지
+_logger = get_logger("utils")
+_logger.info("✅ 통합 유틸리티 시스템 로드 완료 - 중복 제거 및 최적화 적용됨")

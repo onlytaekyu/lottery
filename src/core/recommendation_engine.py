@@ -51,7 +51,7 @@ from ..models.lstm_model import LSTMModel
 from ..models.base_model import BaseModel
 from ..utils.config_loader import ConfigProxy
 from ..analysis.pattern_analyzer import PatternAnalyzer
-from ..utils.performance_tracker import save_performance_report
+from ..utils.unified_report import save_performance_report
 from ..utils.state_vector_cache import get_cache
 
 # 로거 설정

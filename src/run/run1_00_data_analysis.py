@@ -43,7 +43,7 @@ def main():
         from src.utils.config_loader import load_config
         from src.analysis.unified_analyzer import UnifiedAnalyzer
         from src.analysis.pattern_vectorizer import PatternVectorizer
-        from src.utils.performance_report_writer import save_analysis_performance_report
+        from src.utils.unified_report import save_analysis_performance_report
         from src.utils.unified_performance import performance_monitor
         from src.utils import get_profiler as Profiler
         from src.utils.feature_vector_validator import (

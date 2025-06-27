@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 
 from .error_handler_refactored import get_logger
+from .cache_paths import CACHE_DIR
 
 # 로거 설정
 logger = get_logger(__name__)
@@ -18,8 +19,8 @@ logger = get_logger(__name__)
 # 특성 추적 강제 활성화 (설정 파일 무시)
 FEATURE_TRACKING_ENABLED = True
 
-# 특성 이름 저장 경로
-FEATURE_NAMES_DIR = Path("D:/VSworkSpace/DAEBAK_AI/lottery/data/feature_names")
+# 특성 이름 저장 경로 (상대경로 사용)
+FEATURE_NAMES_DIR = CACHE_DIR / "feature_names"
 
 
 def save_feature_names(names: List[str], path: str) -> None:

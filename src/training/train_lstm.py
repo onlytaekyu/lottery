@@ -28,7 +28,7 @@ from ..utils.error_handler_refactored import get_logger
 from .unified_trainer import UnifiedTrainer
 from ..models.lstm_model import LSTMModel
 from ..utils.cuda_optimizers import AMPTrainer
-from ..utils.profiler import Profiler
+from ..utils.unified_performance import Profiler
 from ..utils.batch_controller import DynamicBatchSizeController
 from ..utils.cache_manager import ThreadLocalCache
 from ..utils.performance_utils import MemoryTracker

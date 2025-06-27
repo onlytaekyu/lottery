@@ -404,3 +404,98 @@ def get_device_info() -> Dict[str, Any]:
         )
 
     return info
+
+
+# 기존 호환성을 위한 클래스들
+class Profiler:
+    """기존 호환성을 위한 Profiler 클래스"""
+
+    def __init__(self, config=None):
+        self._tracker = get_performance_manager()
+
+    def start(self, name: str):
+        """프로파일링 시작"""
+        self._tracker.start(name)
+
+    def stop(self, name: str):
+        """프로파일링 중지"""
+        self._tracker.stop(name)
+
+    def get_profile_stats(self):
+        """프로파일 통계 반환"""
+        return self._tracker.get_profile_stats()
+
+    def generate_report(self):
+        """보고서 생성"""
+        return self._tracker.generate_report()
+
+    @contextmanager
+    def profile(self, name: str):
+        """프로파일링 컨텍스트"""
+        with self._tracker.track(name):
+            yield
+
+    def clear(self):
+        """데이터 정리"""
+        self._tracker.clear()
+
+
+class PerformanceTracker:
+    """기존 호환성을 위한 PerformanceTracker 클래스"""
+
+    def __init__(self):
+        self._tracker = get_performance_manager()
+
+    def start_tracking(self, name: str):
+        """추적 시작"""
+        self._tracker.start_tracking(name)
+
+    def stop_tracking(self, name: str):
+        """추적 중지"""
+        self._tracker.stop_tracking(name)
+
+    def get_summary(self, name: str = None):
+        """요약 반환"""
+        if name:
+            return self._tracker.get_summary(name)
+        return self._tracker.sessions
+
+    def update_metrics(self, metrics: dict):
+        """메트릭 업데이트"""
+        self._tracker.update_metrics(metrics)
+
+    def get_metrics(self, name: str = None):
+        """메트릭 반환"""
+        return self._tracker.get_metrics(name)
+
+    def clear(self):
+        """데이터 정리"""
+        self._tracker.clear()
+
+
+class MemoryTracker:
+    """기존 호환성을 위한 MemoryTracker 클래스"""
+
+    def __init__(self):
+        self._tracker = get_performance_manager()
+
+    def start(self):
+        """메모리 추적 시작"""
+        self._start_memory = psutil.virtual_memory().used
+
+    def stop(self):
+        """메모리 추적 중지"""
+        self._end_memory = psutil.virtual_memory().used
+
+    def get_memory_log(self):
+        """메모리 로그 반환"""
+        if hasattr(self, "_start_memory") and hasattr(self, "_end_memory"):
+            return {
+                "memory_used_mb": (self._end_memory - self._start_memory)
+                / (1024 * 1024)
+            }
+        return {"memory_used_mb": 0.0}
+
+    def get_memory_usage(self):
+        """현재 메모리 사용량 반환"""
+        return psutil.virtual_memory().used / (1024 * 1024)  # MB 단위

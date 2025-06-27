@@ -25,7 +25,7 @@ from ..utils.error_handler_refactored import get_logger
 from ..utils.config_loader import ConfigProxy, load_config
 from ..utils.performance_utils import MemoryTracker
 from ..utils.batch_controller import CPUBatchProcessor
-from ..utils.profiler import get_profiler, Profiler
+from ..utils.unified_performance import get_profiler, Profiler
 from ..utils.pattern_filter import PatternFilter, get_pattern_filter
 from ..utils.normalizer import Normalizer
 from ..models.statistical_model import StatisticalModel
@@ -33,7 +33,7 @@ from ..models.lightgbm_model import LightGBMModel
 from ..models.xgboost_model import XGBoostModel
 from ..analysis.pattern_vectorizer import PatternVectorizer
 from ..shared.types import LotteryNumber
-from ..utils.performance_tracker import save_performance_report
+from ..utils.unified_report import save_performance_report
 
 # 로거 설정
 logger = get_logger(__name__)

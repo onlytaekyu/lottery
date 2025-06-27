@@ -670,7 +670,7 @@ class TrainInterface:
                 }
 
             # 성능 리포트 작성
-            from ..utils.report_writer import save_performance_report
+            from ..utils.unified_report import save_performance_report
 
             report_data = {
                 "model_type": "lstm",

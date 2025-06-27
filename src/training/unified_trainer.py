@@ -27,11 +27,11 @@ from ..training.train_rl_extended import EnhancedRLTrainer
 from ..core.state_vector_builder import StateVectorBuilder
 from ..utils.config_loader import ConfigProxy
 from ..utils.cuda_optimizers import AMPTrainer
-from ..utils.performance_report_writer import save_report
+from ..utils.unified_report import save_report
 from ..utils.model_saver import save_model
 from .base_trainer import BaseTrainer
 from ..utils.unified_performance import performance_monitor
-from ..utils.profiler import Profiler
+from ..utils.unified_performance import Profiler
 
 # 로거 설정
 logger = get_logger(__name__)
@@ -628,7 +628,7 @@ class UnifiedTrainer(BaseTrainer):
 
                 # 프로파일러가 없으면 생성
                 if not hasattr(self, "profiler"):
-                    from ..utils.profiler import Profiler
+                    from ..utils.unified_performance import Profiler
 
                     self.profiler = Profiler(self.config)
 

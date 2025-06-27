@@ -20,7 +20,7 @@ from src.utils.error_handler_refactored import get_logger, log_exception_with_tr
 from src.utils.state_vector_cache import get_cache
 from src.utils.data_loader import load_draw_history
 from src.utils.config_loader import load_config
-from src.utils.profiler import get_profiler
+from src.utils.unified_performance import get_profiler
 from src.analysis.pattern_analyzer import PatternAnalyzer
 from src.analysis.pattern_vectorizer import PatternVectorizer
 from src.utils.unified_report import safe_convert, save_physical_performance_report

@@ -43,7 +43,7 @@ from src.utils.error_handler_refactored import (
 from src.utils.state_vector_cache import get_cache
 from src.utils.data_loader import load_draw_history, LotteryJSONEncoder
 from src.utils.config_loader import load_config
-from src.utils.profiler import get_profiler
+from src.utils.unified_performance import get_profiler
 
 # 최적화 시스템 import
 from src.utils.process_pool_manager import get_process_pool_manager
@@ -334,7 +334,7 @@ def run_optimized_data_analysis() -> bool:
 
     # 메모리 관리 컨텍스트 매니저 사용
     from src.utils.memory_manager import memory_managed_analysis
-    from src.utils.profiler import get_profiler
+    from src.utils.unified_performance import get_profiler
 
     # 프로파일러 초기화
     profiler = get_profiler()

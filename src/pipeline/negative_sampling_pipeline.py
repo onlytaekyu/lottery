@@ -18,7 +18,7 @@ from typing import Dict, List, Any, Optional, Set, Tuple
 from src.utils.data_loader import load_draw_history
 from src.utils.config_loader import load_config
 from src.utils.error_handler_refactored import get_logger
-from src.utils.profiler import get_profiler
+from src.utils.unified_performance import get_profiler
 from src.analysis.pattern_analyzer import PatternAnalyzer
 from src.analysis.pattern_vectorizer import PatternVectorizer
 

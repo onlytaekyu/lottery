@@ -25,7 +25,7 @@ from collections import defaultdict, deque
 from ..models.gnn_model import GNNModel
 from ..shared.types import LotteryNumber, PatternAnalysis, ModelPrediction
 from ..utils.error_handler_refactored import get_logger
-from ..utils.profiler import Profiler, ProfilerConfig
+from ..utils.unified_performance import Profiler, ProfilerConfig
 from ..utils.dynamic_batch_size_utils import get_safe_batch_size
 from ..utils.data_loader import load_draw_history
 from ..utils.cuda_optimizers import AMPTrainer

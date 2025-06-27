@@ -23,7 +23,7 @@ from ..models.rl_model import RLModel
 from ..shared.types import LotteryNumber, PatternAnalysis, ModelPrediction
 from ..utils.data_loader import load_draw_history, DataLoader
 from ..utils.error_handler_refactored import get_logger
-from ..utils.profiler import Profiler, ProfilerConfig
+from ..utils.unified_performance import Profiler, ProfilerConfig
 from ..utils.pattern_filter import get_pattern_filter
 from ..utils.cuda_optimizers import AMPTrainer
 from ..utils.batch_controller import DynamicBatchSizeController

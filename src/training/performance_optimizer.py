@@ -23,7 +23,7 @@ from ..utils.error_handler_refactored import get_logger
 from ..utils.auto_tuner import AutoTuner, TuningConfig, HyperParameter
 from ..utils.memory_manager import MemoryManager, MemoryConfig
 from ..utils.cuda_optimizers import AMPTrainer
-from ..utils.profiler import Profiler
+from ..utils.unified_performance import Profiler
 from ..utils.batch_controller import DynamicBatchSizeController
 from ..utils.cache_manager import ThreadLocalCache
 from ..utils.performance_utils import MemoryTracker

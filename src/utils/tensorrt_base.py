@@ -55,7 +55,7 @@ except (ImportError, AttributeError):
 from .error_handler_refactored import get_logger
 from .memory_manager import MemoryManager, MemoryConfig
 from .async_io import AsyncIOManager, AsyncIOConfig
-from .performance_tracker import Profiler, ProfilerConfig
+from .unified_performance import get_profiler
 from .error_recovery import ErrorRecovery, RecoveryConfig
 
 logger = get_logger(__name__)
