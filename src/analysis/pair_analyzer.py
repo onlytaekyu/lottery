@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional, Union, Set
 from collections import Counter, defaultdict
 
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..shared.types import LotteryNumber
 from ..analysis.base_analyzer import BaseAnalyzer
 from ..utils.config_loader import ConfigProxy
@@ -54,11 +54,11 @@ class PairAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Dict[str, Any]: 분석 결과
         """
-        with self.performance_tracker.track("pair_analyze"):
+        with performance_monitor("pair_analyze"):
             self.logger.info("번호 쌍 분석 시작...")
 
             # 쌍 빈도 계산 (graph_utils 사용)
-            with self.performance_tracker.track("calculate_pair_frequency"):
+            with performance_monitor("calculate_pair_frequency"):
                 pair_freq_tuples = calculate_pair_frequency(
                     historical_data, logger=self.logger
                 )
@@ -74,7 +74,7 @@ class PairAnalyzer(BaseAnalyzer[Dict[str, Any]]):
                 self.logger.info(f"번호 쌍 빈도 계산 완료: {len(pair_frequency)}개 쌍")
 
             # 쌍 중심성 계산
-            with self.performance_tracker.track("calculate_pair_centrality"):
+            with performance_monitor("calculate_pair_centrality"):
                 # 튜플 키로 변환
                 pair_freq_for_centrality = {}
                 for pair_key, count in pair_frequency.items():
@@ -171,7 +171,7 @@ class PairAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Dict[str, float]: 번호 쌍별 ROI 점수
         """
-        with self.performance_tracker.track("calculate_pair_roi_scores"):
+        with performance_monitor("calculate_pair_roi_scores"):
             # 1. 각 번호 쌍의 출현 회차 기록
             pair_appearances = defaultdict(list)
             for turn, draw in enumerate(historical_data):
@@ -239,7 +239,7 @@ class PairAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Dict[str, Any]: 쌍 그래프 가중치 및 통계
         """
-        with self.performance_tracker.track("calculate_pair_graph_weights"):
+        with performance_monitor("calculate_pair_graph_weights"):
             # 1. 그래프 생성
             G = nx.Graph()
 
@@ -432,7 +432,7 @@ class PairAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Dict[str, Any]: 빈번한 3개 번호 조합 정보
         """
-        with self.performance_tracker.track("calculate_frequent_triples"):
+        with performance_monitor("calculate_frequent_triples"):
             self.logger.info("빈번한 3개 번호 조합 분석 중...")
 
             # 결과 저장용 딕셔너리
@@ -649,7 +649,7 @@ class PairAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Dict[str, Any]: 패턴 그룹 정보
         """
-        with self.performance_tracker.track("identify_roi_pattern_groups"):
+        with performance_monitor("identify_roi_pattern_groups"):
             self.logger.info("ROI 패턴 그룹 식별 중...")
 
             # 결과 저장용 딕셔너리
@@ -822,7 +822,7 @@ class PairAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Path: 저장된 파일 경로
         """
-        with self.performance_tracker.track("save_pair_centrality"):
+        with performance_monitor("save_pair_centrality"):
             self.logger.info("번호 쌍 중심성 점수 저장 중...")
 
             # 디렉토리 생성
@@ -880,7 +880,7 @@ class PairAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Dict[str, int]: 번호를 키로, 클러스터 ID를 값으로 하는 딕셔너리
         """
-        with self.performance_tracker.track("calculate_number_clusters"):
+        with performance_monitor("calculate_number_clusters"):
             self.logger.info(f"번호 클러스터링 시작 (그룹 수: {n_clusters})...")
 
             # 1. 각 번호의 빈도 및 ROI 점수 계산

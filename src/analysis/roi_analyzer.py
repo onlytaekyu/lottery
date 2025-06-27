@@ -14,7 +14,7 @@ from sklearn.cluster import KMeans, AgglomerativeClustering
 
 from src.analysis.base_analyzer import BaseAnalyzer
 from src.shared.types import LotteryNumber
-from src.utils.error_handler import get_logger
+from src.utils.error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 
@@ -339,7 +339,7 @@ class ROIAnalyzer(BaseAnalyzer):
         Returns:
             Dict[str, Any]: 번호별 ROI 점수 (0-1 범위)
         """
-        with self.performance_tracker.track("calculate_number_roi_scores"):
+        with performance_monitor("calculate_number_roi_scores"):
             self.logger.info("번호별 ROI 점수 계산 중...")
 
             # 결과 저장용 딕셔너리
@@ -428,7 +428,7 @@ class ROIAnalyzer(BaseAnalyzer):
         Returns:
             Dict[str, Any]: 패턴별 ROI 추세 정보
         """
-        with self.performance_tracker.track("calculate_roi_trend_by_pattern"):
+        with performance_monitor("calculate_roi_trend_by_pattern"):
             self.logger.info("패턴별 ROI 추세 계산 중...")
 
             # 결과 저장용 딕셔너리
@@ -530,7 +530,7 @@ class ROIAnalyzer(BaseAnalyzer):
         Returns:
             float: ROI 그룹별 점수
         """
-        with self.performance_tracker.track("calculate_roi_group_score"):
+        with performance_monitor("calculate_roi_group_score"):
             self.logger.info("ROI 그룹별 점수 계산 중...")
 
             # 결과 저장용 변수
@@ -617,7 +617,7 @@ class ROIAnalyzer(BaseAnalyzer):
         Returns:
             float: ROI 클러스터 점수
         """
-        with self.performance_tracker.track("calculate_roi_cluster_score"):
+        with performance_monitor("calculate_roi_cluster_score"):
             self.logger.info("ROI 클러스터 점수 계산 중...")
 
             # 결과 저장용 변수

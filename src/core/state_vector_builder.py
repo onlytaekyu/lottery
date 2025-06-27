@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from ..shared.types import LotteryNumber, PatternAnalysis
 from ..utils.memory_manager import MemoryManager, MemoryConfig
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.normalizer import Normalizer
 from ..utils.config_loader import ConfigProxy
 

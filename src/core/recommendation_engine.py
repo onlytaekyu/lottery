@@ -42,7 +42,7 @@ import platform
 import psutil
 
 from ..shared.types import LotteryNumber, ModelPrediction, PatternAnalysis
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.data_loader import load_draw_history
 from ..utils.pattern_filter import get_pattern_filter, PatternFilter
 from ..models.rl_model import RLModel

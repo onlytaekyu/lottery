@@ -13,7 +13,7 @@ import zlib
 from dataclasses import dataclass, field
 import time
 
-from .error_handler import get_logger
+from .error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 

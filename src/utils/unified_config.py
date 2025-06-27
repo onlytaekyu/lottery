@@ -385,3 +385,14 @@ def get_directory_paths() -> DirectoryPaths:
     """디렉토리 경로 설정 반환"""
     manager = UnifiedConfigManager()
     return manager.directory_paths
+
+
+def get_paths() -> DirectoryPaths:
+    """경로 설정 반환 (별칭)"""
+    return get_directory_paths()
+
+
+def get_config(config_name: str = "main") -> ConfigProxy:
+    """설정 반환 (편의 함수)"""
+    manager = UnifiedConfigManager()
+    return manager.get_config(config_name)

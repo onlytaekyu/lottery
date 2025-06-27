@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 # 상대 경로 사용으로 수정
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from src.shared.types import LotteryNumber, PatternAnalysis
 
 logger = get_logger(__name__)

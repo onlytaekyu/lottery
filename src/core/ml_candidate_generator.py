@@ -21,7 +21,7 @@ from collections import defaultdict
 from sklearn.cluster import KMeans
 from datetime import datetime
 
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.config_loader import ConfigProxy, load_config
 from ..utils.performance_utils import MemoryTracker
 from ..utils.batch_controller import CPUBatchProcessor

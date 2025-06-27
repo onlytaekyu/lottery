@@ -52,7 +52,7 @@ except (ImportError, AttributeError):
     EXPLICIT_BATCH = 0
 
 # 상대 경로 임포트로 변경
-from .error_handler import get_logger
+from .error_handler_refactored import get_logger
 from .memory_manager import MemoryManager, MemoryConfig
 from .async_io import AsyncIOManager, AsyncIOConfig
 from .performance_tracker import Profiler, ProfilerConfig

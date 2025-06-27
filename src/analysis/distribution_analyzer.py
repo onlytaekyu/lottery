@@ -61,7 +61,7 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
         Returns:
             Dict[str, List[DistributionPattern]]: 분석된 분포 패턴들
         """
-        with self.performance_tracker.track("distribution_pattern_analysis"):
+        with performance_monitor("distribution_pattern_analysis"):
             # 캐시 확인
             cache_key = self._create_cache_key(
                 "distribution_analysis", len(historical_data)

@@ -16,8 +16,8 @@ from datetime import datetime
 import pickle
 import os  # 추가: os 모듈 임포트
 
-from ..utils.error_handler import get_logger
-from ..utils.performance_tracker import PerformanceTracker
+from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_performance import performance_monitor
 from ..shared.types import LotteryNumber, PatternAnalysis
 from ..analysis.pattern_vectorizer import PatternVectorizer
 from ..utils.config_loader import ConfigProxy
@@ -400,7 +400,7 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         """
         self.logger.info(f"{len(combinations)}개 번호 조합 필터링 시작")
 
-        with self.performance_tracker.track("filter_combinations"):
+        with performance_monitor("filter_combinations"):
             # 통과한 조합 목록
             passed_combinations = []
 
@@ -453,7 +453,7 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             ("distribution", self.distribution_analyzer),
         ]:
             # 각 분석기의 성능 지표 수집
-            with self.performance_tracker.track(f"get_stats_{analyzer_name}"):
+            with performance_monitor(f"get_stats_{analyzer_name}"):
                 operation_times = {}
                 for op_name in ["analyze", f"{analyzer_name}_analysis"]:
                     operation_times[op_name] = (
@@ -491,7 +491,7 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Dict[str, Any]: 통합 분석 결과
         """
-        with self.performance_tracker.track("run_full_analysis"):
+        with performance_monitor("run_full_analysis"):
             # 타임스탬프 기록
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -528,7 +528,7 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             }
 
             # 분포 분석
-            with self.performance_tracker.track("distribution_analysis"):
+            with performance_monitor("distribution_analysis"):
                 distribution_pattern = self.distribution_analyzer.analyze(draw_data)
 
             # 결과 통합
@@ -538,7 +538,7 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             self.save_analysis_results(unified_results)
 
             # 벡터화 및 캐시 저장
-            with self.performance_tracker.track("vectorize_results"):
+            with performance_monitor("vectorize_results"):
                 vector = self.pattern_vectorizer.vectorize_full_analysis(
                     unified_results
                 )
@@ -593,7 +593,7 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             self.logger.info("통합 분석 시작")
 
             # 모든 데이터 분석
-            with self.performance_tracker.track("complete_analysis"):
+            with performance_monitor("complete_analysis"):
                 result = self.run_full_analysis(draw_data)
 
             self.logger.info("통합 분석 완료")

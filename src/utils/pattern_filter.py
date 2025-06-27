@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Set, Any, Optional, Callable, Union, cast
 
 from ..shared.types import LotteryNumber, PatternFeatures
-from ..utils.error_handler import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.config_loader import ConfigProxy, load_config
 
 # 싱글톤 인스턴스

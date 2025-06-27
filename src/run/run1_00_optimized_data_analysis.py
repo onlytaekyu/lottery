@@ -19,7 +19,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.error_handler import get_logger
+from src.utils.error_handler_refactored import get_logger
 from src.utils.performance_utils import PerformanceMonitor
 
 # 로거 설정

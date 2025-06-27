@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import psutil
 
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.auto_tuner import AutoTuner, TuningConfig, HyperParameter
 from ..utils.memory_manager import MemoryManager, MemoryConfig
 from ..utils.cuda_optimizers import AMPTrainer

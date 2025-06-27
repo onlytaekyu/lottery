@@ -10,7 +10,7 @@ from collections import Counter
 
 from .base_analyzer import BaseAnalyzer
 from ..shared.types import LotteryNumber
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 

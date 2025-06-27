@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, TypeVar, Generic, cast, Union, List, Type
 import json
 
-from .error_handler import get_logger, log_exception_with_trace
+from .error_handler_refactored import get_logger, log_exception_with_trace
 
 # 로거 설정
 logger = get_logger(__name__)

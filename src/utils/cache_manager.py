@@ -14,7 +14,7 @@ import torch
 import json
 import hashlib
 from pathlib import Path
-from .error_handler import get_logger
+from .error_handler_refactored import get_logger
 import threading
 
 

@@ -11,12 +11,11 @@
 import os
 import json
 import numpy as np
-import logging
 from typing import List, Dict, Any, Optional, Union, Tuple
 from pathlib import Path
 from datetime import datetime
 
-from ..utils.error_handler import get_logger
+from ..utils.unified_logging import get_logger
 
 logger = get_logger(__name__)
 

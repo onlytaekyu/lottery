@@ -33,7 +33,7 @@ from sklearn.metrics import silhouette_score
 import torch
 import psutil
 
-from src.utils.error_handler import (
+from src.utils.error_handler_refactored import (
     get_logger,
     log_exception_with_trace,
     StrictErrorHandler,
@@ -52,7 +52,7 @@ from src.utils.memory_manager import get_memory_manager
 
 from src.analysis.pattern_analyzer import PatternAnalyzer
 from src.analysis.pattern_vectorizer import PatternVectorizer
-from src.utils.report_writer import safe_convert, save_physical_performance_report
+from src.utils.unified_report import safe_convert, save_physical_performance_report
 from src.analysis.pair_analyzer import PairAnalyzer
 from src.utils.feature_vector_validator import (
     validate_feature_vector_with_config,

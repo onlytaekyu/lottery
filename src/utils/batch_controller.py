@@ -13,7 +13,7 @@ import gc
 import logging
 import time
 
-from .error_handler import get_logger
+from .error_handler_refactored import get_logger
 from .config_loader import ConfigProxy
 from .performance_utils import MemoryTracker
 

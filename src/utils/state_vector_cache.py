@@ -16,7 +16,7 @@ import numpy as np
 import json
 from datetime import datetime
 
-from .error_handler import get_logger
+from .unified_logging import get_logger
 from ..utils.config_loader import ConfigProxy
 
 # 로거 설정

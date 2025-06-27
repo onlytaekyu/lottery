@@ -22,7 +22,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.model_selection import train_test_split
 
 from ..base_model import BaseModel, EnsembleBaseModel
-from ...utils.error_handler import get_logger
+from ...utils.error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 

@@ -19,7 +19,7 @@ from ..shared.types import LotteryNumber, PatternAnalysis
 from ..core.state_vector_builder import StateVectorBuilder
 from ..training.train_rl_extended import EnhancedRLTrainer
 from ..utils.memory_manager import MemoryManager
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 
 
 class RLPipeline:

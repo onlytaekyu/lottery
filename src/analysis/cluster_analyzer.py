@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Dict, Tuple, Set, Optional, Any
 from pathlib import Path
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from sklearn.metrics import silhouette_score
 from sklearn.cluster import KMeans, DBSCAN
 import json

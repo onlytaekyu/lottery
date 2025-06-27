@@ -18,7 +18,7 @@ import xgboost as xgb
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from ..base_model import BaseModel
-from ...utils.error_handler import get_logger
+from ...utils.error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 

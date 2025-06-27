@@ -38,13 +38,13 @@ from .memory_manager import (
 from .async_io import AsyncIOManager, AsyncIOConfig
 
 # 성능 추적 관련 임포트
-from .performance_tracker import Profiler, ProfilerConfig
+from .unified_performance import get_profiler
 
 # 오류 복구 관련 임포트
 from .error_recovery import ErrorRecovery, RecoveryConfig
 
 # 로거 설정
-from .error_handler import get_logger
+from .error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 

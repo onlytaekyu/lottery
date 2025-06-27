@@ -24,7 +24,7 @@ from collections import defaultdict, deque
 from torch.utils.data import DataLoader, Dataset
 from ..utils.config_loader import ConfigProxy
 from ..shared.types import LotteryNumber, ModelPrediction
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from .unified_trainer import UnifiedTrainer
 from ..models.lstm_model import LSTMModel
 from ..utils.cuda_optimizers import AMPTrainer
@@ -35,7 +35,7 @@ from ..utils.performance_utils import MemoryTracker
 
 # 상대 경로 임포트 설정
 from ..models.lstm_model import LSTMNetwork  # type: ignore
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.data_loader import load_draw_history  # 필요시 사용
 
 # 파일 기반 로딩 제거# from ..utils.data_loader import load_draw_history

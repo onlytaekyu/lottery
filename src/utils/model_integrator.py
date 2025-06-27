@@ -13,7 +13,7 @@ import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from .memory_manager import MemoryManager, MemoryConfig
-from .error_handler import get_logger
+from .error_handler_refactored import get_logger
 from dataclasses import dataclass
 import os
 import json

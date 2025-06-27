@@ -15,7 +15,7 @@ import torch
 import numpy as np
 
 from ..shared.types import LotteryNumber, PatternAnalysis, ModelPrediction
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.dynamic_batch_size_utils import get_safe_batch_size
 from ..core.state_vector_builder import StateVectorBuilder
 

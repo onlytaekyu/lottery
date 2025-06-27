@@ -18,7 +18,7 @@ sys.path.insert(0, str(project_root))
 from src.analysis.roi_analyzer import ROIAnalyzer
 from src.utils.data_loader import load_draw_history
 from src.shared.types import LotteryNumber
-from src.utils.error_handler import get_logger
+from src.utils.error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 

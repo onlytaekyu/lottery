@@ -25,7 +25,7 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.insert(0, project_root)
 
 # 로거 설정
-from src.utils.error_handler import get_logger, log_exception_with_trace
+from src.utils.error_handler_refactored import get_logger, log_exception_with_trace
 
 logger = get_logger(__name__)
 
@@ -44,8 +44,8 @@ def main():
         from src.analysis.unified_analyzer import UnifiedAnalyzer
         from src.analysis.pattern_vectorizer import PatternVectorizer
         from src.utils.performance_report_writer import save_analysis_performance_report
-        from src.utils.performance_tracker import PerformanceTracker
-        from src.utils.profiler import Profiler
+        from src.utils.unified_performance import performance_monitor
+        from src.utils import get_profiler as Profiler
         from src.utils.feature_vector_validator import (
             validate_feature_vector,
             ensure_features_present,
@@ -90,7 +90,7 @@ def main():
 
         # 성능 추적 및 프로파일링 설정
         profiler = Profiler(config)
-        performance_tracker = PerformanceTracker()
+        # 통합 성능 모니터링 사용
         profiler.start("total")
 
         # 데이터 로드

@@ -19,7 +19,7 @@ from ..shared.types import LotteryNumber, PatternAnalysis, ModelPrediction
 from ..models.base_model import BaseModel
 from ..models.rl_model import RLModel
 from ..models.gnn_model import GNNModel
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.dynamic_batch_size_utils import get_safe_batch_size
 from ..analysis.pattern_analyzer import PatternAnalyzer
 from ..training.train_rl import RLTrainer
@@ -30,7 +30,7 @@ from ..utils.cuda_optimizers import AMPTrainer
 from ..utils.performance_report_writer import save_report
 from ..utils.model_saver import save_model
 from .base_trainer import BaseTrainer
-from ..utils.performance_tracker import PerformanceTracker
+from ..utils.unified_performance import performance_monitor
 from ..utils.profiler import Profiler
 
 # 로거 설정
@@ -622,9 +622,9 @@ class UnifiedTrainer(BaseTrainer):
             try:
                 # 성능 추적기가 없으면 생성
                 if not hasattr(self, "performance_tracker"):
-                    from ..utils.performance_tracker import PerformanceTracker
+                    from ..utils.unified_performance import performance_monitor
 
-                    self.performance_tracker = PerformanceTracker()
+                    # 통합 성능 모니터링 사용
 
                 # 프로파일러가 없으면 생성
                 if not hasattr(self, "profiler"):

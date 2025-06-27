@@ -12,7 +12,7 @@ import logging
 import numpy as np
 from pathlib import Path
 
-from .error_handler import get_logger
+from .error_handler_refactored import get_logger
 
 # 로거 설정
 logger = get_logger(__name__)

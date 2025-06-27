@@ -22,7 +22,7 @@ import gc
 from ..models.rl_model import RLModel
 from ..shared.types import LotteryNumber, PatternAnalysis, ModelPrediction
 from ..utils.data_loader import load_draw_history, DataLoader
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.profiler import Profiler, ProfilerConfig
 from ..utils.pattern_filter import get_pattern_filter
 from ..utils.cuda_optimizers import AMPTrainer
@@ -254,7 +254,7 @@ class RLTrainer:
         """
         # 로거 초기화 (없을 경우)
         if not hasattr(self, "logger"):
-            from ..utils.error_handler import get_logger
+            from ..utils.error_handler_refactored import get_logger
 
             self.logger = get_logger(__name__)
 

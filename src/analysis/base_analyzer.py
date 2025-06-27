@@ -15,10 +15,10 @@ import logging
 from datetime import datetime
 from abc import ABC, abstractmethod
 
-from ..utils.performance_tracker import PerformanceTracker
+from ..utils.unified_performance import performance_monitor
 from ..utils.cache_manager import CacheManager
 from ..shared.types import LotteryNumber
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.config_loader import ConfigProxy
 
 # 제네릭 타입 변수 정의
@@ -53,7 +53,7 @@ class BaseAnalyzer(Generic[T], ABC):
         # 설정 초기화
         self.config = ConfigProxy(config or {})
         self.analyzer_type = analyzer_type
-        self.performance_tracker = PerformanceTracker()
+        # 통합 성능 모니터링 사용
         self.logger = get_logger(f"{__name__}.{analyzer_type}")
 
         # 캐시 디렉토리 설정
@@ -109,7 +109,7 @@ class BaseAnalyzer(Generic[T], ABC):
         Returns:
             T: 분석 결과
         """
-        with self.performance_tracker.track(f"{self.analyzer_type}_analysis"):
+        with performance_monitor(f"{self.analyzer_type}_analysis"):
             try:
                 # 캐시 키 생성
                 cache_key = self._create_cache_key(
@@ -297,7 +297,7 @@ class BaseAnalyzer(Generic[T], ABC):
             return cached_result
 
         # 분석 함수 실행
-        with self.performance_tracker.track(key_base):
+        with performance_monitor(key_base):
             result = analysis_func(historical_data, *args, **kwargs)
 
         # 결과 캐싱

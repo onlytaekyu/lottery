@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import threading
 
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.data_loader import DataLoader
 from ..shared.types import LotteryNumber, PatternAnalysis
 from .performance_optimizer import (

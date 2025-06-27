@@ -17,7 +17,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass
 from .memory_manager import MemoryManager, MemoryConfig
-from .error_handler import get_logger
+from .unified_logging import get_logger
 import traceback
 from .config_loader import ConfigProxy
 

@@ -15,9 +15,9 @@ import json
 from datetime import datetime
 
 from ..shared.types import LotteryNumber
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..utils.config_loader import ConfigProxy
-from ..utils.performance_tracker import PerformanceTracker
+from ..utils.unified_performance import performance_monitor
 
 # 로거 설정
 logger = get_logger(__name__)
@@ -42,7 +42,7 @@ class TrendSequenceGenerator:
         # 설정 초기화
         self.config = config if config is not None else {}
         self.logger = get_logger(__name__)
-        self.performance_tracker = PerformanceTracker()
+        # 통합 성능 모니터링 사용
 
         # 캐시 디렉토리 설정
         try:
@@ -81,7 +81,7 @@ class TrendSequenceGenerator:
             np.ndarray: 생성된 시퀀스 텐서 (형태: [num_sequences, window_size, trend_dim])
             또는 (시퀀스 텐서, 마스크 텐서) 튜플
         """
-        with self.performance_tracker.track("generate_trend_sequence"):
+        with performance_monitor("generate_trend_sequence"):
             self.logger.info(
                 f"추세 시퀀스 생성 시작: 데이터 {len(historical_data)}개, 윈도우 크기 {window_size}"
             )
@@ -346,7 +346,7 @@ class TrendSequenceGenerator:
         Returns:
             Tuple[np.ndarray, np.ndarray]: (시퀀스 텐서, 타겟 텐서) 튜플
         """
-        with self.performance_tracker.track("generate_trend_sequences_with_targets"):
+        with performance_monitor("generate_trend_sequences_with_targets"):
             self.logger.info(
                 f"타겟이 포함된 추세 시퀀스 생성 시작: 윈도우 크기 {window_size}, 타겟 유형 {target_type}"
             )

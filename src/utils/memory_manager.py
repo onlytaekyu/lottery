@@ -30,8 +30,8 @@ import random
 import json
 
 # 상대경로 임포트로 변경
-from .error_handler import get_logger
-from .performance_tracker import Profiler, ProfilerConfig
+from .error_handler_refactored import get_logger
+from .unified_performance import get_profiler
 from .config_loader import ConfigProxy
 
 logger = get_logger(__name__)

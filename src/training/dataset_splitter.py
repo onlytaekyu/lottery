@@ -1,8 +1,8 @@
 import numpy as np
 from typing import Dict, List, Tuple, Any, Optional
 from ..shared.types import LotteryNumber
-from ..utils.performance_tracker import PerformanceTracker
-from ..utils.error_handler import get_logger
+from ..utils.unified_performance import performance_monitor
+from ..utils.error_handler_refactored import get_logger
 from dataclasses import dataclass
 
 
@@ -29,7 +29,7 @@ class DatasetSplitter:
     def __init__(self):
         """초기화"""
         self.logger = get_logger(__name__)
-        self.performance_tracker = PerformanceTracker()
+        # 통합 성능 모니터링 사용
 
     def split_dataset(
         self,
@@ -50,7 +50,7 @@ class DatasetSplitter:
         """
         self.logger.info(f"데이터셋 분할 시작 (학습 비율: {train_ratio:.2f})")
 
-        with self.performance_tracker.track("split_dataset"):
+        with performance_monitor("split_dataset"):
             # 데이터 유효성 검사
             if not data:
                 self.logger.error("빈 데이터셋")

@@ -20,9 +20,9 @@ import json
 import platform
 import psutil
 
-from ..utils.error_handler import get_logger
-from ..utils.profiler import profile
-from ..utils.performance_utils import MemoryTracker, get_device_info
+from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_performance import performance_monitor
+# MemoryTracker와 get_device_info는 통합 성능 시스템에서 제공
 from ..utils.config_loader import ConfigProxy
 from ..utils.dynamic_batch_size import DynamicBatchSizeController
 from ..shared.types import LotteryNumber
@@ -223,7 +223,7 @@ class NegativeSampleGenerator:
         # 진행 상황 추적 잠금
         self._progress_lock = threading.Lock()
 
-    @profile("generate_negative_samples")
+    # @profile("generate_negative_samples")
     def generate_samples(
         self, draw_data: List[LotteryNumber], sample_size: int = 100000
     ) -> Dict[str, Any]:

@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 
 from .unified_logging import get_logger
-from .unified_performance import track_performance
+from .unified_performance import performance_monitor
 
 logger = get_logger(__name__)
 
@@ -88,7 +88,7 @@ class VectorValidator(BaseValidator):
         """벡터 데이터 검증"""
         result = ValidationResult(is_valid=True)
 
-        with track_performance(f"vector_validation_{self.level.value}"):
+        with performance_monitor(f"vector_validation_{self.level.value}"):
             try:
                 # 기본 타입 검증
                 if not isinstance(data, np.ndarray):

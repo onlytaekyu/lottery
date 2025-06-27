@@ -18,7 +18,7 @@ import gc
 import random
 
 from ..base_model import ModelWithAMP
-from ...utils.error_handler import get_logger
+from ...utils.error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 

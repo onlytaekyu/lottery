@@ -18,7 +18,7 @@ import logging
 from functools import partial
 import gc
 
-from .error_handler import get_logger, StrictErrorHandler, validate_and_fail_fast
+from .error_handler_refactored import get_logger, StrictErrorHandler, validate_and_fail_fast
 from .memory_manager import MemoryManager
 from .performance_utils import PerformanceMonitor
 

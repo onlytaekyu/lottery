@@ -44,7 +44,7 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 
 # 로컬 모듈 가져오기
-from .error_handler import get_logger
+from .error_handler_refactored import get_logger
 from .memory_manager import MemoryManager, MemoryConfig
 
 logger = get_logger(__name__)

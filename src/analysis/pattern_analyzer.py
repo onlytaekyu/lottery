@@ -20,13 +20,13 @@ import logging
 from pathlib import Path
 import math
 
-from ..utils.error_handler import get_logger
+from ..utils.error_handler_refactored import get_logger
 from ..shared.types import LotteryNumber, PatternAnalysis
 from ..utils.memory_manager import MemoryManager
 from ..analysis.base_analyzer import BaseAnalyzer
 from ..utils.config_loader import ConfigProxy
-from ..utils.report_writer import safe_convert
-from ..utils.performance_report_writer import save_analysis_performance_report
+from ..utils.unified_report import safe_convert, save_analysis_performance_report
+from ..utils.unified_performance import performance_monitor
 from ..shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality
 
 
@@ -1537,7 +1537,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         Returns:
             PatternAnalysis: 패턴 분석 결과
         """
-        with self.performance_tracker.track(f"pattern_analysis_{scope}"):
+        with performance_monitor(f"pattern_analysis_{scope}"):
             try:
                 # 캐시 키 생성
                 cache_key = self._create_cache_key(
@@ -1805,7 +1805,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
     ) -> None:
         """
         패턴 분석 성능 보고서 저장
-        performance_report_writer.py의 함수를 사용하여 성능 리포트를 저장합니다.
+        unified_report.py의 함수를 사용하여 성능 리포트를 저장합니다.
 
         Args:
             analysis_result: 분석 결과
@@ -1829,14 +1829,10 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
             if error:
                 data_metrics["error"] = error
 
-            # 성능 리포트 저장 함수 호출
-            from ..utils.performance_report_writer import (
-                save_analysis_performance_report,
-            )
-
+            # 통합 보고서 시스템 사용
             save_analysis_performance_report(
                 None,  # profiler
-                self.performance_tracker,
+                None,  # performance_tracker (통합 시스템 사용)
                 self.config,
                 "pattern_analyzer",
                 data_metrics,

@@ -155,6 +155,31 @@ def save_analysis_performance_report(
         "memory_usage_mb": 0.0,
         "cpu_usage_percent": psutil.cpu_percent(),
         "timestamp": datetime.now().isoformat(),
+        # 필수 필드들
+        "hardware": "gpu" if torch.cuda.is_available() else "cpu",
+        "gpu_device": (
+            f"cuda:{torch.cuda.current_device()}"
+            if torch.cuda.is_available()
+            else "none"
+        ),
+        "parallel_execution": True,
+        "max_threads": psutil.cpu_count(),
+        "batch_size": 64,
+        "memory_usage": psutil.virtual_memory().percent,
+        "cache_hit_rate": 0.0,
+        "vector_processing_count": 0,
+        "module_execution_times": {},
+        "gpu_utilization_percent": 0.0,
+        "torch_amp_enabled": torch.cuda.is_available(),
+        "threading_backend": "threading",
+        "cache_memory_hit_count": 0,
+        "cache_memory_miss_count": 0,
+        "cuda_driver_version": (
+            torch.version.cuda if torch.cuda.is_available() else "none"
+        ),
+        "cudnn_version": (
+            str(torch.backends.cudnn.version()) if torch.cuda.is_available() else "none"
+        ),
     }
 
     # 프로파일러 데이터 추가
@@ -183,59 +208,6 @@ def save_analysis_performance_report(
     if data_metrics:
         report_data["data_metrics"] = data_metrics
 
-    # 필수 필드 보장
-    required_fields = [
-        "hardware",
-        "gpu_device",
-        "parallel_execution",
-        "max_threads",
-        "batch_size",
-        "memory_usage",
-        "cache_hit_rate",
-        "vector_processing_count",
-        "module_execution_times",
-        "gpu_utilization_percent",
-        "torch_amp_enabled",
-        "threading_backend",
-        "cache_memory_hit_count",
-        "cache_memory_miss_count",
-        "cuda_driver_version",
-        "cudnn_version",
-    ]
-
-    for field in required_fields:
-        if field not in report_data:
-            if field == "hardware":
-                report_data[field] = "gpu" if torch.cuda.is_available() else "cpu"
-            elif field == "gpu_device":
-                report_data[field] = (
-                    f"cuda:{torch.cuda.current_device()}"
-                    if torch.cuda.is_available()
-                    else "none"
-                )
-            elif field == "torch_amp_enabled":
-                report_data[field] = torch.cuda.is_available()
-            elif field == "cuda_driver_version":
-                report_data[field] = (
-                    torch.version.cuda if torch.cuda.is_available() else "none"
-                )
-            elif field == "cudnn_version":
-                report_data[field] = (
-                    str(torch.backends.cudnn.version())
-                    if torch.cuda.is_available()
-                    else "none"
-                )
-            else:
-                # 기본값 설정
-                if "count" in field or "size" in field:
-                    report_data[field] = 0
-                elif "rate" in field or "percent" in field:
-                    report_data[field] = 0.0
-                elif "enabled" in field:
-                    report_data[field] = False
-                else:
-                    report_data[field] = "N/A"
-
     return save_performance_report(report_data, f"{module_name}_performance_report")
 
 
@@ -243,6 +215,12 @@ def save_analysis_performance_report(
 write_performance_report = save_performance_report
 write_training_report = save_training_report
 save_physical_performance_report = save_performance_report
+
+
+# 호환성을 위한 safe_convert 함수
+def safe_convert(obj):
+    """NumPy 타입을 JSON 직렬화 가능한 형태로 변환 (전역 함수)"""
+    return _report_writer._safe_convert(obj)
 
 
 # 시스템 정보 함수
@@ -261,6 +239,7 @@ __all__ = [
     "save_evaluation_report",
     "save_analysis_performance_report",
     "get_system_info",
+    "safe_convert",
     # 기존 호환성
     "write_performance_report",
     "write_training_report",

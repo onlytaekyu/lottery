@@ -13,8 +13,8 @@ from collections import defaultdict, Counter
 # 상대 경로로 임포트 수정
 from ..shared.types import LotteryNumber, ModelPrediction
 from ..utils.cache_manager import CacheManager
-from ..utils.performance_tracker import PerformanceTracker
-from ..utils.error_handler import get_logger
+from ..utils.unified_performance import performance_monitor
+from ..utils.error_handler_refactored import get_logger
 from ..utils.cache_paths import BACKTESTING_CACHE_DIR
 
 # 순환 참조 방지를 위해 타입 힌트에서만 사용
@@ -49,7 +49,7 @@ class Backtester:
             config: 설정 딕셔너리
         """
         self.config = config or {}
-        self.performance_tracker = PerformanceTracker()
+        # 통합 성능 모니터링 사용
 
         # 캐시 매니저 설정 - 캐시 경로 통합
         cache_dir = self.config.get("cache_dir", str(CACHE_DIR))
@@ -179,7 +179,7 @@ class Backtester:
                 f"번호: {draw_numbers}, 날짜: {draw_date}"
             )
 
-            with self.performance_tracker.track(f"draw_{seq_num}_evaluation"):
+            with performance_monitor(f"draw_{seq_num}_evaluation"):
                 # 고정된 수의 추천 조합 생성
                 try:
                     recommendations = []
@@ -570,7 +570,7 @@ class Backtester:
                 logger.info(f"캐시된 백테스팅 결과 사용: {cache_key}")
                 return cached_result
 
-        with self.performance_tracker.track("backtesting"):
+        with performance_monitor("backtesting"):
             # 추천 엔진을 사용하여 추천 생성
             if engine and training_data and test_data:
                 # 추천 개수 설정 (테스트 데이터당 5개)

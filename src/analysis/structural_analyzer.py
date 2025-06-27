@@ -13,7 +13,7 @@ from sklearn.metrics import silhouette_score
 
 from src.analysis.base_analyzer import BaseAnalyzer
 from src.shared.types import LotteryNumber
-from src.utils.error_handler import get_logger
+from src.utils.error_handler_refactored import get_logger
 from src.shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality
 
 logger = get_logger(__name__)
@@ -75,7 +75,7 @@ class StructuralAnalyzer(BaseAnalyzer):
         )
 
         # 쌍 빈도 분석 - graph_utils 사용
-        with self.performance_tracker.track("calculate_pair_frequency"):
+        with performance_monitor("calculate_pair_frequency"):
             # 쌍 빈도 계산
             pair_freq_tuples = calculate_pair_frequency(
                 historical_data, logger=self.logger
@@ -144,7 +144,7 @@ class StructuralAnalyzer(BaseAnalyzer):
         Returns:
             Dict[str, float]: 번호 쌍 중심성 분석 결과
         """
-        with self.performance_tracker.track("analyze_pair_centrality"):
+        with performance_monitor("analyze_pair_centrality"):
             # graph_utils를 사용하여 쌍 빈도 계산
             pair_freq_tuples = calculate_pair_frequency(
                 historical_data, logger=self.logger

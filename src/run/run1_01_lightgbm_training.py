@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.pipeline.train_pipeline import train_lightgbm_model
-from src.utils.error_handler import get_logger, log_exception_with_trace
+from src.utils.error_handler_refactored import get_logger, log_exception_with_trace
 
 # 모듈 로거 설정
 logger = get_logger(__name__)

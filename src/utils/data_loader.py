@@ -36,7 +36,7 @@ import warnings
 from numpy.typing import NDArray, ArrayLike
 
 # 상대 임포트 사용
-from .error_handler import get_logger
+from .error_handler_refactored import get_logger
 from .memory_manager import MemoryManager, MemoryConfig
 from ..shared.types import LotteryNumber
 from ..analysis.pattern_vectorizer import PatternVectorizer

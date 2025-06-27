@@ -17,8 +17,8 @@ from collections import Counter
 import gc
 import torch
 
-from ..utils.error_handler import get_logger
-from ..utils.performance_tracker import PerformanceTracker
+from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_performance import performance_monitor
 from ..utils.config_loader import ConfigProxy
 from ..utils.normalizer import Normalizer
 from ..shared.types import LotteryNumber, PatternAnalysis, PatternFeatures
@@ -45,7 +45,7 @@ class PatternVectorizer:
         """
         self.config = config if config is not None else {}
         self.logger = get_logger(__name__)
-        self.performance_tracker = PerformanceTracker()
+        # 통합 성능 모니터링 사용
 
         # 캐시 설정
         try:
@@ -1183,7 +1183,7 @@ class PatternVectorizer:
         Returns:
             정규화된 특성 벡터
         """
-        with self.performance_tracker.track("normalize_vector"):
+        with performance_monitor("normalize_vector"):
             # NaN 값 확인 및 처리
             has_nan = np.isnan(vector).any()
             if has_nan:
@@ -1702,7 +1702,7 @@ class PatternVectorizer:
         Returns:
             np.ndarray: 벡터화된 패턴 특성
         """
-        with self.performance_tracker.track("vectorize_pattern_features"):
+        with performance_monitor("vectorize_pattern_features"):
             # 입력 데이터가 리스트인 경우 패턴 특성 추출
             if isinstance(input_data, list):
                 # 여기에서 벡터화하기 위한 특성들을 계산

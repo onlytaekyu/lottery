@@ -1,7 +1,8 @@
 """
-통합 성능 측정 시스템
+통합 성능 관리 시스템
 
-시간 측정, 메모리 추적, 프로파일링 기능을 통합하여 중복 코드를 제거합니다.
+이 모듈은 프로파일링, 메모리 추적, 성능 보고서 작성을 모두 통합 관리합니다.
+기존 profiler.py, performance_utils.py, performance_tracker.py의 모든 기능을 포함합니다.
 """
 
 import time
@@ -19,6 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import json
 
 from .unified_logging import get_logger
 
@@ -27,426 +29,378 @@ logger = get_logger(__name__)
 
 @dataclass
 class PerformanceConfig:
-    """성능 측정 설정"""
+    """통합 성능 설정"""
 
     enable_profiling: bool = True
     enable_memory_tracking: bool = True
-    enable_cpu_profiling: bool = True
-    enable_gpu_profiling: bool = True
-    time_threshold: float = 0.1  # 시간 임계값 (초)
-    memory_threshold: int = 100 * 1024 * 1024  # 메모리 임계값 (100MB)
-    sampling_interval: float = 0.1  # 샘플링 간격
-    max_reports: int = 100
-    detailed_logging: bool = False
-    save_profiles: bool = False
-    profile_output_dir: str = "logs/profiles"
+    enable_cpu_monitoring: bool = True
+    enable_gpu_monitoring: bool = True
+    time_threshold: float = 0.1
+    memory_threshold: int = 1_000_000
+    report_threshold: float = 0.1
+    save_reports: bool = True
+    report_dir: str = "logs/performance"
+    detailed_memory: bool = False
+    sampling_interval: float = 0.1
+    cpu_threshold: float = 80.0
+    thread_threshold: int = 100
 
 
 @dataclass
 class PerformanceMetrics:
-    """성능 메트릭"""
+    """성능 메트릭 데이터 클래스"""
 
-    name: str
-    start_time: float = 0.0
-    end_time: float = 0.0
     duration: float = 0.0
-    start_memory: int = 0
-    end_memory: int = 0
     memory_used: int = 0
-    peak_memory: int = 0
-    cpu_percent: float = 0.0
-    gpu_memory_allocated: int = 0
-    gpu_memory_reserved: int = 0
-    thread_count: int = 0
-    additional_data: Dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def memory_used_mb(self) -> float:
-        """메모리 사용량 (MB)"""
-        return self.memory_used / (1024 * 1024)
-
-    @property
-    def gpu_memory_allocated_mb(self) -> float:
-        """GPU 메모리 할당량 (MB)"""
-        return self.gpu_memory_allocated / (1024 * 1024)
+    cpu_usage: float = 0.0
+    gpu_memory: int = 0
+    timestamp: float = field(default_factory=time.time)
 
 
 class UnifiedPerformanceTracker:
-    """통합 성능 추적기"""
+    """통합 성능 추적기 - 모든 성능 관련 기능을 통합"""
 
-    _instance = None
-    _lock = threading.RLock()
-
-    def __new__(cls, config: Optional[PerformanceConfig] = None):
-        """싱글톤 패턴 구현"""
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                cls._instance._initialized = False
-            return cls._instance
-
-    def __init__(self, config: Optional[PerformanceConfig] = None):
-        if self._initialized:
-            return
-
+    def __init__(self, config: PerformanceConfig = None):
         self.config = config or PerformanceConfig()
-        self.metrics: Dict[str, PerformanceMetrics] = {}
-        self.active_sessions: Dict[str, PerformanceMetrics] = {}
-        self.profilers: Dict[str, cProfile.Profile] = {}
-        self.logger = get_logger("performance")
-        self._initialized = True
+        self.sessions: Dict[str, Dict[str, Any]] = {}
+        self.profiles: Dict[str, List[float]] = {}
+        self.start_times: Dict[str, float] = {}
+        self.memory_stats: Dict[str, Any] = {}
+        self.reports: List[Dict[str, Any]] = []
+        self._lock = threading.Lock()
 
-        # 프로파일 저장 디렉토리 생성
-        if self.config.save_profiles:
-            Path(self.config.profile_output_dir).mkdir(parents=True, exist_ok=True)
+        # 기존 PerformanceTracker 호환성
+        self.metrics = {}
+        self.batch_metrics = {}
+        self.memory_usage = {}
 
-    def start_tracking(self, name: str, **kwargs) -> PerformanceMetrics:
-        """
-        성능 추적 시작
-
-        Args:
-            name: 추적 세션 이름
-            **kwargs: 추가 메타데이터
-
-        Returns:
-            성능 메트릭 객체
-        """
-        with self._lock:
-            if name in self.active_sessions:
-                self.logger.warning(f"세션 '{name}'이 이미 활성화되어 있습니다.")
-                return self.active_sessions[name]
-
-            # 성능 메트릭 초기화
-            metrics = PerformanceMetrics(name=name)
-            metrics.start_time = time.time()
-            metrics.additional_data.update(kwargs)
-
-            # 시스템 상태 측정
-            if self.config.enable_memory_tracking:
-                process = psutil.Process()
-                metrics.start_memory = process.memory_info().rss
-                metrics.cpu_percent = process.cpu_percent()
-                metrics.thread_count = threading.active_count()
-
-            # GPU 메모리 측정
-            if self.config.enable_gpu_profiling and torch.cuda.is_available():
-                try:
-                    metrics.gpu_memory_allocated = torch.cuda.memory_allocated()
-                    metrics.gpu_memory_reserved = torch.cuda.memory_reserved()
-                except Exception as e:
-                    self.logger.debug(f"GPU 메모리 측정 실패: {e}")
-
-            # CPU 프로파일링 시작
-            if self.config.enable_cpu_profiling:
-                profiler = cProfile.Profile()
-                profiler.enable()
-                self.profilers[name] = profiler
-
-            self.active_sessions[name] = metrics
-
-            if self.config.detailed_logging:
-                self.logger.debug(f"성능 추적 시작: {name}")
-
-            return metrics
-
-    def stop_tracking(self, name: str) -> PerformanceMetrics:
-        """
-        성능 추적 중지
-
-        Args:
-            name: 추적 세션 이름
-
-        Returns:
-            완료된 성능 메트릭
-        """
-        with self._lock:
-            if name not in self.active_sessions:
-                self.logger.warning(f"활성 세션 '{name}'을 찾을 수 없습니다.")
-                return PerformanceMetrics(name=name)
-
-            metrics = self.active_sessions[name]
-
-            # 종료 시간 기록
-            metrics.end_time = time.time()
-            metrics.duration = metrics.end_time - metrics.start_time
-
-            # 시스템 상태 측정
-            if self.config.enable_memory_tracking:
-                process = psutil.Process()
-                metrics.end_memory = process.memory_info().rss
-                metrics.memory_used = metrics.end_memory - metrics.start_memory
-                metrics.peak_memory = max(metrics.start_memory, metrics.end_memory)
-
-            # GPU 메모리 측정
-            if self.config.enable_gpu_profiling and torch.cuda.is_available():
-                try:
-                    gpu_allocated = torch.cuda.memory_allocated()
-                    gpu_reserved = torch.cuda.memory_reserved()
-                    metrics.gpu_memory_allocated = (
-                        gpu_allocated - metrics.gpu_memory_allocated
-                    )
-                    metrics.gpu_memory_reserved = (
-                        gpu_reserved - metrics.gpu_memory_reserved
-                    )
-                except Exception as e:
-                    self.logger.debug(f"GPU 메모리 측정 실패: {e}")
-
-            # CPU 프로파일링 중지
-            if name in self.profilers:
-                profiler = self.profilers[name]
-                profiler.disable()
-
-                if self.config.save_profiles:
-                    self._save_profile(name, profiler)
-
-                del self.profilers[name]
-
-            # 활성 세션에서 제거하고 완료된 메트릭에 저장
-            del self.active_sessions[name]
-            self.metrics[name] = metrics
-
-            # 임계값 확인 및 로깅
-            self._check_thresholds(metrics)
-
-            if self.config.detailed_logging:
-                self.logger.debug(
-                    f"성능 추적 완료: {name} "
-                    f"(시간: {metrics.duration:.2f}초, "
-                    f"메모리: {metrics.memory_used_mb:.1f}MB)"
-                )
-
-            return metrics
-
-    def _check_thresholds(self, metrics: PerformanceMetrics):
-        """임계값 확인 및 경고"""
-        if metrics.duration > self.config.time_threshold:
-            self.logger.info(
-                f"실행 시간 임계값 초과: {metrics.name} "
-                f"({metrics.duration:.2f}초 > {self.config.time_threshold}초)"
-            )
-
-        if metrics.memory_used > self.config.memory_threshold:
-            self.logger.info(
-                f"메모리 사용량 임계값 초과: {metrics.name} "
-                f"({metrics.memory_used_mb:.1f}MB > {self.config.memory_threshold / (1024*1024):.1f}MB)"
-            )
-
-    def _save_profile(self, name: str, profiler: cProfile.Profile):
-        """프로파일 결과 저장"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            profile_file = (
-                Path(self.config.profile_output_dir) / f"{name}_{timestamp}.prof"
-            )
-
-            # 프로파일 통계 저장
-            s = io.StringIO()
-            ps = pstats.Stats(profiler, stream=s).sort_stats("cumulative")
-            ps.print_stats(50)  # 상위 50개 함수
-
-            with open(profile_file.with_suffix(".txt"), "w", encoding="utf-8") as f:
-                f.write(s.getvalue())
-
-            self.logger.debug(f"프로파일 저장 완료: {profile_file}")
-
-        except Exception as e:
-            self.logger.error(f"프로파일 저장 실패: {e}")
+        # 기존 Profiler 호환성
+        self._is_profiling = False
+        self._memory_stats = []
+        self._thread_stats = []
 
     @contextmanager
-    def track(self, name: str, **kwargs) -> Generator[PerformanceMetrics, None, None]:
-        """
-        컨텍스트 매니저로 성능 추적
+    def track(self, name: str):
+        """통합 성능 추적 - 모든 메트릭을 한번에 수집"""
+        start_time = time.time()
+        start_memory = psutil.Process().memory_info().rss
+        start_threads = threading.active_count()
 
-        Args:
-            name: 추적 세션 이름
-            **kwargs: 추가 메타데이터
+        # GPU 메모리 (가능한 경우)
+        gpu_memory_start = 0
+        if torch.cuda.is_available():
+            gpu_memory_start = torch.cuda.memory_allocated()
 
-        Yields:
-            성능 메트릭 객체
-        """
-        metrics = self.start_tracking(name, **kwargs)
+        # 프로파일링 시작
+        profiler = None
+        if self.config.enable_profiling:
+            profiler = cProfile.Profile()
+            profiler.enable()
+
         try:
-            yield metrics
+            yield
         finally:
-            self.stop_tracking(name)
+            end_time = time.time()
+            end_memory = psutil.Process().memory_info().rss
+            end_threads = threading.active_count()
 
-    def get_metrics(
-        self, name: Optional[str] = None
-    ) -> Union[PerformanceMetrics, Dict[str, PerformanceMetrics]]:
-        """
-        성능 메트릭 조회
+            duration = end_time - start_time
+            memory_used = end_memory - start_memory
+            threads_created = end_threads - start_threads
 
-        Args:
-            name: 특정 세션 이름 (None이면 전체 반환)
+            # GPU 메모리 (가능한 경우)
+            gpu_memory_used = 0
+            if torch.cuda.is_available():
+                gpu_memory_used = torch.cuda.memory_allocated() - gpu_memory_start
 
-        Returns:
-            성능 메트릭 또는 전체 메트릭 딕셔너리
-        """
-        if name is None:
-            return self.metrics.copy()
-        return self.metrics.get(name, PerformanceMetrics(name=name))
+            # 프로파일링 종료
+            profile_stats = None
+            if profiler:
+                profiler.disable()
+                s = io.StringIO()
+                ps = pstats.Stats(profiler, stream=s).sort_stats("cumulative")
+                ps.print_stats(20)
+                profile_stats = s.getvalue()
 
-    def get_summary(self) -> Dict[str, Any]:
-        """성능 요약 반환"""
-        if not self.metrics:
-            return {"total_sessions": 0}
+            # 결과 저장
+            with self._lock:
+                self._save_metrics(
+                    name,
+                    {
+                        "duration": duration,
+                        "memory_used": memory_used,
+                        "threads_created": threads_created,
+                        "gpu_memory_used": gpu_memory_used,
+                        "profile_stats": profile_stats,
+                        "timestamp": time.time(),
+                    },
+                )
 
-        durations = [m.duration for m in self.metrics.values()]
-        memory_usage = [m.memory_used_mb for m in self.metrics.values()]
+    def _save_metrics(self, name: str, metrics: Dict[str, Any]):
+        """메트릭 저장"""
+        if name not in self.sessions:
+            self.sessions[name] = {
+                "durations": [],
+                "memory_usage": [],
+                "gpu_memory": [],
+                "thread_counts": [],
+                "profile_data": [],
+            }
+
+        session = self.sessions[name]
+        session["durations"].append(metrics["duration"])
+        session["memory_usage"].append(metrics["memory_used"])
+        session["gpu_memory"].append(metrics["gpu_memory_used"])
+        session["thread_counts"].append(metrics["threads_created"])
+
+        if metrics["profile_stats"]:
+            session["profile_data"].append(metrics["profile_stats"])
+
+        # 임계값 체크 및 로깅
+        if metrics["duration"] > self.config.time_threshold:
+            logger.warning(f"성능 임계값 초과: {name} - {metrics['duration']:.2f}초")
+
+        if metrics["memory_used"] > self.config.memory_threshold:
+            logger.warning(
+                f"메모리 임계값 초과: {name} - {metrics['memory_used']/1024/1024:.2f}MB"
+            )
+
+    # 기존 Profiler 호환 메서드들
+    @contextmanager
+    def profile(self, name: str):
+        """프로파일링 컨텍스트 (기존 호환성)"""
+        with self.track(name):
+            yield
+
+    def start(self, name: str) -> None:
+        """프로파일링 시작 (기존 호환성)"""
+        if name not in self.profiles:
+            self.profiles[name] = []
+        self.start_times[name] = time.time()
+        self._is_profiling = True
+
+    def stop(self, name: str) -> None:
+        """프로파일링 중지 (기존 호환성)"""
+        if name in self.start_times:
+            duration = time.time() - self.start_times[name]
+            self.profiles[name].append(duration)
+            del self.start_times[name]
+        self._is_profiling = False
+
+    def get_profile_stats(self) -> Dict[str, Dict[str, float]]:
+        """프로파일링 통계 반환 (기존 호환성)"""
+        stats = {}
+        for name, durations in self.profiles.items():
+            if durations:
+                stats[name] = {
+                    "mean": sum(durations) / len(durations),
+                    "min": min(durations),
+                    "max": max(durations),
+                    "total": sum(durations),
+                    "count": len(durations),
+                }
+        return stats
+
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """메모리 사용량 통계 반환 (기존 호환성)"""
+        if not torch.cuda.is_available():
+            return {"error": "CUDA not available"}
 
         return {
-            "total_sessions": len(self.metrics),
-            "total_time": sum(durations),
-            "avg_time": np.mean(durations),
-            "max_time": max(durations),
-            "total_memory_mb": sum(memory_usage),
-            "avg_memory_mb": np.mean(memory_usage),
-            "max_memory_mb": max(memory_usage),
-            "slowest_session": max(self.metrics.items(), key=lambda x: x[1].duration)[
-                0
-            ],
-            "memory_intensive_session": max(
-                self.metrics.items(), key=lambda x: x[1].memory_used
-            )[0],
+            "allocated": torch.cuda.memory_allocated(),
+            "cached": torch.cuda.memory_reserved(),
+            "max_allocated": torch.cuda.max_memory_allocated(),
+            "max_cached": torch.cuda.max_memory_reserved(),
         }
 
-    def reset(self, name: Optional[str] = None):
-        """메트릭 초기화"""
-        with self._lock:
-            if name is None:
-                self.metrics.clear()
-                self.active_sessions.clear()
-                self.profilers.clear()
-                self.logger.debug("모든 성능 메트릭을 초기화했습니다.")
-            else:
-                self.metrics.pop(name, None)
-                self.active_sessions.pop(name, None)
-                self.profilers.pop(name, None)
-                self.logger.debug(f"'{name}' 세션 메트릭을 초기화했습니다.")
+    def clear(self) -> None:
+        """프로파일링 데이터 초기화 (기존 호환성)"""
+        self.profiles.clear()
+        self.start_times.clear()
+        self.sessions.clear()
+        self.metrics.clear()
+        self.batch_metrics.clear()
+        self.memory_usage.clear()
+
+    # 기존 PerformanceTracker 호환 메서드들
+    def start_tracking(self, name: str):
+        """추적 시작 (기존 호환성)"""
+        self.start(name)
+
+    def stop_tracking(self, name: str):
+        """추적 중지 (기존 호환성)"""
+        self.stop(name)
+
+    def update_metrics(self, metrics: Dict[str, Any]) -> None:
+        """메트릭 업데이트 (기존 호환성)"""
+        self.metrics.update(metrics)
+
+    def record_batch(self, name: str, batch_size: int, batch_time: float):
+        """배치 기록 (기존 호환성)"""
+        if name not in self.batch_metrics:
+            self.batch_metrics[name] = []
+
+        self.batch_metrics[name].append(
+            {
+                "batch_size": batch_size,
+                "batch_time": batch_time,
+                "throughput": batch_size / batch_time if batch_time > 0 else 0,
+            }
+        )
+
+    def get_metrics(self, name: Optional[str] = None) -> Dict[str, Any]:
+        """메트릭 반환 (기존 호환성)"""
+        if name is None:
+            return self.metrics
+        return self.metrics.get(name, {})
+
+    def get_summary(self, name: str) -> Dict[str, float]:
+        """요약 통계 반환 (기존 호환성)"""
+        if name not in self.sessions:
+            return {}
+
+        session = self.sessions[name]
+        durations = session.get("durations", [])
+
+        if not durations:
+            return {}
+
+        return {
+            "mean_duration": sum(durations) / len(durations),
+            "min_duration": min(durations),
+            "max_duration": max(durations),
+            "total_duration": sum(durations),
+            "call_count": len(durations),
+        }
+
+    def generate_report(self) -> str:
+        """통합 보고서 생성"""
+        report = ["=== 통합 성능 보고서 ==="]
+
+        # 세션별 통계
+        report.append("\n[세션별 성능 통계]")
+        for name, session in self.sessions.items():
+            durations = session.get("durations", [])
+            if durations:
+                report.append(f"\n{name}:")
+                report.append(f"  평균 시간: {sum(durations)/len(durations):.4f}초")
+                report.append(f"  최소 시간: {min(durations):.4f}초")
+                report.append(f"  최대 시간: {max(durations):.4f}초")
+                report.append(f"  총 시간: {sum(durations):.4f}초")
+                report.append(f"  호출 횟수: {len(durations)}회")
+
+        # 시스템 정보
+        report.append("\n[시스템 정보]")
+        report.append(f"  CPU 사용률: {psutil.cpu_percent():.1f}%")
+        report.append(f"  메모리 사용률: {psutil.virtual_memory().percent:.1f}%")
+
+        if torch.cuda.is_available():
+            report.append(
+                f"  GPU 메모리: {torch.cuda.memory_allocated()/1024**2:.1f}MB"
+            )
+
+        return "\n".join(report)
+
+    def save_report(self, filename: str = None):
+        """보고서 저장"""
+        if not self.config.save_reports:
+            return
+
+        report_dir = Path(self.config.report_dir)
+        report_dir.mkdir(parents=True, exist_ok=True)
+
+        if filename is None:
+            filename = f"performance_report_{int(time.time())}.json"
+
+        filepath = report_dir / filename
+
+        report_data = {
+            "sessions": self.sessions,
+            "metrics": self.metrics,
+            "batch_metrics": self.batch_metrics,
+            "system_info": self._get_system_info(),
+            "timestamp": time.time(),
+        }
+
+        with open(filepath, "w") as f:
+            json.dump(report_data, f, indent=2, default=str)
+
+        logger.info(f"성능 보고서 저장: {filepath}")
+
+    def _get_system_info(self) -> Dict[str, Any]:
+        """시스템 정보 수집"""
+        return {
+            "cpu_count": psutil.cpu_count(),
+            "memory_total": psutil.virtual_memory().total,
+            "cuda_available": torch.cuda.is_available(),
+            "python_version": f"{psutil.version_info}",
+            "timestamp": datetime.now().isoformat(),
+        }
 
 
-# 데코레이터 함수들
-def performance_monitor(name: Optional[str] = None, **kwargs):
-    """
-    함수 성능 모니터링 데코레이터
-
-    Args:
-        name: 추적 세션 이름 (기본값: 함수명)
-        **kwargs: 추가 메타데이터
-    """
-
-    def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **func_kwargs):
-            tracker = UnifiedPerformanceTracker()
-            session_name = name or func.__name__
-
-            with tracker.track(session_name, **kwargs):
-                return func(*args, **func_kwargs)
-
-        return wrapper
-
-    return decorator
+# 전역 인스턴스
+_performance_tracker = None
 
 
-def memory_monitor(threshold_mb: float = 100.0):
-    """
-    메모리 사용량 모니터링 데코레이터
+def get_performance_manager() -> UnifiedPerformanceTracker:
+    """전역 성능 관리자 반환"""
+    global _performance_tracker
+    if _performance_tracker is None:
+        _performance_tracker = UnifiedPerformanceTracker()
+    return _performance_tracker
 
-    Args:
-        threshold_mb: 메모리 임계값 (MB)
-    """
 
-    def decorator(func: Callable) -> Callable:
+# 기존 호환성을 위한 함수들
+def get_profiler() -> UnifiedPerformanceTracker:
+    """프로파일러 반환 (기존 호환성)"""
+    return get_performance_manager()
+
+
+def profile(name: str):
+    """성능 추적 데코레이터"""
+
+    def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            tracker = UnifiedPerformanceTracker()
-
-            with tracker.track(func.__name__, memory_threshold_mb=threshold_mb):
-                result = func(*args, **kwargs)
-
-                # 메트릭 확인
-                metrics = tracker.get_metrics(func.__name__)
-                if metrics.memory_used_mb > threshold_mb:
-                    logger.warning(
-                        f"함수 {func.__name__} 메모리 사용량 초과: "
-                        f"{metrics.memory_used_mb:.1f}MB > {threshold_mb}MB"
-                    )
-
-                return result
+            with get_performance_manager().track(name):
+                return func(*args, **kwargs)
 
         return wrapper
 
     return decorator
-
-
-# 편의 함수들
-def get_performance_tracker(
-    config: Optional[PerformanceConfig] = None,
-) -> UnifiedPerformanceTracker:
-    """통합 성능 추적기 반환"""
-    return UnifiedPerformanceTracker(config)
 
 
 @contextmanager
-def track_performance(name: str, **kwargs) -> Generator[PerformanceMetrics, None, None]:
-    """성능 추적 컨텍스트 매니저 (편의 함수)"""
-    tracker = UnifiedPerformanceTracker()
-    with tracker.track(name, **kwargs) as metrics:
-        yield metrics
+def performance_monitor(name: str):
+    """성능 모니터링 컨텍스트"""
+    with get_performance_manager().track(name):
+        yield
 
 
-def measure_time(func: Callable) -> Callable:
-    """시간 측정 데코레이터 (간단 버전)"""
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        duration = time.time() - start_time
-
-        logger.debug(f"함수 {func.__name__} 실행 시간: {duration:.2f}초")
-        return result
-
-    return wrapper
+# 편의 함수들
+def clear_memory() -> None:
+    """메모리 정리"""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
-def get_system_info() -> Dict[str, Any]:
-    """시스템 정보 반환"""
-    try:
-        process = psutil.Process()
+def get_device_info() -> Dict[str, Any]:
+    """디바이스 정보 반환"""
+    info = {
+        "cpu_count": psutil.cpu_count(),
+        "memory_total": psutil.virtual_memory().total,
+        "cuda_available": torch.cuda.is_available(),
+    }
 
-        info = {
-            "cpu_count": psutil.cpu_count(),
-            "cpu_percent": psutil.cpu_percent(interval=1),
-            "memory_total_gb": psutil.virtual_memory().total / (1024**3),
-            "memory_available_gb": psutil.virtual_memory().available / (1024**3),
-            "memory_percent": psutil.virtual_memory().percent,
-            "process_memory_mb": process.memory_info().rss / (1024**2),
-            "process_cpu_percent": process.cpu_percent(),
-            "thread_count": threading.active_count(),
-        }
+    if torch.cuda.is_available():
+        info.update(
+            {
+                "cuda_device_count": torch.cuda.device_count(),
+                "cuda_current_device": torch.cuda.current_device(),
+                "cuda_device_name": torch.cuda.get_device_name(),
+                "cuda_memory_total": torch.cuda.get_device_properties(0).total_memory,
+            }
+        )
 
-        # GPU 정보 추가
-        if torch.cuda.is_available():
-            info.update(
-                {
-                    "gpu_available": True,
-                    "gpu_count": torch.cuda.device_count(),
-                    "gpu_memory_allocated_mb": torch.cuda.memory_allocated()
-                    / (1024**2),
-                    "gpu_memory_reserved_mb": torch.cuda.memory_reserved() / (1024**2),
-                    "gpu_memory_total_mb": torch.cuda.get_device_properties(
-                        0
-                    ).total_memory
-                    / (1024**2),
-                }
-            )
-        else:
-            info["gpu_available"] = False
-
-        return info
-
-    except Exception as e:
-        logger.error(f"시스템 정보 수집 실패: {e}")
-        return {"error": str(e)}
+    return info

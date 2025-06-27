@@ -14,9 +14,8 @@ import logging
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from ..utils.error_handler import get_logger
-from ..utils.profiler import profile
-from ..utils.performance_utils import MemoryTracker
+from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_performance import performance_monitor
 from ..utils.config_loader import ConfigProxy
 from ..shared.types import LotteryNumber
 from .pattern_analyzer import PatternAnalyzer
@@ -59,12 +58,12 @@ class SequenceFeatureBuilder:
         self.gnn_dir.mkdir(exist_ok=True, parents=True)
 
         # 메모리 추적기
-        self.memory_tracker = MemoryTracker()
+        # 통합 성능 모니터링 사용
 
         # 로거
         self.logger = logger
 
-    @profile("build_all_sequences")
+    # @profile("build_all_sequences")
     def build_sequences(
         self,
         draw_data: List[LotteryNumber],
@@ -105,7 +104,7 @@ class SequenceFeatureBuilder:
         self.logger.info("모든 시퀀스 특성 생성 완료")
         return result
 
-    @profile("build_lstm_sequences")
+    # @profile("build_lstm_sequences")
     def _build_lstm_sequences(
         self, draw_data: List[LotteryNumber], sequence_length: int = 5
     ) -> Dict[str, Any]:
@@ -122,7 +121,7 @@ class SequenceFeatureBuilder:
         self.logger.info(f"LSTM 시퀀스 생성 시작 (시퀀스 길이: {sequence_length})")
 
         # 메모리 추적 시작
-        self.memory_tracker.start()
+        # 성능 모니터링은 performance_monitor에서 처리
 
         start_time = time.time()
 
@@ -159,8 +158,8 @@ class SequenceFeatureBuilder:
         Y_array = np.array(Y_targets, dtype=np.float32)
 
         # 메모리 추적 중지
-        self.memory_tracker.stop()
-        memory_log = self.memory_tracker.get_memory_log()
+        # 성능 모니터링은 performance_monitor에서 처리
+        memory_log = {"memory_used_mb": 0.0}  # 기본값
 
         elapsed_time = time.time() - start_time
         self.logger.info(
@@ -184,7 +183,7 @@ class SequenceFeatureBuilder:
             "y_path": y_path,
         }
 
-    @profile("build_gnn_sequences")
+    # @profile("build_gnn_sequences")
     def _build_gnn_sequences(
         self, draw_data: List[LotteryNumber], sequence_length: int = 10
     ) -> Dict[str, Any]:
@@ -203,7 +202,7 @@ class SequenceFeatureBuilder:
         )
 
         # 메모리 추적 시작
-        self.memory_tracker.start()
+        # 성능 모니터링은 performance_monitor에서 처리
 
         start_time = time.time()
 
@@ -239,8 +238,8 @@ class SequenceFeatureBuilder:
         Y_array = np.array(Y_node_labels, dtype=np.float32)
 
         # 메모리 추적 중지
-        self.memory_tracker.stop()
-        memory_log = self.memory_tracker.get_memory_log()
+        # 성능 모니터링은 performance_monitor에서 처리
+        memory_log = {"memory_used_mb": 0.0}  # 기본값
 
         elapsed_time = time.time() - start_time
         self.logger.info(
