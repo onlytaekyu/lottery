@@ -16,7 +16,7 @@ import json
 from datetime import datetime
 
 from .unified_logging import get_logger
-from ..utils.unified_config import ConfigProxy
+from .unified_config import ConfigProxy
 
 # 로거 설정
 logger = get_logger(__name__)
