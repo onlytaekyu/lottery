@@ -104,6 +104,69 @@ class MLCandidateGenerator:
         # 정규화 유틸리티 초기화
         self.normalizer = Normalizer(self.config)
 
+        # 🚀 성능 최적화 시스템 초기화
+        from ..utils.memory_manager import MemoryManager, MemoryConfig
+        from ..utils.cuda_optimizers import get_cuda_optimizer, CudaConfig
+        from ..utils.process_pool_manager import get_process_pool_manager
+        from ..utils.hybrid_optimizer import get_hybrid_optimizer
+
+        # 메모리 관리자 초기화
+        try:
+            memory_config = MemoryConfig(
+                max_memory_usage=0.85,  # ML 후보 생성은 더 많은 메모리 사용
+                use_memory_pooling=True,
+                pool_size=256,  # 대용량 후보 생성을 위한 큰 풀
+                auto_cleanup=True,
+            )
+            self.memory_manager = MemoryManager(memory_config)
+            self.logger.info("✅ ML 후보 생성기 메모리 관리자 초기화 완료")
+        except Exception as e:
+            self.logger.warning(f"메모리 관리자 초기화 실패: {e}")
+            self.memory_manager = None
+
+        # CUDA 최적화 초기화
+        try:
+            cuda_config = CudaConfig(
+                enable_cuda=True,
+                use_amp=True,
+                batch_size=256,  # ML 후보 생성은 큰 배치 사용
+                memory_fraction=0.9,
+            )
+            self.cuda_optimizer = get_cuda_optimizer(cuda_config)
+            self.logger.info("✅ ML 후보 생성기 CUDA 최적화 초기화 완료")
+        except Exception as e:
+            self.logger.warning(f"CUDA 최적화 초기화 실패: {e}")
+            self.cuda_optimizer = None
+
+        # 프로세스 풀 관리자 초기화
+        try:
+            pool_config = {
+                "max_workers": min(
+                    8, os.cpu_count() or 1
+                ),  # ML 후보 생성은 최대 워커 사용
+                "chunk_size": 200,
+                "timeout": 900,  # 더 긴 타임아웃
+            }
+            self.process_pool_manager = get_process_pool_manager(pool_config)
+            self.logger.info("✅ ML 후보 생성기 프로세스 풀 초기화 완료")
+        except Exception as e:
+            self.logger.warning(f"프로세스 풀 초기화 실패: {e}")
+            self.process_pool_manager = None
+
+        # 하이브리드 최적화 초기화
+        try:
+            hybrid_config = {
+                "auto_optimization": True,
+                "memory_threshold": 0.8,
+                "cpu_threshold": 70.0,
+                "gpu_threshold": 0.8,
+            }
+            self.hybrid_optimizer = get_hybrid_optimizer(hybrid_config)
+            self.logger.info("✅ ML 후보 생성기 하이브리드 최적화 초기화 완료")
+        except Exception as e:
+            self.logger.warning(f"하이브리드 최적화 초기화 실패: {e}")
+            self.hybrid_optimizer = None
+
         # 벡터 캐시 초기화
         try:
             from ..utils.state_vector_cache import get_cache
@@ -115,7 +178,7 @@ class MLCandidateGenerator:
             )
             self.vector_cache = None
 
-        self.logger.info("ML 후보 생성기 초기화 완료")
+        self.logger.info("🎉 ML 후보 생성기 성능 최적화 시스템 초기화 완료")
 
     def _safe_float(self, value: Any) -> float:
         """

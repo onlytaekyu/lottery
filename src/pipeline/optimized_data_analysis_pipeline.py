@@ -675,6 +675,257 @@ def run_data_analysis() -> bool:
     return run_optimized_data_analysis()
 
 
+def run_fully_optimized_analysis():
+    """완전 최적화된 데이터 분석 파이프라인"""
+
+    # 🚀 전역 최적화 시스템 초기화
+    from src.utils.memory_manager import get_memory_manager, MemoryConfig
+    from src.utils.cuda_optimizers import get_cuda_optimizer, CudaConfig
+    from src.utils.process_pool_manager import get_process_pool_manager
+    from src.utils.hybrid_optimizer import get_hybrid_optimizer
+    from src.utils.unified_performance import performance_monitor
+
+    logger.info("🎉 완전 최적화된 데이터 분석 파이프라인 시작")
+
+    # 전역 최적화 시스템 초기화
+    memory_config = MemoryConfig(
+        max_memory_usage=0.85, use_memory_pooling=True, pool_size=256, auto_cleanup=True
+    )
+    memory_manager = get_memory_manager(memory_config)
+
+    cuda_config = CudaConfig(
+        enable_cuda=True,
+        use_amp=True,
+        batch_size=128,
+        memory_fraction=0.8,
+    )
+    cuda_optimizer = get_cuda_optimizer(cuda_config)
+
+    process_pool_config = {
+        "max_workers": min(8, os.cpu_count() or 1),
+        "chunk_size": 200,
+        "timeout": 900,
+    }
+    process_pool_manager = get_process_pool_manager(process_pool_config)
+
+    hybrid_config = {
+        "auto_optimization": True,
+        "memory_threshold": 0.8,
+        "cpu_threshold": 75.0,
+        "gpu_threshold": 0.85,
+    }
+    hybrid_optimizer = get_hybrid_optimizer(hybrid_config)
+
+    # 🧠 전역 메모리 관리 컨텍스트
+    with memory_manager.pipeline_context():
+
+        # 📈 전체 성능 모니터링
+        with performance_monitor("complete_optimized_pipeline"):
+
+            try:
+                # 🔧 최적화 레벨 자동 결정
+                optimization_level = hybrid_optimizer.determine_optimal_level()
+                logger.info(f"자동 결정된 최적화 레벨: {optimization_level}")
+
+                # 1️⃣ 데이터 로드 (메모리 최적화)
+                with performance_monitor("optimized_data_load"):
+                    data = load_draw_history_optimized(memory_manager=memory_manager)
+
+                # 2️⃣ 분석 (GPU/병렬 최적화)
+                with performance_monitor("optimized_analysis"):
+                    analyzer = create_optimized_analyzer(
+                        memory_manager=memory_manager,
+                        cuda_optimizer=cuda_optimizer,
+                        process_pool_manager=process_pool_manager,
+                        hybrid_optimizer=hybrid_optimizer,
+                    )
+
+                    analysis_result = analyzer.analyze_optimized(
+                        data, optimization_level=optimization_level
+                    )
+
+                # 3️⃣ 벡터화 (하이브리드 최적화)
+                with performance_monitor("optimized_vectorization"):
+                    vectorizer = create_optimized_vectorizer(
+                        memory_manager=memory_manager, cuda_optimizer=cuda_optimizer
+                    )
+
+                    vectors = vectorizer.vectorize_optimized(
+                        analysis_result, use_optimization=True
+                    )
+
+                # 4️⃣ 결과 저장 (최적화된 I/O)
+                with performance_monitor("optimized_save"):
+                    save_results_optimized(
+                        analysis_result, vectors, memory_manager=memory_manager
+                    )
+
+                # 📊 최적화 효과 보고
+                optimization_report = hybrid_optimizer.generate_performance_report()
+                logger.info(f"🚀 최적화 효과: {optimization_report}")
+
+                return True
+
+            except Exception as e:
+                logger.error(f"완전 최적화 파이프라인 실행 중 오류: {e}")
+                return False
+
+            finally:
+                # 정리 작업
+                cleanup_optimized_resources(
+                    memory_manager,
+                    cuda_optimizer,
+                    process_pool_manager,
+                    hybrid_optimizer,
+                )
+
+
+def create_optimized_analyzer(
+    memory_manager, cuda_optimizer, process_pool_manager, hybrid_optimizer
+):
+    """최적화된 분석기 생성"""
+    from src.analysis.unified_analyzer import UnifiedAnalyzer
+
+    config = load_config()
+    analyzer = UnifiedAnalyzer(config)
+
+    # 최적화 시스템 주입
+    if hasattr(analyzer, "set_optimizers"):
+        analyzer.set_optimizers(
+            memory_manager=memory_manager,
+            cuda_optimizer=cuda_optimizer,
+            process_pool_manager=process_pool_manager,
+            hybrid_optimizer=hybrid_optimizer,
+        )
+
+    return analyzer
+
+
+def create_optimized_vectorizer(memory_manager, cuda_optimizer):
+    """최적화된 벡터라이저 생성"""
+    from src.analysis.pattern_vectorizer import PatternVectorizer
+
+    config = load_config()
+    vectorizer = PatternVectorizer(config)
+
+    # 최적화 시스템 주입
+    if hasattr(vectorizer, "set_optimizers"):
+        vectorizer.set_optimizers(
+            memory_manager=memory_manager, cuda_optimizer=cuda_optimizer
+        )
+
+    return vectorizer
+
+
+def load_draw_history_optimized(memory_manager=None):
+    """최적화된 데이터 로드"""
+    from src.utils.data_loader import load_draw_history
+
+    if memory_manager:
+        with memory_manager.allocation_scope():
+            return load_draw_history()
+    else:
+        return load_draw_history()
+
+
+def save_results_optimized(analysis_result, vectors, memory_manager=None):
+    """최적화된 결과 저장"""
+    try:
+        if memory_manager:
+            with memory_manager.allocation_scope():
+                # 메모리 효율적 저장
+                _save_with_memory_optimization(analysis_result, vectors)
+        else:
+            _save_standard(analysis_result, vectors)
+
+        logger.info("✅ 최적화된 결과 저장 완료")
+
+    except Exception as e:
+        logger.error(f"결과 저장 중 오류: {e}")
+
+
+def _save_with_memory_optimization(analysis_result, vectors):
+    """메모리 최적화된 저장"""
+    import json
+    import numpy as np
+    from pathlib import Path
+
+    # 분석 결과 저장
+    analysis_path = Path("data/result/analysis/lottery_data_analysis.json")
+    analysis_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(analysis_path, "w", encoding="utf-8") as f:
+        json.dump(analysis_result, f, ensure_ascii=False, indent=2)
+
+    # 벡터 저장
+    if vectors is not None:
+        vector_path = Path("data/cache/feature_vectors_full.npy")
+        vector_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(vector_path, vectors)
+
+
+def _save_standard(analysis_result, vectors):
+    """표준 저장"""
+    _save_with_memory_optimization(analysis_result, vectors)
+
+
+def cleanup_optimized_resources(*optimizers):
+    """최적화 리소스 정리"""
+    for optimizer in optimizers:
+        if optimizer and hasattr(optimizer, "cleanup"):
+            try:
+                optimizer.cleanup()
+            except Exception as e:
+                logger.warning(f"리소스 정리 중 오류: {e}")
+
+    logger.info("✅ 최적화 리소스 정리 완료")
+
+
+def benchmark_optimization_performance():
+    """최적화 성능 벤치마킹"""
+    import time
+
+    logger.info("🔍 성능 최적화 벤치마킹 시작...")
+
+    # 1️⃣ 기존 방식 측정
+    start_time = time.time()
+    try:
+        run_optimized_analysis()
+        old_time = time.time() - start_time
+        old_success = True
+    except Exception as e:
+        old_time = time.time() - start_time
+        old_success = False
+        logger.warning(f"기존 방식 실행 실패: {e}")
+
+    # 2️⃣ 완전 최적화 방식 측정
+    start_time = time.time()
+    try:
+        run_fully_optimized_analysis()
+        new_time = time.time() - start_time
+        new_success = True
+    except Exception as e:
+        new_time = time.time() - start_time
+        new_success = False
+        logger.warning(f"최적화 방식 실행 실패: {e}")
+
+    # 📊 성능 개선 계산
+    if old_success and new_success:
+        speed_improvement = (old_time - new_time) / old_time * 100
+        logger.info(f"⚡ 속도 개선: {speed_improvement:.1f}%")
+        logger.info(f"🚀 전체 실행시간: {old_time:.2f}s → {new_time:.2f}s")
+    else:
+        logger.warning("벤치마킹 결과를 계산할 수 없습니다.")
+
+    return {
+        "old_time": old_time,
+        "new_time": new_time,
+        "old_success": old_success,
+        "new_success": new_success,
+        "improvement": speed_improvement if old_success and new_success else 0,
+    }
+
+
 if __name__ == "__main__":
     success = run_optimized_data_analysis()
     sys.exit(0 if success else 1)

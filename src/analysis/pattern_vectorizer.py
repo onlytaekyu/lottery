@@ -45,7 +45,36 @@ class PatternVectorizer:
         """
         self.config = config if config is not None else {}
         self.logger = get_logger(__name__)
-        # 통합 성능 모니터링 사용
+
+        # 🚀 성능 최적화 시스템 초기화
+        try:
+            from ..utils.memory_manager import MemoryManager, MemoryConfig
+            from ..utils.cuda_optimizers import get_cuda_optimizer, CudaConfig
+
+            # 메모리 관리자 초기화
+            memory_config = MemoryConfig(
+                max_memory_usage=0.8,
+                use_memory_pooling=True,
+                pool_size=32,
+                auto_cleanup=True,
+            )
+            self.memory_manager = MemoryManager(memory_config)
+
+            # CUDA 최적화 초기화 (벡터화 작업에 특화)
+            cuda_config = CudaConfig(
+                enable_cuda=True,
+                use_amp=False,  # 벡터화에서는 정확도 우선
+                batch_size=32,
+                memory_fraction=0.7,
+            )
+            self.cuda_optimizer = get_cuda_optimizer(cuda_config)
+
+            self.logger.info("✅ PatternVectorizer 최적화 시스템 초기화 완료")
+
+        except Exception as e:
+            self.logger.warning(f"최적화 시스템 초기화 실패: {e}")
+            self.memory_manager = None
+            self.cuda_optimizer = None
 
         # 캐시 설정
         try:
@@ -519,16 +548,56 @@ class PatternVectorizer:
         except Exception as e:
             self.logger.warning(f"캐시 저장 실패: {e}")
 
-    def vectorize_pattern(self, pattern_data: Dict[str, Any]) -> np.ndarray:
+    def vectorize_pattern(
+        self, pattern_data: Dict[str, Any], use_optimization: bool = True
+    ) -> np.ndarray:
         """
-        패턴 데이터를 특성 벡터로 변환합니다.
+        최적화된 패턴 데이터 벡터 변환
 
         Args:
             pattern_data: 패턴 분석 결과 데이터
+            use_optimization: 최적화 사용 여부
 
         Returns:
             특성 벡터
         """
+        if not use_optimization:
+            return self._standard_vectorize_pattern(pattern_data)
+
+        # 🧠 메모리 관리 스코프 적용
+        if self.memory_manager:
+            with self.memory_manager.allocation_scope():
+                return self._optimized_vectorize_pattern(pattern_data)
+        else:
+            return self._standard_vectorize_pattern(pattern_data)
+
+    def _optimized_vectorize_pattern(self, pattern_data: Dict[str, Any]) -> np.ndarray:
+        """최적화된 패턴 벡터화"""
+        # 📊 성능 모니터링
+        with performance_monitor("pattern_vectorization_optimized"):
+
+            # 캐시 확인
+            if self.use_cache:
+                pattern_hash = self._compute_pattern_hash(pattern_data)
+                if pattern_hash in self._pattern_cache:
+                    return self._pattern_cache[pattern_hash]
+
+            # 🚀 GPU 가속 벡터화 시도
+            if (
+                self.cuda_optimizer
+                and self.cuda_optimizer.is_available()
+                and self._should_use_gpu_vectorization(pattern_data)
+            ):
+                try:
+                    return self._gpu_vectorize_pattern(pattern_data)
+                except Exception as e:
+                    self.logger.warning(f"GPU 벡터화 실패: {e}, CPU로 폴백")
+
+            # CPU 최적화 벡터화
+            return self._cpu_vectorize_pattern_optimized(pattern_data)
+
+    def _standard_vectorize_pattern(self, pattern_data: Dict[str, Any]) -> np.ndarray:
+        """표준 패턴 벡터화 (기존 로직)"""
         # 캐시 사용 시 이미 계산된 벡터가 있는지 확인
         if self.use_cache:
             pattern_hash = self._compute_pattern_hash(pattern_data)
@@ -676,6 +745,79 @@ class PatternVectorizer:
                 self._save_cache()
 
         return combined_vector
+
+    def _should_use_gpu_vectorization(self, pattern_data: Dict[str, Any]) -> bool:
+        """GPU 벡터화 사용 여부 결정"""
+        # 데이터 크기가 충분히 클 때만 GPU 사용
+        data_size = len(str(pattern_data))  # 대략적인 데이터 크기
+        return data_size > 1000  # 1KB 이상일 때 GPU 사용
+
+    def _gpu_vectorize_pattern(self, pattern_data: Dict[str, Any]) -> np.ndarray:
+        """GPU 가속 패턴 벡터화"""
+        try:
+            if self.cuda_optimizer and hasattr(self.cuda_optimizer, "device_context"):
+                with self.cuda_optimizer.device_context():
+                    # 현재는 기본 벡터화로 폴백 (향후 CUDA 구현 확장 가능)
+                    return self._cpu_vectorize_pattern_optimized(pattern_data)
+            else:
+                # GPU 컨텍스트가 없으면 CPU로 처리
+                return self._cpu_vectorize_pattern_optimized(pattern_data)
+        except Exception as e:
+            self.logger.error(f"GPU 벡터화 실패: {e}")
+            return self._cpu_vectorize_pattern_optimized(pattern_data)
+
+    def _cpu_vectorize_pattern_optimized(
+        self, pattern_data: Dict[str, Any]
+    ) -> np.ndarray:
+        """최적화된 CPU 패턴 벡터화"""
+        # 🧠 메모리 풀에서 배열 할당 (가능한 경우)
+        if self.memory_manager:
+            try:
+                # 예상 벡터 크기로 메모리 할당
+                estimated_size = self._estimate_vector_size(pattern_data)
+                vector_array = self.memory_manager.get_optimized_array(
+                    shape=(estimated_size,), dtype=np.float32
+                )
+
+                # 기존 로직으로 벡터 계산
+                result = self._standard_vectorize_pattern(pattern_data)
+
+                # 크기 조정
+                if len(result) <= len(vector_array):
+                    vector_array[: len(result)] = result
+                    return vector_array[: len(result)]
+                else:
+                    return result
+
+            except Exception as e:
+                self.logger.warning(f"메모리 최적화 벡터화 실패: {e}")
+
+        # 폴백: 표준 벡터화
+        return self._standard_vectorize_pattern(pattern_data)
+
+    def _estimate_vector_size(self, pattern_data: Dict[str, Any]) -> int:
+        """벡터 크기 추정"""
+        # 기본 벡터 크기 추정
+        base_size = 15  # 기본 특성 수
+
+        # 데이터 복잡도에 따른 추가 크기
+        if "number_distribution" in pattern_data:
+            base_size += 7
+        if "sum_analysis" in pattern_data:
+            base_size += 2
+        if "number_gaps" in pattern_data:
+            base_size += 3
+
+        return base_size
+
+    def set_optimizers(self, **optimizers):
+        """외부에서 최적화 시스템 주입"""
+        if "memory_manager" in optimizers:
+            self.memory_manager = optimizers["memory_manager"]
+        if "cuda_optimizer" in optimizers:
+            self.cuda_optimizer = optimizers["cuda_optimizer"]
+
+        self.logger.info("PatternVectorizer 외부 최적화 시스템 주입 완료")
 
     def clear_cache(self) -> None:
         """캐시를 모두 비웁니다."""
