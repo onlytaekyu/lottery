@@ -1,9 +1,0 @@
-{
-  "test_type": "no_filter",
-  "description": "필터링 없는 벡터 테스트",
-  "timestamp": "2025-05-27T10:13:41.984618",
-  "vector_shape": [
-    20
-  ],
-  "feature_count": 20
-}
