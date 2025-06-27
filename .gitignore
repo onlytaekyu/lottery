@@ -41,10 +41,9 @@ venv.bak/
 .ipynb_checkpoints
 
 # 로또 캐시 디렉토리
-data/.cache/
-data/.cache/*
-.cache/
-src/.cache/
+data/*
+.cache/*
+src/.cache/*
 
 # 로그 파일
 logs/
