@@ -25,6 +25,7 @@ logger = get_logger(__name__)
 _GLOBAL_CACHE_INSTANCE = None
 _GLOBAL_CACHE_LOCK = threading.Lock()
 
+
 def get_cache(
     config: Optional[Union[Dict[str, Any], ConfigProxy]] = None,
 ) -> "StateVectorCache":
@@ -44,6 +45,7 @@ def get_cache(
             _GLOBAL_CACHE_INSTANCE = StateVectorCache(config)
 
     return _GLOBAL_CACHE_INSTANCE
+
 
 class StateVectorCache:
     """

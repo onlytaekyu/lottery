@@ -12,6 +12,7 @@ from .cache_paths import get_cache_dir, CACHE_DIR
 # Lazy import 캐시
 _imported_items = {}
 
+
 def get_logger(*args, **kwargs):
     """필요시에만 로거 로드"""
     if "logger" not in _imported_items:
@@ -19,6 +20,7 @@ def get_logger(*args, **kwargs):
 
         _imported_items["logger"] = _get_logger
     return _imported_items["logger"](*args, **kwargs)
+
 
 def get_profiler():
     """필요시에만 프로파일러 로드"""
@@ -28,6 +30,7 @@ def get_profiler():
         _imported_items["profiler"] = _get_profiler
     return _imported_items["profiler"]()
 
+
 def load_config(config_name: str = "main"):
     """필요시에만 설정 로드 (unified_config 사용)"""
     if "load_config" not in _imported_items:
@@ -35,6 +38,7 @@ def load_config(config_name: str = "main"):
 
         _imported_items["load_config"] = _load_config
     return _imported_items["load_config"](config_name)
+
 
 def __getattr__(name: str) -> Any:
     """모듈 레벨 지연 로딩"""
@@ -77,19 +81,12 @@ def __getattr__(name: str) -> Any:
 
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
+
 def cleanup_resources():
     """리소스 정리"""
     global _imported_items
     _imported_items.clear()
 
-def get_import_stats():
-    """import 통계 반환"""
-    return {
-        "loaded_items": len(_imported_items),
-        "loaded_modules": list(
-            set(key.split(".")[0] for key in _imported_items.keys())
-        ),
-    }
 
 # 즉시 로드하지 않고 함수로 제공
 __all__ = [
