@@ -4,14 +4,39 @@
 모든 종류의 보고서(성능, 학습, 분석, 평가)를 통합 관리합니다.
 """
 
+import os
 import json
-import platform
-import psutil
-import torch
-from pathlib import Path
+import time
 from datetime import datetime
-from typing import Dict, Any, Optional
-import numpy as np
+from pathlib import Path
+from typing import Dict, Any, Optional, Union, List
+from dataclasses import dataclass, asdict
+import platform
+
+# 조건부 import - 필요시에만 로드
+try:
+    import psutil
+
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None
+    PSUTIL_AVAILABLE = False
+
+try:
+    import torch
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    TORCH_AVAILABLE = False
+
+try:
+    import numpy as np
+
+    NUMPY_AVAILABLE = True
+except ImportError:
+    np = None
+    NUMPY_AVAILABLE = False
 
 from .unified_logging import get_logger
 
