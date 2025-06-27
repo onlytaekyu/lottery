@@ -60,7 +60,29 @@ class BaseAnalyzer(Generic[T], ABC):
         # 분석 결과 캐시
         self._cache = {}
 
-        self.logger.info(f"{name} 분석기 초기화 완료")
+        # 중복 로그 방지를 위한 전역 카운터 기반 추적
+        import threading
+
+        class_name = self.__class__.__name__
+        initialization_key = f"{class_name}_{name}"
+
+        # 전역 초기화 카운터 (스레드 안전)
+        if not hasattr(BaseAnalyzer, "_initialization_count"):
+            BaseAnalyzer._initialization_count = {}
+            BaseAnalyzer._log_lock = threading.Lock()
+
+        # 스레드 안전한 로그 중복 방지
+        with BaseAnalyzer._log_lock:
+            count = BaseAnalyzer._initialization_count.get(initialization_key, 0)
+            BaseAnalyzer._initialization_count[initialization_key] = count + 1
+
+            # 첫 번째 초기화만 INFO 레벨로 로그, 이후는 DEBUG 레벨
+            if count == 0:
+                self.logger.info(f"{name} 분석기 초기화 완료")
+            else:
+                self.logger.debug(
+                    f"{name} 분석기 재초기화 #{count + 1} (중복 로그 방지)"
+                )
 
     def analyze(self, historical_data: List[LotteryNumber], *args, **kwargs) -> T:
         """

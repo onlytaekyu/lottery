@@ -1984,9 +1984,9 @@ class PatternVectorizer:
             # 입력 데이터가 리스트인 경우 패턴 특성 추출
             if isinstance(input_data, list):
                 # 여기에서 벡터화하기 위한 특성들을 계산
-                from ..analysis.pattern_analyzer import PatternAnalyzer
+                from src.analysis.analyzer_factory import get_analyzer
 
-                pattern_analyzer = PatternAnalyzer(self.config)
+                pattern_analyzer = get_analyzer("pattern", self.config)
                 try:
                     # 리스트를 번호 조합으로 간주하고 특성 추출
                     input_data = pattern_analyzer.extract_pattern_features(

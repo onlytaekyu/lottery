@@ -354,7 +354,9 @@ def run_optimized_data_analysis() -> bool:
         logger.info("🔧 2단계: 분석기 초기화")
 
         def init_analyzer(analyzer_type: str):
-            """분석기 초기화 헬퍼 함수"""
+            """분석기 초기화 헬퍼 함수 - 팩토리 패턴 사용"""
+            from src.analysis.analyzer_factory import get_analyzer
+
             try:
                 # ConfigProxy를 딕셔너리로 안전하게 변환
                 if hasattr(config, "_config"):
@@ -390,63 +392,16 @@ def run_optimized_data_analysis() -> bool:
                             },
                         }
 
-                if analyzer_type == "pattern":
-                    return PatternAnalyzer(config_dict)
-                elif analyzer_type == "distribution":
-                    from src.analysis.distribution_analyzer import DistributionAnalyzer
+                        # 팩토리를 통해 분석기 인스턴스 가져오기
+                analyzer = get_analyzer(analyzer_type, config_dict)
+                if analyzer is None:
+                    logger.warning(f"{analyzer_type} 분석기 팩토리에서 None 반환")
+                return analyzer
 
-                    return DistributionAnalyzer(config_dict)
-                elif analyzer_type == "roi":
-                    from src.analysis.roi_analyzer import ROIAnalyzer
-
-                    return ROIAnalyzer(config_dict)
-                elif analyzer_type == "pair":
-                    return PairAnalyzer(config_dict)
-                elif analyzer_type == "vectorizer":
-                    return PatternVectorizer(config_dict)
-                else:
-                    raise ValueError(f"알 수 없는 분석기 타입: {analyzer_type}")
             except Exception as e:
                 logger.error(f"{analyzer_type} 분석기 초기화 실패: {e}")
-                # 기본 설정으로 재시도
-                try:
-                    # 기본 설정 딕셔너리 생성
-                    default_config = {
-                        "analysis": {},
-                        "paths": {
-                            "cache_dir": "data/cache",
-                            "result_dir": "data/result",
-                        },
-                        "vectorizer": {"use_cache": True, "normalize_output": True},
-                        "filtering": {
-                            "remove_low_variance_features": True,
-                            "variance_threshold": 0.01,
-                        },
-                        "caching": {
-                            "enable_feature_cache": True,
-                            "max_cache_size": 10000,
-                        },
-                    }
-
-                    if analyzer_type == "pattern":
-                        return PatternAnalyzer(default_config)
-                    elif analyzer_type == "distribution":
-                        from src.analysis.distribution_analyzer import (
-                            DistributionAnalyzer,
-                        )
-
-                        return DistributionAnalyzer(default_config)
-                    elif analyzer_type == "roi":
-                        from src.analysis.roi_analyzer import ROIAnalyzer
-
-                        return ROIAnalyzer(default_config)
-                    elif analyzer_type == "pair":
-                        return PairAnalyzer(default_config)
-                    elif analyzer_type == "vectorizer":
-                        return PatternVectorizer(default_config)
-                except Exception as e2:
-                    logger.error(f"{analyzer_type} 분석기 기본 초기화도 실패: {e2}")
-                    return None
+                # 재시도 없이 None 반환하여 중복 초기화 방지
+                return None
 
         # 분석기들 초기화
         pattern_analyzer = init_analyzer("pattern")

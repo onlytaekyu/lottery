@@ -69,7 +69,16 @@ class ProcessPoolManager:
                 max_workers=self.config.max_workers,
                 mp_context=mp.get_context("spawn"),  # Windows 호환성
             )
-            logger.info(f"ProcessPool 초기화 완료: {self.config.max_workers}개 워커")
+            # 전역 인스턴스인지 확인하여 중복 로그 방지
+            global _global_process_pool_manager, _initialization_logged
+            if self is _global_process_pool_manager and not _initialization_logged:
+                logger.info(
+                    f"ProcessPool 초기화 완료: {self.config.max_workers}개 워커"
+                )
+            else:
+                logger.debug(
+                    f"ProcessPool 초기화 완료: {self.config.max_workers}개 워커"
+                )
         except Exception as e:
             logger.error(f"ProcessPool 초기화 실패: {e}")
             raise
@@ -236,18 +245,24 @@ class ProcessPoolManager:
 
 # 전역 ProcessPool 관리자 인스턴스
 _global_process_pool_manager = None
+_initialization_logged = False  # 초기화 로그 중복 방지
 
 
 def get_process_pool_manager(
     config: Optional[ProcessPoolConfig] = None,
 ) -> ProcessPoolManager:
-    """전역 ProcessPool 관리자 반환"""
-    global _global_process_pool_manager
+    """전역 ProcessPool 관리자 반환 (싱글톤 패턴)"""
+    global _global_process_pool_manager, _initialization_logged
 
     if _global_process_pool_manager is None:
         if config is None:
             config = ProcessPoolConfig()
         _global_process_pool_manager = ProcessPoolManager(config)
+        if not _initialization_logged:
+            logger.info(f"전역 ProcessPool 관리자 생성: {config.max_workers}개 워커")
+            _initialization_logged = True
+    else:
+        logger.debug("기존 전역 ProcessPool 관리자 재사용")
 
     return _global_process_pool_manager
 
@@ -306,7 +321,8 @@ def parallel_map(
 
 def cleanup_process_pool():
     """전역 ProcessPool 정리"""
-    global _global_process_pool_manager
+    global _global_process_pool_manager, _initialization_logged
     if _global_process_pool_manager:
         _global_process_pool_manager.shutdown()
         _global_process_pool_manager = None
+        _initialization_logged = False  # 로그 플래그 초기화
