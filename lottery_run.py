@@ -35,10 +35,7 @@ LOGS_DIR = BASE_DIR / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # 중앙 로깅 시스템 초기화
-from src.utils.error_handler import init_logging_system, get_logger
-
-# 로그 시스템 초기화 - 허용된 로그 파일만 사용
-init_logging_system()
+from src.utils.error_handler_refactored import get_logger
 
 # 로거 가져오기
 logger = get_logger("lottery")

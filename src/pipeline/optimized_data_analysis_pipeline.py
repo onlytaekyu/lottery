@@ -27,10 +27,6 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 import hashlib
 
 import numpy as np
-import scipy.stats
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
-import torch
 import psutil
 
 from src.utils.error_handler_refactored import (

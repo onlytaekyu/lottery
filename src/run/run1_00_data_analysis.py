@@ -25,7 +25,7 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.insert(0, project_root)
 
 # 로거 설정
-from src.utils.error_handler import get_logger, log_exception_with_trace
+from src.utils.error_handler_refactored import get_logger, log_exception_with_trace
 
 logger = get_logger(__name__)
 

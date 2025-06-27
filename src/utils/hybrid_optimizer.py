@@ -1,254 +1,179 @@
 """
 하이브리드 최적화 시스템
 
-ProcessPool, MemoryPool, CUDA 최적화를 통합한 지능형 시스템
-작업 타입별 최적 처리 방식 자동 선택 및 동적 리소스 관리
+ProcessPool + MemoryPool + CUDA를 통합한 최적화 시스템입니다.
+작업 특성에 따라 최적의 처리 방식을 자동으로 선택합니다.
 """
 
 import time
 import psutil
 import threading
-from typing import Dict, Any, Optional, Callable, List, Tuple
-from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
-import torch
+from enum import Enum
+from functools import wraps
 
-from .error_handler_refactored import get_logger, StrictErrorHandler
-from .memory_manager import get_memory_manager
-from .process_pool_manager import get_process_pool_manager
-from .performance_utils import PerformanceMonitor
+from .error_handler_refactored import get_logger
+from .process_pool_manager import ProcessPoolManager, ProcessPoolConfig
+from .memory_manager import MemoryManager, MemoryConfig
+from .cuda_optimizers import CudaOptimizer, CudaConfig
 
 logger = get_logger(__name__)
-
-
-class WorkloadType(Enum):
-    """작업 타입 분류"""
-
-    CPU_INTENSIVE = "cpu_intensive"
-    MEMORY_INTENSIVE = "memory_intensive"
-    GPU_INTENSIVE = "gpu_intensive"
-    MIXED = "mixed"
-    IO_INTENSIVE = "io_intensive"
 
 
 class OptimizationStrategy(Enum):
     """최적화 전략"""
 
-    PROCESS_POOL = "process_pool"
-    MEMORY_POOL = "memory_pool"
-    CUDA_ACCELERATOR = "cuda_accelerator"
-    HYBRID = "hybrid"
     AUTO = "auto"
+    CPU_PARALLEL = "cpu_parallel"
+    MEMORY_OPTIMIZED = "memory_optimized"
+    GPU_ACCELERATED = "gpu_accelerated"
+    HYBRID = "hybrid"
 
 
 @dataclass
-class WorkloadProfile:
-    """작업 부하 프로필"""
+class TaskInfo:
+    """작업 정보"""
 
-    cpu_usage: float
-    memory_usage: float
-    gpu_utilization: float
-    data_size: int
-    computation_complexity: str  # "low", "medium", "high"
-    parallelizable: bool
-    memory_bound: bool
-    gpu_compatible: bool
+    function_type: str  # "analysis", "vectorize", "train", "inference"
+    data_size: int = 0
+    parallelizable: bool = True
+    gpu_compatible: bool = False
+    memory_intensive: bool = False
+    cpu_intensive: bool = True
 
 
 @dataclass
-class OptimizationResult:
-    """최적화 결과"""
+class HybridConfig:
+    """하이브리드 최적화 설정"""
 
-    strategy_used: OptimizationStrategy
-    execution_time: float
-    speedup: float
-    memory_efficiency: float
-    resource_utilization: Dict[str, float]
-    bottlenecks_detected: List[str]
+    auto_optimization: bool = True
+    memory_threshold: float = 0.8  # 80% 메모리 사용량 임계점
+    cpu_threshold: float = 75.0  # 75% CPU 사용량 임계점
+    gpu_threshold: float = 80.0  # 80% GPU 사용량 임계점
+    min_parallel_size: int = 100  # 병렬 처리 최소 데이터 크기
+    enable_monitoring: bool = True
 
 
 class HybridOptimizer:
-    """하이브리드 최적화 시스템"""
+    """하이브리드 최적화 관리자"""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """
-        하이브리드 최적화 시스템 초기화
+    def __init__(self, config: HybridConfig):
+        self.config = config
+        self.process_pool = None
+        self.memory_manager = None
+        self.cuda_optimizer = None
 
-        Args:
-            config: 설정 딕셔너리
-        """
-        self.config = config or {}
-        self.logger = get_logger(__name__)
-        self.strict_handler = StrictErrorHandler(self.logger)
-        self.performance_monitor = PerformanceMonitor()
-
-        # 개별 최적화 시스템들
-        self.memory_manager = get_memory_manager(self.config.get("memory_pool", {}))
-        self.process_pool_manager = get_process_pool_manager(
-            self.config.get("process_pool", {})
-        )
-
-        # 임계값 설정
-        self.thresholds = self.config.get(
-            "thresholds",
-            {
-                "cpu_usage": 0.7,
-                "memory_usage": 0.8,
-                "gpu_utilization": 0.6,
-                "data_size_large": 1000000,  # 1M 요소
-                "parallel_threshold": 100,
-            },
-        )
-
-        # 전략별 성능 기록
-        self.strategy_performance = {
-            strategy: {"total_time": 0.0, "count": 0, "avg_speedup": 1.0}
-            for strategy in OptimizationStrategy
+        # 성능 통계
+        self.optimization_stats = {
+            "total_optimizations": 0,
+            "strategy_usage": {},
+            "performance_gains": {},
+            "avg_speedup": 0.0,
         }
 
-        # 자동 조정 설정
-        self.auto_adjustment = self.config.get("auto_adjustment", True)
-        self.monitoring_interval = self.config.get("monitoring_interval", 5.0)
+        self._initialize_components()
 
-        # 모니터링 스레드
-        self._monitoring_active = False
-        self._monitoring_thread = None
+    def _initialize_components(self):
+        """구성 요소 초기화"""
+        try:
+            # ProcessPool 초기화
+            process_config = ProcessPoolConfig(
+                max_workers=min(4, psutil.cpu_count()),
+                enable_monitoring=self.config.enable_monitoring,
+            )
+            self.process_pool = ProcessPoolManager(process_config)
+            logger.info("ProcessPool 초기화 완료")
 
-        if self.auto_adjustment:
-            self._start_monitoring()
+            # MemoryManager 초기화
+            memory_config = MemoryConfig(
+                max_memory_usage=self.config.memory_threshold, use_memory_pooling=True
+            )
+            self.memory_manager = MemoryManager(memory_config)
+            logger.info("MemoryManager 초기화 완료")
 
-        self.logger.info("하이브리드 최적화 시스템 초기화 완료")
-
-    def analyze_workload_type(self, task_info: Dict[str, Any]) -> WorkloadProfile:
-        """
-        작업 타입 분석
-
-        Args:
-            task_info: 작업 정보 딕셔너리
-
-        Returns:
-            작업 부하 프로필
-        """
-        # 현재 시스템 상태
-        cpu_percent = psutil.cpu_percent(interval=0.1)
-        memory_info = psutil.virtual_memory()
-        memory_percent = memory_info.percent
-
-        # GPU 사용률 (사용 가능한 경우)
-        gpu_utilization = 0.0
-        if torch.cuda.is_available():
+            # CUDA 최적화 초기화 (선택적)
             try:
-                gpu_utilization = 50.0  # 기본값 (실제 API 사용 시 대체)
-            except:
-                gpu_utilization = 0.0
+                cuda_config = CudaConfig(enable_amp=True)
+                self.cuda_optimizer = CudaOptimizer(cuda_config)
+                logger.info("CUDA 최적화 초기화 완료")
+            except Exception as e:
+                logger.info(f"CUDA 최적화 초기화 실패 (GPU 없음): {e}")
+                self.cuda_optimizer = None
 
-        # 작업 특성 분석
-        data_size = task_info.get("data_size", 0)
-        function_type = task_info.get("function_type", "unknown")
-        parallelizable = task_info.get("parallelizable", True)
+        except Exception as e:
+            logger.error(f"하이브리드 최적화 구성 요소 초기화 실패: {e}")
+            raise
 
-        # 복잡도 추정
-        if "analysis" in function_type or "compute" in function_type:
-            complexity = "high"
-        elif "vectorize" in function_type or "transform" in function_type:
-            complexity = "medium"
-        else:
-            complexity = "low"
+    def _analyze_system_resources(self) -> Dict[str, float]:
+        """시스템 리소스 분석"""
+        try:
+            # CPU 사용률
+            cpu_percent = psutil.cpu_percent(interval=0.1)
 
-        # 메모리 바운드 여부
-        memory_bound = data_size > self.thresholds["data_size_large"]
+            # 메모리 사용률
+            memory_info = psutil.virtual_memory()
+            memory_percent = memory_info.percent
 
-        # GPU 호환성
-        gpu_compatible = torch.cuda.is_available() and task_info.get(
-            "gpu_compatible", False
-        )
+            # GPU 사용률 (가능한 경우)
+            gpu_percent = 0.0
+            if self.cuda_optimizer and self.cuda_optimizer.is_available():
+                try:
+                    gpu_percent = self.cuda_optimizer.get_gpu_utilization()
+                except:
+                    gpu_percent = 0.0
 
-        return WorkloadProfile(
-            cpu_usage=cpu_percent,
-            memory_usage=memory_percent,
-            gpu_utilization=gpu_utilization,
-            data_size=data_size,
-            computation_complexity=complexity,
-            parallelizable=parallelizable,
-            memory_bound=memory_bound,
-            gpu_compatible=gpu_compatible,
-        )
+            return {
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory_percent,
+                "gpu_percent": gpu_percent,
+            }
+        except Exception as e:
+            logger.error(f"시스템 리소스 분석 실패: {e}")
+            return {"cpu_percent": 0.0, "memory_percent": 0.0, "gpu_percent": 0.0}
 
-    def select_optimal_strategy(
-        self, workload: WorkloadProfile
+    def _select_optimization_strategy(
+        self, task_info: TaskInfo, system_resources: Dict[str, float]
     ) -> OptimizationStrategy:
-        """
-        최적 처리 전략 선택
+        """최적화 전략 선택"""
 
-        Args:
-            workload: 작업 부하 프로필
+        if not self.config.auto_optimization:
+            return OptimizationStrategy.AUTO
 
-        Returns:
-            선택된 최적화 전략
-        """
-        # 전략별 점수 계산
-        scores = {}
+        # GPU 가속 조건 확인
+        if (
+            task_info.gpu_compatible
+            and self.cuda_optimizer
+            and system_resources["gpu_percent"] < self.config.gpu_threshold
+        ):
+            return OptimizationStrategy.GPU_ACCELERATED
 
-        # ProcessPool 점수
-        cpu_score = 1.0 if workload.parallelizable else 0.0
-        if workload.cpu_usage < self.thresholds["cpu_usage"]:
-            cpu_score += 0.5
-        if workload.computation_complexity == "high":
-            cpu_score += 0.3
-        scores[OptimizationStrategy.PROCESS_POOL] = cpu_score
+        # 메모리 집약적 작업 확인
+        if (
+            task_info.memory_intensive
+            or system_resources["memory_percent"] > self.config.memory_threshold
+        ):
+            return OptimizationStrategy.MEMORY_OPTIMIZED
 
-        # MemoryPool 점수
-        memory_score = 1.0 if workload.memory_bound else 0.0
-        if workload.memory_usage > self.thresholds["memory_usage"]:
-            memory_score += 0.5
-        if workload.data_size > self.thresholds["data_size_large"]:
-            memory_score += 0.3
-        scores[OptimizationStrategy.MEMORY_POOL] = memory_score
+        # 병렬 처리 조건 확인
+        if (
+            task_info.parallelizable
+            and task_info.data_size >= self.config.min_parallel_size
+            and system_resources["cpu_percent"] < self.config.cpu_threshold
+        ):
+            return OptimizationStrategy.CPU_PARALLEL
 
-        # CUDA 점수
-        cuda_score = 0.0
-        if workload.gpu_compatible and torch.cuda.is_available():
-            cuda_score = 1.0
-            if workload.gpu_utilization < self.thresholds["gpu_utilization"]:
-                cuda_score += 0.5
-            if workload.computation_complexity == "high":
-                cuda_score += 0.3
-        scores[OptimizationStrategy.CUDA_ACCELERATOR] = cuda_score
+        # 하이브리드 전략 (기본)
+        return OptimizationStrategy.HYBRID
 
-        # 하이브리드 점수 (복합 조건)
-        hybrid_conditions = [
-            workload.parallelizable,
-            workload.memory_bound,
-            workload.gpu_compatible,
-            workload.computation_complexity == "high",
-        ]
-        hybrid_score = sum(hybrid_conditions) / len(hybrid_conditions)
-        scores[OptimizationStrategy.HYBRID] = hybrid_score
-
-        # 과거 성능 기록 반영
-        for strategy, score in scores.items():
-            if self.strategy_performance[strategy]["count"] > 0:
-                avg_speedup = self.strategy_performance[strategy]["avg_speedup"]
-                scores[strategy] *= avg_speedup
-
-        # 최고 점수 전략 선택
-        best_strategy = max(scores, key=scores.get)
-        best_score = scores[best_strategy]
-
-        # 점수가 너무 낮으면 AUTO 전략 사용
-        if best_score < 0.3:
-            best_strategy = OptimizationStrategy.AUTO
-
-        self.logger.debug(f"전략 선택: {best_strategy.value} (점수: {best_score:.2f})")
-        return best_strategy
-
-    def execute_with_optimization(
+    def optimize_execution(
         self,
         func: Callable,
         data: Any,
-        task_info: Optional[Dict[str, Any]] = None,
+        task_info: TaskInfo,
+        strategy: Optional[OptimizationStrategy] = None,
         **kwargs,
-    ) -> Tuple[Any, OptimizationResult]:
+    ) -> Any:
         """
         최적화된 실행
 
@@ -256,257 +181,211 @@ class HybridOptimizer:
             func: 실행할 함수
             data: 입력 데이터
             task_info: 작업 정보
+            strategy: 강제 전략 (None이면 자동 선택)
             **kwargs: 함수에 전달할 추가 인자
 
         Returns:
-            (실행 결과, 최적화 결과)
+            실행 결과
         """
         start_time = time.time()
 
-        # 작업 분석
-        if task_info is None:
-            task_info = {
-                "data_size": len(data) if hasattr(data, "__len__") else 1,
-                "function_type": (
-                    func.__name__ if hasattr(func, "__name__") else "unknown"
-                ),
-                "parallelizable": True,
-                "gpu_compatible": False,
-            }
+        # 시스템 리소스 분석
+        system_resources = self._analyze_system_resources()
 
-        workload = self.analyze_workload_type(task_info)
-        strategy = self.select_optimal_strategy(workload)
+        # 전략 선택
+        if strategy is None:
+            strategy = self._select_optimization_strategy(task_info, system_resources)
 
-        # 전략별 실행
+        logger.info(f"최적화 전략 선택: {strategy.value}")
+
         try:
-            if strategy == OptimizationStrategy.PROCESS_POOL:
-                result = self._execute_with_process_pool(func, data, **kwargs)
-            elif strategy == OptimizationStrategy.MEMORY_POOL:
-                result = self._execute_with_memory_pool(func, data, **kwargs)
+            # 전략별 실행
+            if strategy == OptimizationStrategy.GPU_ACCELERATED:
+                result = self._execute_gpu_accelerated(func, data, task_info, **kwargs)
+            elif strategy == OptimizationStrategy.CPU_PARALLEL:
+                result = self._execute_cpu_parallel(func, data, task_info, **kwargs)
+            elif strategy == OptimizationStrategy.MEMORY_OPTIMIZED:
+                result = self._execute_memory_optimized(func, data, task_info, **kwargs)
             elif strategy == OptimizationStrategy.HYBRID:
-                result = self._execute_with_hybrid(func, data, **kwargs)
-            else:  # AUTO
-                result = self._execute_auto(func, data, **kwargs)
+                result = self._execute_hybrid(func, data, task_info, **kwargs)
+            else:
+                result = self._execute_standard(func, data, **kwargs)
 
+            # 성능 통계 업데이트
             execution_time = time.time() - start_time
+            self._update_performance_stats(strategy, execution_time)
 
-            # 성능 기록 업데이트
-            self._update_strategy_performance(strategy, execution_time)
-
-            # 최적화 결과 생성
-            optimization_result = OptimizationResult(
-                strategy_used=strategy,
-                execution_time=execution_time,
-                speedup=self._calculate_speedup(strategy, execution_time),
-                memory_efficiency=self._calculate_memory_efficiency(),
-                resource_utilization=self._get_resource_utilization(),
-                bottlenecks_detected=self._detect_bottlenecks(workload),
-            )
-
-            return result, optimization_result
+            return result
 
         except Exception as e:
-            self.strict_handler.handle_critical_error(
-                e, f"최적화 실행 실패: {strategy.value}"
-            )
-            return None, None
+            logger.error(f"최적화 실행 실패 ({strategy.value}): {e}")
+            # 폴백: 표준 실행
+            return self._execute_standard(func, data, **kwargs)
 
-    def _execute_with_process_pool(self, func: Callable, data: Any, **kwargs) -> Any:
-        """ProcessPool을 사용한 실행"""
-        if (
-            hasattr(data, "__len__")
-            and len(data) > self.thresholds["parallel_threshold"]
-        ):
-            chunks = self.process_pool_manager.chunk_and_split(
-                data, self.process_pool_manager.chunk_size
-            )
-            results = self.process_pool_manager.parallel_analyze(chunks, func, **kwargs)
-            return self.process_pool_manager.merge_results(results)
-        else:
+    def _execute_gpu_accelerated(
+        self, func: Callable, data: Any, task_info: TaskInfo, **kwargs
+    ) -> Any:
+        """GPU 가속 실행"""
+        if not self.cuda_optimizer:
+            return self._execute_standard(func, data, **kwargs)
+
+        with self.cuda_optimizer.gpu_context():
             return func(data, **kwargs)
 
-    def _execute_with_memory_pool(self, func: Callable, data: Any, **kwargs) -> Any:
-        """MemoryPool을 사용한 실행"""
-        with self.memory_manager.allocation_scope():
-            return func(data, **kwargs)
+    def _execute_cpu_parallel(
+        self, func: Callable, data: Any, task_info: TaskInfo, **kwargs
+    ) -> Any:
+        """CPU 병렬 실행"""
+        if not self.process_pool:
+            return self._execute_standard(func, data, **kwargs)
 
-    def _execute_with_hybrid(self, func: Callable, data: Any, **kwargs) -> Any:
-        """하이브리드 실행 (여러 최적화 조합)"""
-        with self.memory_manager.allocation_scope():
-            if (
-                hasattr(data, "__len__")
-                and len(data) > self.thresholds["parallel_threshold"]
-            ):
-                # ProcessPool + MemoryPool 조합
-                chunks = self.process_pool_manager.chunk_and_split(
-                    data, self.process_pool_manager.chunk_size
-                )
-                results = self.process_pool_manager.parallel_analyze(
-                    chunks, func, **kwargs
-                )
-                return self.process_pool_manager.merge_results(results)
+        # 데이터를 청크로 분할
+        if isinstance(data, list) and len(data) > self.config.min_parallel_size:
+            chunk_size = max(1, len(data) // self.process_pool.config.max_workers)
+            chunks = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
+
+            results = self.process_pool.execute_parallel(func, chunks, **kwargs)
+
+            # 결과 병합
+            if results and isinstance(results[0], list):
+                merged_result = []
+                for result in results:
+                    if result:
+                        merged_result.extend(result)
+                return merged_result
             else:
-                return func(data, **kwargs)
-
-    def _execute_auto(self, func: Callable, data: Any, **kwargs) -> Any:
-        """자동 최적화 실행"""
-        # 간단한 휴리스틱으로 전략 선택
-        data_size = len(data) if hasattr(data, "__len__") else 1
-
-        if data_size > self.thresholds["data_size_large"]:
-            return self._execute_with_memory_pool(func, data, **kwargs)
-        elif data_size > self.thresholds["parallel_threshold"]:
-            return self._execute_with_process_pool(func, data, **kwargs)
+                return results
         else:
+            return self._execute_standard(func, data, **kwargs)
+
+    def _execute_memory_optimized(
+        self, func: Callable, data: Any, task_info: TaskInfo, **kwargs
+    ) -> Any:
+        """메모리 최적화 실행"""
+        if not self.memory_manager:
+            return self._execute_standard(func, data, **kwargs)
+
+        with self.memory_manager.memory_context():
             return func(data, **kwargs)
 
-    def _update_strategy_performance(
+    def _execute_hybrid(
+        self, func: Callable, data: Any, task_info: TaskInfo, **kwargs
+    ) -> Any:
+        """하이브리드 실행"""
+        # 메모리 최적화 + 병렬 처리 조합
+        if self.memory_manager and self.process_pool:
+            with self.memory_manager.memory_context():
+                return self._execute_cpu_parallel(func, data, task_info, **kwargs)
+        else:
+            return self._execute_standard(func, data, **kwargs)
+
+    def _execute_standard(self, func: Callable, data: Any, **kwargs) -> Any:
+        """표준 실행"""
+        return func(data, **kwargs)
+
+    def _update_performance_stats(
         self, strategy: OptimizationStrategy, execution_time: float
     ):
-        """전략별 성능 기록 업데이트"""
-        perf = self.strategy_performance[strategy]
-        perf["total_time"] += execution_time
-        perf["count"] += 1
+        """성능 통계 업데이트"""
+        self.optimization_stats["total_optimizations"] += 1
 
-        # 평균 속도 향상 계산 (간단한 추정)
-        baseline_time = execution_time * 2  # 가정: 최적화 없으면 2배 시간
-        speedup = baseline_time / execution_time if execution_time > 0 else 1.0
-        perf["avg_speedup"] = (
-            perf["avg_speedup"] * (perf["count"] - 1) + speedup
-        ) / perf["count"]
+        strategy_name = strategy.value
+        if strategy_name not in self.optimization_stats["strategy_usage"]:
+            self.optimization_stats["strategy_usage"][strategy_name] = 0
+        self.optimization_stats["strategy_usage"][strategy_name] += 1
 
-    def _calculate_speedup(
-        self, strategy: OptimizationStrategy, execution_time: float
-    ) -> float:
-        """속도 향상 계산"""
-        return self.strategy_performance[strategy]["avg_speedup"]
-
-    def _calculate_memory_efficiency(self) -> float:
-        """메모리 효율성 계산"""
-        memory_info = psutil.virtual_memory()
-        return 1.0 - (memory_info.percent / 100.0)
-
-    def _get_resource_utilization(self) -> Dict[str, float]:
-        """리소스 사용률 반환"""
-        utilization = {
-            "cpu": psutil.cpu_percent(interval=0.1),
-            "memory": psutil.virtual_memory().percent,
-        }
-
-        if torch.cuda.is_available():
-            try:
-                utilization["gpu"] = 50.0  # 기본값
-            except:
-                utilization["gpu"] = 0.0
-
-        return utilization
-
-    def _detect_bottlenecks(self, workload: WorkloadProfile) -> List[str]:
-        """병목점 감지"""
-        bottlenecks = []
-
-        if workload.cpu_usage > 90:
-            bottlenecks.append("high_cpu_usage")
-
-        if workload.memory_usage > 85:
-            bottlenecks.append("high_memory_usage")
-
-        if workload.gpu_utilization > 90:
-            bottlenecks.append("high_gpu_usage")
-
-        if workload.data_size > self.thresholds["data_size_large"] * 10:
-            bottlenecks.append("very_large_dataset")
-
-        return bottlenecks
-
-    def _start_monitoring(self):
-        """모니터링 스레드 시작"""
-        self._monitoring_active = True
-        self._monitoring_thread = threading.Thread(
-            target=self._monitoring_loop, daemon=True
+        # 성능 향상 추적 (기준 시간 대비)
+        if strategy_name not in self.optimization_stats["performance_gains"]:
+            self.optimization_stats["performance_gains"][strategy_name] = []
+        self.optimization_stats["performance_gains"][strategy_name].append(
+            execution_time
         )
-        self._monitoring_thread.start()
-        self.logger.info("자동 모니터링 시작")
-
-    def _monitoring_loop(self):
-        """모니터링 루프"""
-        while self._monitoring_active:
-            try:
-                # 리소스 사용률 확인
-                cpu_percent = psutil.cpu_percent(interval=1.0)
-                memory_percent = psutil.virtual_memory().percent
-
-                # 임계값 초과 시 경고
-                if cpu_percent > 90:
-                    self.logger.warning(f"높은 CPU 사용률 감지: {cpu_percent:.1f}%")
-
-                if memory_percent > 90:
-                    self.logger.warning(
-                        f"높은 메모리 사용률 감지: {memory_percent:.1f}%"
-                    )
-
-                time.sleep(self.monitoring_interval)
-
-            except Exception as e:
-                self.logger.error(f"모니터링 중 오류: {e}")
-                time.sleep(self.monitoring_interval)
 
     def get_performance_summary(self) -> Dict[str, Any]:
         """성능 요약 반환"""
-        return {
-            "strategy_performance": self.strategy_performance,
-            "resource_utilization": self._get_resource_utilization(),
-            "optimization_config": self.config,
-        }
+        summary = self.optimization_stats.copy()
 
-    def cleanup(self):
-        """리소스 정리"""
-        try:
-            # 모니터링 중지
-            self._monitoring_active = False
-            if self._monitoring_thread and self._monitoring_thread.is_alive():
-                self._monitoring_thread.join(timeout=1.0)
+        # 평균 성능 계산
+        for strategy, times in summary["performance_gains"].items():
+            if times:
+                summary["performance_gains"][strategy] = {
+                    "avg_time": sum(times) / len(times),
+                    "min_time": min(times),
+                    "max_time": max(times),
+                    "count": len(times),
+                }
 
-            # 개별 시스템 정리
-            if self.memory_manager:
-                self.memory_manager.cleanup()
+        return summary
 
-            if self.process_pool_manager:
-                self.process_pool_manager.cleanup()
+    def shutdown(self):
+        """하이브리드 최적화 시스템 종료"""
+        if self.process_pool:
+            self.process_pool.shutdown()
+        if self.memory_manager:
+            self.memory_manager.cleanup()
+        if self.cuda_optimizer:
+            self.cuda_optimizer.cleanup()
 
-            self.logger.info("하이브리드 최적화 시스템 정리 완료")
-
-        except Exception as e:
-            self.logger.warning(f"하이브리드 최적화 시스템 정리 중 오류: {e}")
+        logger.info("하이브리드 최적화 시스템 종료 완료")
 
 
-# 전역 하이브리드 최적화 시스템 인스턴스
+# 전역 하이브리드 최적화 인스턴스
 _global_hybrid_optimizer = None
 
 
-def get_hybrid_optimizer(config: Optional[Dict[str, Any]] = None) -> HybridOptimizer:
-    """전역 하이브리드 최적화 시스템 반환"""
+def get_hybrid_optimizer(config: Optional[HybridConfig] = None) -> HybridOptimizer:
+    """전역 하이브리드 최적화 관리자 반환"""
     global _global_hybrid_optimizer
 
     if _global_hybrid_optimizer is None:
+        if config is None:
+            config = HybridConfig()
         _global_hybrid_optimizer = HybridOptimizer(config)
 
     return _global_hybrid_optimizer
 
 
-# 데코레이터
-def optimize(task_info: Optional[Dict[str, Any]] = None):
-    """함수를 자동 최적화하는 데코레이터"""
+def optimize(task_info: Dict[str, Any]):
+    """
+    최적화 데코레이터
+
+    Args:
+        task_info: 작업 정보 딕셔너리
+    """
 
     def decorator(func: Callable):
+        @wraps(func)
         def wrapper(*args, **kwargs):
-            optimizer = get_hybrid_optimizer()
-            data = args[0] if args else None
-            result, opt_result = optimizer.execute_with_optimization(
-                func, data, task_info, **kwargs
+            # TaskInfo 객체 생성
+            info = TaskInfo(
+                function_type=task_info.get("function_type", "unknown"),
+                parallelizable=task_info.get("parallelizable", True),
+                gpu_compatible=task_info.get("gpu_compatible", False),
+                memory_intensive=task_info.get("memory_intensive", False),
+                cpu_intensive=task_info.get("cpu_intensive", True),
             )
-            return result
+
+            # 데이터 크기 추정
+            if args:
+                if isinstance(args[0], (list, tuple)):
+                    info.data_size = len(args[0])
+                elif hasattr(args[0], "__len__"):
+                    info.data_size = len(args[0])
+
+            # 하이브리드 최적화 실행
+            optimizer = get_hybrid_optimizer()
+            return optimizer.optimize_execution(
+                func, args[0] if args else None, info, **kwargs
+            )
 
         return wrapper
 
     return decorator
+
+
+def cleanup_hybrid_optimizer():
+    """전역 하이브리드 최적화 시스템 정리"""
+    global _global_hybrid_optimizer
+    if _global_hybrid_optimizer:
+        _global_hybrid_optimizer.shutdown()
+        _global_hybrid_optimizer = None

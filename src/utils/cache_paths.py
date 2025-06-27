@@ -106,8 +106,13 @@ def init_cache_dirs():
         if old_cache_dir.exists():
             _migrate_old_cache(old_cache_dir)
 
+        logger.info(
+            f"✅ 캐시 디렉토리 초기화 완료: {len(cache_subdirs)}개 디렉토리 생성"
+        )
+
     except Exception as e:
         logger.error(f"캐시 디렉토리 초기화 실패: {str(e)}")
+        raise RuntimeError(f"캐시 디렉토리 초기화 실패: {str(e)}")
 
 
 def _migrate_old_cache(old_cache_dir: Path):
