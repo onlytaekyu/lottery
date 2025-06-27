@@ -25,6 +25,7 @@ from .unified_logging import get_logger
 
 logger = get_logger(__name__)
 
+
 @dataclass
 class PerformanceConfig:
     """통합 성능 설정"""
@@ -43,6 +44,7 @@ class PerformanceConfig:
     cpu_threshold: float = 80.0
     thread_threshold: int = 100
 
+
 @dataclass
 class PerformanceMetrics:
     """성능 메트릭 데이터 클래스"""
@@ -52,6 +54,7 @@ class PerformanceMetrics:
     cpu_usage: float = 0.0
     gpu_memory: int = 0
     timestamp: float = field(default_factory=time.time)
+
 
 class UnifiedPerformanceTracker:
     """통합 성능 추적기 - 모든 성능 관련 기능을 통합"""
@@ -333,8 +336,10 @@ class UnifiedPerformanceTracker:
             "timestamp": datetime.now().isoformat(),
         }
 
+
 # 전역 인스턴스
 _performance_tracker = None
+
 
 def get_performance_manager() -> UnifiedPerformanceTracker:
     """전역 성능 관리자 반환"""
@@ -343,10 +348,12 @@ def get_performance_manager() -> UnifiedPerformanceTracker:
         _performance_tracker = UnifiedPerformanceTracker()
     return _performance_tracker
 
+
 # 기존 호환성을 위한 함수들
 def get_profiler() -> UnifiedPerformanceTracker:
     """프로파일러 반환 (기존 호환성)"""
     return get_performance_manager()
+
 
 def profile(name: str):
     """성능 추적 데코레이터"""
@@ -361,11 +368,22 @@ def profile(name: str):
 
     return decorator
 
+
 @contextmanager
 def performance_monitor(name: str):
     """성능 모니터링 컨텍스트"""
-    with get_performance_manager().track(name):
-        yield
+    try:
+        with get_performance_manager().track(name):
+            yield
+    except Exception as e:
+        # 프로파일링 도구 중복이나 기타 오류 발생 시 무시하고 계속 진행
+        if "profiling tool is already active" in str(e).lower():
+            logger.warning(f"프로파일링 도구 중복 감지 ({name}), 무시하고 계속 진행")
+            yield
+        else:
+            # 다른 오류는 다시 발생
+            raise
+
 
 # 편의 함수들
 def clear_memory() -> None:
@@ -373,6 +391,7 @@ def clear_memory() -> None:
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
 
 def get_device_info() -> Dict[str, Any]:
     """디바이스 정보 반환"""
@@ -393,6 +412,7 @@ def get_device_info() -> Dict[str, Any]:
         )
 
     return info
+
 
 # 기존 호환성을 위한 클래스들
 class Profiler:
@@ -427,6 +447,7 @@ class Profiler:
         """데이터 정리"""
         self._tracker.clear()
 
+
 class PerformanceTracker:
     """기존 호환성을 위한 PerformanceTracker 클래스"""
 
@@ -458,6 +479,7 @@ class PerformanceTracker:
     def clear(self):
         """데이터 정리"""
         self._tracker.clear()
+
 
 class MemoryTracker:
     """기존 호환성을 위한 MemoryTracker 클래스"""

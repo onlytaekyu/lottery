@@ -179,6 +179,42 @@ class BaseCudaOptimizer:
         except Exception as e:
             logger.error(f"CUDA 최적화기 초기화 실패: {str(e)}")
 
+    def is_available(self) -> bool:
+        """CUDA 사용 가능 여부 확인"""
+        return torch.cuda.is_available()
+
+    def get_gpu_utilization(self) -> float:
+        """GPU 사용률 반환 (0.0 ~ 100.0)"""
+        try:
+            if not torch.cuda.is_available():
+                return 0.0
+
+            # GPU 메모리 사용률을 기반으로 사용률 추정
+            allocated = torch.cuda.memory_allocated()
+            total = torch.cuda.get_device_properties(0).total_memory
+            return (allocated / total) * 100.0
+        except Exception as e:
+            logger.error(f"GPU 사용률 조회 실패: {e}")
+            return 0.0
+
+    def device_context(self):
+        """디바이스 컨텍스트 매니저"""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _device_context():
+            try:
+                if torch.cuda.is_available():
+                    with torch.cuda.device(0):
+                        yield
+                else:
+                    yield
+            except Exception as e:
+                logger.error(f"디바이스 컨텍스트 오류: {e}")
+                yield
+
+        return _device_context()
+
     def _initialize_custom_kernels(self):
         """커스텀 CUDA 커널 초기화"""
         try:
@@ -646,13 +682,17 @@ def get_cuda_memory_info() -> Dict[str, Any]:
 CudaOptimizer = BaseCudaOptimizer
 
 
-def get_cuda_optimizer(config: Optional[CudaConfig] = None) -> CudaOptimizer:
+# CudaOptimizer는 BaseCudaOptimizer의 별칭
+CudaOptimizer = BaseCudaOptimizer
+
+
+def get_cuda_optimizer(config: Optional[CudaConfig] = None) -> BaseCudaOptimizer:
     """CUDA 최적화기 인스턴스를 반환합니다.
 
     Args:
         config: CUDA 설정 객체
 
     Returns:
-        CudaOptimizer: CUDA 최적화기 인스턴스
+        BaseCudaOptimizer: CUDA 최적화기 인스턴스
     """
-    return CudaOptimizer(config)
+    return BaseCudaOptimizer(config)

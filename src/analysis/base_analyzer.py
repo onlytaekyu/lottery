@@ -132,7 +132,8 @@ class BaseAnalyzer(Generic[T], ABC):
                 return cached_result
 
             # 파일 캐시 확인
-            cache_file = self.config["paths"]["cache_dir"] / f"{cache_key}.pkl"
+            cache_dir = Path(self.config["paths"]["cache_dir"])
+            cache_file = cache_dir / f"{cache_key}.pkl"
             if cache_file.exists():
                 try:
                     with open(cache_file, "rb") as f:
@@ -165,7 +166,9 @@ class BaseAnalyzer(Generic[T], ABC):
             self._cache[cache_key] = result
 
             # 파일 캐시에 저장
-            cache_file = self.config["paths"]["cache_dir"] / f"{cache_key}.pkl"
+            cache_dir = Path(self.config["paths"]["cache_dir"])
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = cache_dir / f"{cache_key}.pkl"
             with open(cache_file, "wb") as f:
                 pickle.dump(result, f)
 

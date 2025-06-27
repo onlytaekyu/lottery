@@ -505,23 +505,46 @@ def run_optimized_data_analysis() -> bool:
             feature_extractor = FeatureExtractor(config)
             extraction_result = feature_extractor.extract_all_features(unified_analysis)
 
-            logger.info(
-                f"특성 추출 완료: {len(extraction_result.feature_names)}개 특성"
-            )
-            logger.info(f"특성 그룹: {list(extraction_result.feature_groups.keys())}")
-
-            # 특성 최적화 (선택적)
-            if extraction_result.feature_matrix.size > 0:
-                optimized_features, optimized_names, importance_scores = (
-                    feature_extractor.optimize_feature_selection(
-                        extraction_result.feature_matrix,
-                        extraction_result.feature_names,
-                    )
+            # extraction_result가 올바른 타입인지 확인
+            if hasattr(extraction_result, "feature_names") and hasattr(
+                extraction_result, "feature_matrix"
+            ):
+                logger.info(
+                    f"특성 추출 완료: {len(extraction_result.feature_names)}개 특성"
                 )
-                logger.info(f"특성 최적화 완료: {len(optimized_names)}개 특성 선택")
+                logger.info(
+                    f"특성 그룹: {list(extraction_result.feature_groups.keys())}"
+                )
+
+                # 특성 최적화 (선택적)
+                if extraction_result.feature_matrix.size > 0:
+                    optimized_features, optimized_names, importance_scores = (
+                        feature_extractor.optimize_feature_selection(
+                            extraction_result.feature_matrix,
+                            extraction_result.feature_names,
+                        )
+                    )
+                    logger.info(f"특성 최적화 완료: {len(optimized_names)}개 특성 선택")
+                else:
+                    optimized_features = extraction_result.feature_matrix
+                    optimized_names = extraction_result.feature_names
             else:
-                optimized_features = extraction_result.feature_matrix
-                optimized_names = extraction_result.feature_names
+                logger.error(
+                    f"특성 추출 결과가 올바르지 않습니다: {type(extraction_result)}"
+                )
+                # 기본값 설정
+                optimized_features = np.array([])
+                optimized_names = []
+                extraction_result = type(
+                    "MockResult",
+                    (),
+                    {
+                        "quality_metrics": {},
+                        "feature_names": [],
+                        "feature_matrix": np.array([]),
+                        "feature_groups": {},
+                    },
+                )()
 
             # 벡터화 실행 (기존 벡터화 시스템과 병행)
             feature_vector = None
@@ -529,11 +552,22 @@ def run_optimized_data_analysis() -> bool:
 
             if vectorizer is not None:
                 try:
-                    feature_vector, feature_names = (
-                        vectorizer.vectorize_extended_features(unified_analysis)
-                    )
-                    if feature_vector is not None and len(feature_vector) > 0:
-                        logger.info(f"기존 벡터화 시스템: {len(feature_vector)}차원")
+                    result = vectorizer.vectorize_extended_features(unified_analysis)
+                    if isinstance(result, tuple) and len(result) == 2:
+                        feature_vector, feature_names = result
+                        if feature_vector is not None and len(feature_vector) > 0:
+                            logger.info(
+                                f"기존 벡터화 시스템: {len(feature_vector)}차원"
+                            )
+                        else:
+                            feature_vector = None
+                            feature_names = []
+                    else:
+                        logger.warning(
+                            f"벡터화 시스템에서 예상치 못한 반환 형태: {type(result)}"
+                        )
+                        feature_vector = None
+                        feature_names = []
                 except Exception as e:
                     logger.warning(f"기존 벡터화 시스템 오류: {e}")
                     feature_vector = None
@@ -573,7 +607,9 @@ def run_optimized_data_analysis() -> bool:
 
         except Exception as e:
             logger.error(f"특성 벡터 생성 중 오류: {e}")
-            log_exception_with_trace(e)
+            log_exception_with_trace(
+                "optimized_data_analysis_pipeline", e, "특성 벡터 생성 중 오류"
+            )
             return False
 
         # 5단계: 결과 저장
@@ -853,13 +889,15 @@ def save_analysis_results(
         # JSON 파일로 저장
         result_file = result_dir / "optimized_analysis_result.json"
 
+        # 함수 객체 제거 후 직렬화
+        serializable_analysis = _make_json_serializable(unified_analysis)
+
         with open(result_file, "w", encoding="utf-8") as f:
             json.dump(
-                unified_analysis,
+                serializable_analysis,
                 f,
                 ensure_ascii=False,
                 indent=2,
-                cls=LotteryJSONEncoder,
             )
 
         logger.info(f"분석 결과 저장 완료: {result_file}")
@@ -867,6 +905,32 @@ def save_analysis_results(
     except Exception as e:
         logger.error(f"분석 결과 저장 중 오류: {e}")
         raise
+
+
+def _make_json_serializable(obj: Any) -> Any:
+    """객체를 JSON 직렬화 가능하게 변환"""
+    if callable(obj):
+        return f"<function: {obj.__name__ if hasattr(obj, '__name__') else str(obj)}>"
+    elif isinstance(obj, dict):
+        return {key: _make_json_serializable(value) for key, value in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_make_json_serializable(item) for item in obj]
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.integer, np.floating)):
+        return obj.item()
+    elif hasattr(obj, "__dict__"):
+        # 객체의 속성을 딕셔너리로 변환
+        return {
+            "type": obj.__class__.__name__,
+            "attributes": _make_json_serializable(obj.__dict__),
+        }
+    else:
+        try:
+            json.dumps(obj)  # 직렬화 가능한지 테스트
+            return obj
+        except (TypeError, ValueError):
+            return str(obj)
 
 
 def save_performance_report(performance_data: Dict[str, Any], module_name: str) -> None:

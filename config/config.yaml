@@ -72,6 +72,14 @@ data:
   sequence_length: 6
   test_size: 0.2
   validation_size: 0.1
+
+lottery:
+  ticket_price: 1000  # 로또 티켓 가격 (원)
+  prize_structure:
+    6: 2000000000  # 1등 평균 당첨금 (20억원)
+    5: 1000000     # 2등 평균 당첨금 (100만원)  
+    4: 50000       # 3등 평균 당첨금 (5만원)
+    3: 5000        # 4등 평균 당첨금 (5천원)
 execution:
   debug_mode: false
   default_mode: 1

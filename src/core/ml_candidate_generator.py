@@ -126,10 +126,9 @@ class MLCandidateGenerator:
         # CUDA 최적화 초기화
         try:
             cuda_config = CudaConfig(
-                enable_cuda=True,
                 use_amp=True,
                 batch_size=256,  # ML 후보 생성은 큰 배치 사용
-                memory_fraction=0.9,
+                use_cudnn=True,
             )
             self.cuda_optimizer = get_cuda_optimizer(cuda_config)
             self.logger.info("✅ ML 후보 생성기 CUDA 최적화 초기화 완료")

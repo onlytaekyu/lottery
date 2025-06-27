@@ -20,6 +20,7 @@ from .cuda_optimizers import CudaOptimizer, CudaConfig
 
 logger = get_logger(__name__)
 
+
 class OptimizationStrategy(Enum):
     """최적화 전략"""
 
@@ -28,6 +29,7 @@ class OptimizationStrategy(Enum):
     MEMORY_OPTIMIZED = "memory_optimized"
     GPU_ACCELERATED = "gpu_accelerated"
     HYBRID = "hybrid"
+
 
 @dataclass
 class TaskInfo:
@@ -40,6 +42,7 @@ class TaskInfo:
     memory_intensive: bool = False
     cpu_intensive: bool = True
 
+
 @dataclass
 class HybridConfig:
     """하이브리드 최적화 설정"""
@@ -51,11 +54,24 @@ class HybridConfig:
     min_parallel_size: int = 100  # 병렬 처리 최소 데이터 크기
     enable_monitoring: bool = True
 
+
 class HybridOptimizer:
     """하이브리드 최적화 관리자"""
 
-    def __init__(self, config: HybridConfig):
-        self.config = config
+    def __init__(self, config: Union[HybridConfig, Dict[str, Any]]):
+        # 딕셔너리가 전달된 경우 HybridConfig로 변환
+        if isinstance(config, dict):
+            self.config = HybridConfig(
+                auto_optimization=config.get("auto_optimization", True),
+                memory_threshold=config.get("memory_threshold", 0.8),
+                cpu_threshold=config.get("cpu_threshold", 75.0),
+                gpu_threshold=config.get("gpu_threshold", 80.0),
+                min_parallel_size=config.get("min_parallel_size", 100),
+                enable_monitoring=config.get("enable_monitoring", True),
+            )
+        else:
+            self.config = config
+
         self.process_pool = None
         self.memory_manager = None
         self.cuda_optimizer = None
@@ -90,7 +106,7 @@ class HybridOptimizer:
 
             # CUDA 최적화 초기화 (선택적)
             try:
-                cuda_config = CudaConfig(enable_amp=True)
+                cuda_config = CudaConfig(use_amp=True, use_cudnn=True)
                 self.cuda_optimizer = CudaOptimizer(cuda_config)
                 logger.info("CUDA 최적화 초기화 완료")
             except Exception as e:
@@ -100,6 +116,31 @@ class HybridOptimizer:
         except Exception as e:
             logger.error(f"하이브리드 최적화 구성 요소 초기화 실패: {e}")
             raise
+
+    def determine_optimal_level(
+        self, data_size: int, available_memory: float, gpu_available: bool = False
+    ) -> str:
+        """데이터 크기와 시스템 리소스를 기반으로 최적 분석 레벨 결정"""
+        try:
+            # GPU 사용 가능하고 대용량 데이터인 경우
+            if gpu_available and data_size > 5000 and available_memory > 0.7:
+                return "maximum"
+
+            # 중간 규모 데이터이고 메모리가 충분한 경우
+            elif data_size > 1000 and available_memory > 0.5:
+                return "balanced"
+
+            # 소규모 데이터이거나 메모리가 부족한 경우
+            elif data_size > 500 or available_memory > 0.3:
+                return "basic"
+
+            # 기본 처리
+            else:
+                return "standard"
+
+        except Exception as e:
+            logger.warning(f"최적화 레벨 결정 중 오류: {e}, 기본값 사용")
+            return "standard"
 
     def _analyze_system_resources(self) -> Dict[str, float]:
         """시스템 리소스 분석"""
@@ -324,8 +365,14 @@ class HybridOptimizer:
 
         logger.info("하이브리드 최적화 시스템 종료 완료")
 
+    def cleanup(self):
+        """리소스 정리 (shutdown의 별칭)"""
+        self.shutdown()
+
+
 # 전역 하이브리드 최적화 인스턴스
 _global_hybrid_optimizer = None
+
 
 def get_hybrid_optimizer(config: Optional[HybridConfig] = None) -> HybridOptimizer:
     """전역 하이브리드 최적화 관리자 반환"""
@@ -337,6 +384,7 @@ def get_hybrid_optimizer(config: Optional[HybridConfig] = None) -> HybridOptimiz
         _global_hybrid_optimizer = HybridOptimizer(config)
 
     return _global_hybrid_optimizer
+
 
 def optimize(task_info: Dict[str, Any]):
     """
@@ -374,6 +422,7 @@ def optimize(task_info: Dict[str, Any]):
         return wrapper
 
     return decorator
+
 
 def cleanup_hybrid_optimizer():
     """전역 하이브리드 최적화 시스템 정리"""

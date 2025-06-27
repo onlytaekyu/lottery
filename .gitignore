@@ -71,3 +71,4 @@ data/predictions/*.csv
 *.toml
 *.json
 *.npy
+*.csv
