@@ -22,6 +22,7 @@ from ..utils.unified_performance import performance_monitor
 from ..utils.unified_config import ConfigProxy
 from ..utils.normalizer import Normalizer
 from ..shared.types import LotteryNumber, PatternAnalysis, PatternFeatures
+from ..shared.graph_utils import calculate_segment_entropy
 
 # type: ignore 주석 추가
 # 로거 설정
