@@ -7,6 +7,7 @@
 
 from pathlib import Path
 from typing import Optional
+import threading
 
 from .error_handler_refactored import get_logger
 
@@ -34,6 +35,23 @@ CONFIG_CACHE_DIR = CACHE_DIR / "config"
 REPORT_CACHE_DIR = CACHE_DIR / "reports"
 TEMP_CACHE_DIR = CACHE_DIR / "temp"
 
+# 초기화 상태 추적
+_initialized = False
+_init_lock = threading.Lock()
+
+
+def _ensure_cache_dirs_initialized():
+    """캐시 디렉토리가 초기화되었는지 확인하고 필요시 초기화합니다."""
+    global _initialized
+    if _initialized:
+        return
+
+    with _init_lock:
+        if _initialized:
+            return
+        init_cache_dirs()
+        _initialized = True
+
 
 def get_cache_dir(category: Optional[str] = None) -> Path:
     """
@@ -45,6 +63,8 @@ def get_cache_dir(category: Optional[str] = None) -> Path:
     Returns:
         캐시 디렉토리 경로
     """
+    _ensure_cache_dirs_initialized()
+
     if category is None:
         return CACHE_DIR
 
@@ -53,64 +73,73 @@ def get_cache_dir(category: Optional[str] = None) -> Path:
     return cache_dir
 
 
-# 캐시 디렉토리 초기화
 def init_cache_dirs():
     """모든 캐시 디렉토리를 초기화합니다."""
-    # 이전 .cache 디렉토리 마이그레이션 체크
-    old_cache_dir = PROJECT_ROOT / "data" / ".cache"
+    try:
+        # 이전 .cache 디렉토리 마이그레이션 체크
+        old_cache_dir = PROJECT_ROOT / "data" / ".cache"
 
-    # 새 캐시 디렉토리 생성
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        # 새 캐시 디렉토리 생성
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 모든 하위 캐시 디렉토리 생성
-    for cache_subdir in [
-        PATTERN_CACHE_DIR,
-        ROI_CACHE_DIR,
-        FILTER_CACHE_DIR,
-        BACKTESTING_CACHE_DIR,
-        MODEL_CACHE_DIR,
-        TENSORRT_CACHE_DIR,
-        ONNX_CACHE_DIR,
-        CALIBRATION_CACHE_DIR,
-        TRAINER_CACHE_DIR,
-        EMBEDDING_CACHE_DIR,
-        CONFIG_CACHE_DIR,
-        REPORT_CACHE_DIR,
-        TEMP_CACHE_DIR,
-    ]:
-        cache_subdir.mkdir(parents=True, exist_ok=True)
+        # 모든 하위 캐시 디렉토리 생성
+        cache_subdirs = [
+            PATTERN_CACHE_DIR,
+            ROI_CACHE_DIR,
+            FILTER_CACHE_DIR,
+            BACKTESTING_CACHE_DIR,
+            MODEL_CACHE_DIR,
+            TENSORRT_CACHE_DIR,
+            ONNX_CACHE_DIR,
+            CALIBRATION_CACHE_DIR,
+            TRAINER_CACHE_DIR,
+            EMBEDDING_CACHE_DIR,
+            CONFIG_CACHE_DIR,
+            REPORT_CACHE_DIR,
+            TEMP_CACHE_DIR,
+        ]
 
-    # 이전 캐시 디렉토리가 있으면 파일 마이그레이션 시도
-    if old_cache_dir.exists():
-        try:
-            import shutil
+        for cache_subdir in cache_subdirs:
+            cache_subdir.mkdir(parents=True, exist_ok=True)
 
-            # 이미 마이그레이션됐는지 확인하는 플래그 파일
-            migration_flag = CACHE_DIR / ".migrated"
+        # 이전 캐시 디렉토리가 있으면 파일 마이그레이션 시도
+        if old_cache_dir.exists():
+            _migrate_old_cache(old_cache_dir)
 
-            if not migration_flag.exists():
-                logger.info("기존 캐시 파일을 새 위치로 마이그레이션 시작...")
-
-                # 각 하위 디렉토리를 새 위치로 복사
-                for old_dir in old_cache_dir.glob("*"):
-                    if old_dir.is_dir():
-                        new_dir = CACHE_DIR / old_dir.name
-                        if not new_dir.exists():
-                            shutil.copytree(old_dir, new_dir)
-                        else:
-                            # 파일 단위 복사
-                            for old_file in old_dir.glob("*"):
-                                if old_file.is_file():
-                                    new_file = new_dir / old_file.name
-                                    if not new_file.exists():
-                                        shutil.copy2(old_file, new_file)
-
-                # 마이그레이션 완료 표시
-                migration_flag.touch()
-                logger.info(f"캐시 마이그레이션 완료: {old_cache_dir} -> {CACHE_DIR}")
-        except Exception as e:
-            logger.error(f"캐시 마이그레이션 중 오류 발생: {str(e)}")
+    except Exception as e:
+        logger.error(f"캐시 디렉토리 초기화 실패: {str(e)}")
 
 
-# 모듈 로드 시 캐시 디렉토리 초기화
-init_cache_dirs()
+def _migrate_old_cache(old_cache_dir: Path):
+    """이전 캐시 디렉토리에서 파일을 마이그레이션합니다."""
+    try:
+        import shutil
+
+        # 이미 마이그레이션됐는지 확인하는 플래그 파일
+        migration_flag = CACHE_DIR / ".migrated"
+
+        if not migration_flag.exists():
+            logger.info("기존 캐시 파일을 새 위치로 마이그레이션 시작...")
+
+            # 각 하위 디렉토리를 새 위치로 복사
+            for old_dir in old_cache_dir.glob("*"):
+                if old_dir.is_dir():
+                    new_dir = CACHE_DIR / old_dir.name
+                    if not new_dir.exists():
+                        shutil.copytree(old_dir, new_dir)
+                    else:
+                        # 파일 단위 복사
+                        for old_file in old_dir.glob("*"):
+                            if old_file.is_file():
+                                new_file = new_dir / old_file.name
+                                if not new_file.exists():
+                                    shutil.copy2(old_file, new_file)
+
+            # 마이그레이션 완료 표시
+            migration_flag.touch()
+            logger.info(f"캐시 마이그레이션 완료: {old_cache_dir} -> {CACHE_DIR}")
+    except Exception as e:
+        logger.error(f"캐시 마이그레이션 중 오류 발생: {str(e)}")
+
+
+# 모듈 로드 시 자동 초기화 제거 - lazy 초기화 사용
