@@ -38,7 +38,7 @@ from .memory_manager import (
 from .async_io import AsyncIOManager, AsyncIOConfig
 
 # 성능 추적 관련 임포트
-from .unified_performance import get_profiler
+from .unified_performance import get_profiler, Profiler
 
 # 오류 복구 관련 임포트
 from .error_recovery import ErrorRecovery, RecoveryConfig
@@ -71,16 +71,43 @@ class CudaConfig:
     # 추가 설정들은 필요한 경우 추가할 수 있습니다.
 
     def __post_init__(self):
-        """설정 검증"""
+        """설정 검증 및 최적화"""
         if not torch.cuda.is_available():
             logger.warning("CUDA를 사용할 수 없습니다. CPU 모드로 설정됩니다.")
             self.use_amp = False
             self.use_cudnn = False
             self.use_graphs = False
+        else:
+            # CUDA 최적화 설정 적용
+            self._setup_cuda_optimizations()
 
         # optimal_batch_size가 설정되지 않은 경우 batch_size 값 사용
         if self.optimal_batch_size is None:
             self.optimal_batch_size = self.batch_size
+
+        # 배치 크기 검증
+        if self.min_batch_size > self.max_batch_size:
+            logger.warning(
+                "min_batch_size가 max_batch_size보다 큽니다. 값을 조정합니다."
+            )
+            self.min_batch_size = min(self.min_batch_size, self.max_batch_size)
+
+    def _setup_cuda_optimizations(self):
+        """CUDA 최적화 설정"""
+        try:
+            # GPU 메모리 풀 설정
+            setup_cuda_memory_pool()
+
+            # cuDNN 최적화
+            if self.use_cudnn:
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+
+            logger.info("CUDA 최적화 설정 완료")
+        except Exception as e:
+            logger.error(f"CUDA 최적화 설정 실패: {str(e)}")
 
 
 class BaseCudaOptimizer:
@@ -115,17 +142,7 @@ class BaseCudaOptimizer:
         )
 
         # 프로파일러 초기화
-        self._profiler = Profiler(
-            ProfilerConfig(
-                enable_cpu_profiling=True,
-                enable_memory_profiling=True,
-                enable_thread_profiling=True,
-                sampling_interval=0.1,
-                memory_threshold=1 << 30,  # 1GB
-                cpu_threshold=80.0,
-                thread_threshold=100,
-            )
-        )
+        self._profiler = Profiler()
 
         # 에러 복구 메커니즘 초기화
         self._error_recovery = ErrorRecovery(RecoveryConfig())  # 기본 매개변수 사용
@@ -461,7 +478,7 @@ class AMPTrainer:
     def use_amp(self) -> bool:
         """AMP 사용 여부"""
         return (
-            self.config.safe_get("use_amp", default=True)
+            self.config["training"]["use_amp"]
             and torch.cuda.is_available()
             and torch.cuda.is_bf16_supported()
         )
@@ -590,3 +607,49 @@ def optimize_memory():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+
+def setup_cuda_memory_pool():
+    """GPU 메모리 풀 설정"""
+    if torch.cuda.is_available():
+        try:
+            # GPU 메모리 사용률 제한 (80%)
+            torch.cuda.set_per_process_memory_fraction(0.8)
+
+            # 메모리 풀 최적화
+            torch.cuda.empty_cache()
+
+            # cuDNN 벤치마크 활성화
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.deterministic = False
+
+            # TensorFloat-32 활성화 (Ampere GPU에서 성능 향상)
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+
+            logger.info("GPU 메모리 풀 설정 완료")
+        except Exception as e:
+            logger.error(f"GPU 메모리 풀 설정 실패: {str(e)}")
+    else:
+        logger.warning("CUDA를 사용할 수 없어 GPU 메모리 풀을 설정하지 않습니다.")
+
+
+def get_cuda_memory_info() -> Dict[str, Any]:
+    """CUDA 메모리 정보 반환"""
+    if not torch.cuda.is_available():
+        return {"cuda_available": False}
+
+    try:
+        return {
+            "cuda_available": True,
+            "device_count": torch.cuda.device_count(),
+            "current_device": torch.cuda.current_device(),
+            "device_name": torch.cuda.get_device_name(),
+            "memory_allocated": torch.cuda.memory_allocated(),
+            "memory_reserved": torch.cuda.memory_reserved(),
+            "max_memory_allocated": torch.cuda.max_memory_allocated(),
+            "max_memory_reserved": torch.cuda.max_memory_reserved(),
+        }
+    except Exception as e:
+        logger.error(f"CUDA 메모리 정보 수집 실패: {str(e)}")
+        return {"cuda_available": True, "error": str(e)}

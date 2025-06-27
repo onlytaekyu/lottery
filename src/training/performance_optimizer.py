@@ -26,7 +26,8 @@ from ..utils.cuda_optimizers import AMPTrainer
 from ..utils.unified_performance import Profiler
 from ..utils.batch_controller import DynamicBatchSizeController
 from ..utils.cache_manager import ThreadLocalCache
-from ..utils.performance_utils import MemoryTracker
+
+# from ..utils.performance_utils import MemoryTracker  # 주석 처리
 from ..utils.config_loader import ConfigProxy
 
 # 로거 설정
@@ -87,15 +88,27 @@ class PerformanceOptimizer:
         # GPU 메모리 (CUDA 가능한 경우)
         gpu_stats = {}
         if torch.cuda.is_available():
-            for i in range(torch.cuda.device_count()):
-                gpu_stats[f"gpu_{i}"] = {
-                    "total": torch.cuda.get_device_properties(i).total_memory,
-                    "used": torch.cuda.memory_allocated(i),
-                    "cached": torch.cuda.memory_reserved(i),
-                    "free": torch.cuda.get_device_properties(i).total_memory
-                    - torch.cuda.memory_allocated(i),
-                    "utilization": torch.cuda.utilization(i),
-                }
+            try:
+                for i in range(torch.cuda.device_count()):
+                    total_memory = torch.cuda.get_device_properties(i).total_memory
+                    allocated_memory = torch.cuda.memory_allocated(i)
+                    reserved_memory = torch.cuda.memory_reserved(i)
+
+                    gpu_stats[f"gpu_{i}"] = {
+                        "total": total_memory,
+                        "used": allocated_memory,
+                        "cached": reserved_memory,
+                        "free": total_memory - allocated_memory,
+                        "utilization_percent": (
+                            (allocated_memory / total_memory) * 100
+                            if total_memory > 0
+                            else 0
+                        ),
+                        "device_name": torch.cuda.get_device_name(i),
+                    }
+            except Exception as e:
+                logger.warning(f"GPU 메모리 정보 수집 중 오류: {str(e)}")
+                gpu_stats = {"error": str(e)}
 
         # 메모리 사용량 정보
         memory_info = {
@@ -121,11 +134,23 @@ class PerformanceOptimizer:
                 self.optimize_memory()
 
             # GPU 메모리 임계값 초과 시 캐시 비우기
-            if torch.cuda.is_available() and any(
-                stats["used"] / stats["total"] > self.config.cuda_empty_cache_threshold
-                for stats in gpu_stats.values()
-            ):
-                self.clear_gpu_cache()
+            if torch.cuda.is_available() and gpu_stats:
+                try:
+                    for stats in gpu_stats.values():
+                        if (
+                            isinstance(stats, dict)
+                            and "used" in stats
+                            and "total" in stats
+                        ):
+                            if (
+                                stats["total"] > 0
+                                and (stats["used"] / stats["total"])
+                                > self.config.cuda_empty_cache_threshold
+                            ):
+                                self.clear_gpu_cache()
+                                break
+                except Exception as e:
+                    logger.warning(f"GPU 메모리 임계값 체크 중 오류: {str(e)}")
 
         return memory_info
 

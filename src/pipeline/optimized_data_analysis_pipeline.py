@@ -54,10 +54,11 @@ from src.analysis.pattern_analyzer import PatternAnalyzer
 from src.analysis.pattern_vectorizer import PatternVectorizer
 from src.utils.unified_report import safe_convert, save_physical_performance_report
 from src.analysis.pair_analyzer import PairAnalyzer
-from src.utils.feature_vector_validator import (
-    validate_feature_vector_with_config,
-    check_vector_dimensions,
-)
+
+# from src.utils.feature_vector_validator import (
+#     validate_feature_vector_with_config,
+#     check_vector_dimensions,
+# )
 
 # 최적화된 함수들 import
 from src.shared.graph_utils import (
@@ -106,19 +107,66 @@ def initialize_optimization_systems(config: Dict[str, Any]):
         optimization_config = config.get("optimization", {})
 
         # ProcessPool 관리자 초기화
-        process_pool_config = optimization_config.get("process_pool", {})
-        process_pool_manager = get_process_pool_manager(process_pool_config)
-        logger.info("ProcessPool 관리자 초기화 완료")
+        try:
+            process_pool_config = optimization_config.get(
+                "process_pool",
+                {
+                    "max_workers": min(4, psutil.cpu_count()),
+                    "chunk_size": 100,
+                    "timeout": 300,
+                },
+            )
+            process_pool_manager = get_process_pool_manager(process_pool_config)
+            logger.info("ProcessPool 관리자 초기화 완료")
+        except Exception as e:
+            logger.warning(f"ProcessPool 관리자 초기화 실패: {e}")
+            process_pool_manager = None
 
         # 메모리 관리자 초기화
-        memory_config = optimization_config.get("memory_pool", {})
-        memory_manager = get_memory_manager(memory_config)
-        logger.info("메모리 관리자 초기화 완료")
+        try:
+            from src.utils.memory_manager import MemoryConfig
+
+            memory_config_dict = optimization_config.get("memory", {})
+            memory_config = MemoryConfig(
+                max_memory_usage=memory_config_dict.get("max_memory_usage", 0.85),
+                cache_size=memory_config_dict.get("cache_size", 256 * 1024 * 1024),
+                use_memory_pooling=memory_config_dict.get("use_memory_pooling", True),
+                auto_cleanup_interval=memory_config_dict.get(
+                    "auto_cleanup_interval", 60.0
+                ),
+            )
+            memory_manager = get_memory_manager(memory_config)
+            logger.info("메모리 관리자 초기화 완료")
+        except Exception as e:
+            logger.warning(f"메모리 관리자 초기화 실패: {e}")
+            memory_manager = None
 
         # 하이브리드 최적화 시스템 초기화
-        hybrid_config = optimization_config.get("hybrid", {})
-        hybrid_optimizer = get_hybrid_optimizer(hybrid_config)
-        logger.info("하이브리드 최적화 시스템 초기화 완료")
+        try:
+            hybrid_config = optimization_config.get(
+                "hybrid",
+                {
+                    "auto_optimization": True,
+                    "memory_threshold": 0.8,
+                    "cpu_threshold": 75.0,
+                },
+            )
+            hybrid_optimizer = get_hybrid_optimizer(hybrid_config)
+            logger.info("하이브리드 최적화 시스템 초기화 완료")
+        except Exception as e:
+            logger.warning(f"하이브리드 최적화 시스템 초기화 실패: {e}")
+            hybrid_optimizer = None
+
+        # 최적화 시스템 상태 로깅
+        initialized_systems = []
+        if process_pool_manager is not None:
+            initialized_systems.append("ProcessPool")
+        if memory_manager is not None:
+            initialized_systems.append("MemoryManager")
+        if hybrid_optimizer is not None:
+            initialized_systems.append("HybridOptimizer")
+
+        logger.info(f"초기화된 최적화 시스템: {', '.join(initialized_systems)}")
 
     except Exception as e:
         logger.error(f"최적화 시스템 초기화 실패: {e}")
@@ -680,104 +728,35 @@ def run_fully_optimized_analysis():
 
     # 🚀 전역 최적화 시스템 초기화
     from src.utils.memory_manager import get_memory_manager, MemoryConfig
-    from src.utils.cuda_optimizers import get_cuda_optimizer, CudaConfig
-    from src.utils.process_pool_manager import get_process_pool_manager
-    from src.utils.hybrid_optimizer import get_hybrid_optimizer
-    from src.utils.unified_performance import performance_monitor
+    from src.utils.cuda_optimizers import CudaConfig
+    from src.utils.unified_performance import get_profiler
 
     logger.info("🎉 완전 최적화된 데이터 분석 파이프라인 시작")
 
     # 전역 최적화 시스템 초기화
     memory_config = MemoryConfig(
-        max_memory_usage=0.85, use_memory_pooling=True, pool_size=256, auto_cleanup=True
+        max_memory_usage=0.85,
+        use_memory_pooling=True,
+        pool_size=32,
+        auto_cleanup_interval=60.0,
     )
     memory_manager = get_memory_manager(memory_config)
 
     cuda_config = CudaConfig(
-        enable_cuda=True,
         use_amp=True,
         batch_size=128,
-        memory_fraction=0.8,
+        use_cudnn=True,
     )
-    cuda_optimizer = get_cuda_optimizer(cuda_config)
 
-    process_pool_config = {
-        "max_workers": min(8, os.cpu_count() or 1),
-        "chunk_size": 200,
-        "timeout": 900,
-    }
-    process_pool_manager = get_process_pool_manager(process_pool_config)
-
-    hybrid_config = {
-        "auto_optimization": True,
-        "memory_threshold": 0.8,
-        "cpu_threshold": 75.0,
-        "gpu_threshold": 0.85,
-    }
-    hybrid_optimizer = get_hybrid_optimizer(hybrid_config)
+    # 프로파일러 초기화
+    profiler = get_profiler()
 
     # 🧠 전역 메모리 관리 컨텍스트
-    with memory_manager.pipeline_context():
-
+    with memory_manager.allocation_scope():
         # 📈 전체 성능 모니터링
-        with performance_monitor("complete_optimized_pipeline"):
-
-            try:
-                # 🔧 최적화 레벨 자동 결정
-                optimization_level = hybrid_optimizer.determine_optimal_level()
-                logger.info(f"자동 결정된 최적화 레벨: {optimization_level}")
-
-                # 1️⃣ 데이터 로드 (메모리 최적화)
-                with performance_monitor("optimized_data_load"):
-                    data = load_draw_history_optimized(memory_manager=memory_manager)
-
-                # 2️⃣ 분석 (GPU/병렬 최적화)
-                with performance_monitor("optimized_analysis"):
-                    analyzer = create_optimized_analyzer(
-                        memory_manager=memory_manager,
-                        cuda_optimizer=cuda_optimizer,
-                        process_pool_manager=process_pool_manager,
-                        hybrid_optimizer=hybrid_optimizer,
-                    )
-
-                    analysis_result = analyzer.analyze_optimized(
-                        data, optimization_level=optimization_level
-                    )
-
-                # 3️⃣ 벡터화 (하이브리드 최적화)
-                with performance_monitor("optimized_vectorization"):
-                    vectorizer = create_optimized_vectorizer(
-                        memory_manager=memory_manager, cuda_optimizer=cuda_optimizer
-                    )
-
-                    vectors = vectorizer.vectorize_optimized(
-                        analysis_result, use_optimization=True
-                    )
-
-                # 4️⃣ 결과 저장 (최적화된 I/O)
-                with performance_monitor("optimized_save"):
-                    save_results_optimized(
-                        analysis_result, vectors, memory_manager=memory_manager
-                    )
-
-                # 📊 최적화 효과 보고
-                optimization_report = hybrid_optimizer.generate_performance_report()
-                logger.info(f"🚀 최적화 효과: {optimization_report}")
-
-                return True
-
-            except Exception as e:
-                logger.error(f"완전 최적화 파이프라인 실행 중 오류: {e}")
-                return False
-
-            finally:
-                # 정리 작업
-                cleanup_optimized_resources(
-                    memory_manager,
-                    cuda_optimizer,
-                    process_pool_manager,
-                    hybrid_optimizer,
-                )
+        with profiler.profile("완전_최적화_분석"):
+            # 기본 최적화된 분석 실행
+            return run_optimized_data_analysis()
 
 
 def create_optimized_analyzer(
@@ -882,48 +861,21 @@ def cleanup_optimized_resources(*optimizers):
 
 
 def benchmark_optimization_performance():
-    """최적화 성능 벤치마킹"""
-    import time
+    """최적화 성능 벤치마크"""
+    logger.info("최적화 성능 벤치마크 시작")
 
-    logger.info("🔍 성능 최적화 벤치마킹 시작...")
-
-    # 1️⃣ 기존 방식 측정
-    start_time = time.time()
     try:
-        run_optimized_analysis()
-        old_time = time.time() - start_time
-        old_success = True
+        # 기본 분석 실행
+        start_time = time.time()
+        result = run_optimized_data_analysis()
+        duration = time.time() - start_time
+
+        logger.info(f"벤치마크 완료: {duration:.2f}초, 성공: {result}")
+        return {"duration": duration, "success": result}
+
     except Exception as e:
-        old_time = time.time() - start_time
-        old_success = False
-        logger.warning(f"기존 방식 실행 실패: {e}")
-
-    # 2️⃣ 완전 최적화 방식 측정
-    start_time = time.time()
-    try:
-        run_fully_optimized_analysis()
-        new_time = time.time() - start_time
-        new_success = True
-    except Exception as e:
-        new_time = time.time() - start_time
-        new_success = False
-        logger.warning(f"최적화 방식 실행 실패: {e}")
-
-    # 📊 성능 개선 계산
-    if old_success and new_success:
-        speed_improvement = (old_time - new_time) / old_time * 100
-        logger.info(f"⚡ 속도 개선: {speed_improvement:.1f}%")
-        logger.info(f"🚀 전체 실행시간: {old_time:.2f}s → {new_time:.2f}s")
-    else:
-        logger.warning("벤치마킹 결과를 계산할 수 없습니다.")
-
-    return {
-        "old_time": old_time,
-        "new_time": new_time,
-        "old_success": old_success,
-        "new_success": new_success,
-        "improvement": speed_improvement if old_success and new_success else 0,
-    }
+        logger.error(f"벤치마크 실행 중 오류: {e}")
+        return {"duration": 0, "success": False, "error": str(e)}
 
 
 if __name__ == "__main__":

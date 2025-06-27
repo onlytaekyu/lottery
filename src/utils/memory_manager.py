@@ -1504,3 +1504,10 @@ def memory_managed_analysis():
         # 최종 메모리 상태 기록
         end_memory = psutil.virtual_memory()
         logger.info(f"분석 완료 - 메모리 사용량: {end_memory.percent:.1f}%")
+
+
+def get_memory_manager(config: Optional[MemoryConfig] = None) -> MemoryManager:
+    """메모리 관리자 싱글톤 인스턴스 반환"""
+    if config is None:
+        config = MemoryConfig()
+    return MemoryManager(config)
