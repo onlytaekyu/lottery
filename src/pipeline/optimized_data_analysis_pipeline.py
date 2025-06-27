@@ -38,6 +38,7 @@ from src.utils.error_handler_refactored import (
 )
 from src.utils.state_vector_cache import get_cache
 from src.utils.data_loader import load_draw_history, LotteryJSONEncoder
+from src.shared.types import LotteryNumber
 from src.utils.unified_config import load_config
 from src.utils.unified_performance import get_profiler
 
@@ -295,351 +296,606 @@ def run_optimized_data_analysis() -> bool:
     """
     최적화된 데이터 분석 파이프라인 실행
 
-    성능 최적화 기능:
-    - 중복 제거된 통합 함수 사용
-    - 세분화된 캐싱 시스템
-    - 메모리 효율적 청크 처리
-    - 병렬 처리 지원
-    - 하이브리드 최적화 시스템
-    - 통합 성능 모니터링
-
     Returns:
-        bool: 성공 여부
+        bool: 실행 성공 여부
     """
     start_time = time.time()
 
-    # 🔧 통합 성능 추적기 사용
-    profiler = get_profiler()
-
     try:
-        with profiler.profile("전체_데이터_분석_파이프라인"):
-            logger.info("🚀 최적화된 데이터 분석 파이프라인 시작")
+        logger.info("🚀 최적화된 데이터 분석 파이프라인 시작")
 
-            # 1. 설정 로드 - 실패 시 즉시 종료
-            with profiler.profile("설정_로드"):
-                logger.info("🚀 0단계: 설정 로드 중...")
-                logger.info("설정_로드 시작")
+        # 설정 로드
+        config = load_config()
 
-                config = load_config()
-                validate_and_fail_fast(
-                    config is not None, "설정 파일 로드 실패 - 시스템을 종료합니다"
-                )
+        # 최적화 시스템 초기화
+        initialize_optimization_systems(config)
 
-                logger.info(f"설정_로드 완료 ({time.time() - start_time:.2f}초)")
-                logger.info("✅ 설정 로드 완료")
+        # 1단계: 데이터 로드 및 고급 검증
+        logger.info("📊 1단계: 데이터 로드 및 고급 검증")
+        historical_data = load_draw_history()
 
-                # 1.5. 최적화 시스템 초기화
-                initialize_optimization_systems(config)
-                logger.info("✅ 최적화 시스템 초기화 완료")
+        if not historical_data:
+            logger.error("로또 데이터를 로드할 수 없습니다.")
+            return False
 
-            # 2. 데이터 로드 및 검증 - 실패 시 즉시 종료
-            with profiler.profile("데이터_로드"):
-                logger.info("🚀 1단계: 최적화된 과거 당첨 번호 데이터 로드 중...")
-                logger.info("데이터_로드 시작")
+        logger.info(f"로또 데이터 로드 완료: {len(historical_data)}회차")
 
-                historical_data = load_draw_history(
-                    validate_data=True
-                )  # 엄격한 검증 활성화
-                validate_and_fail_fast(
-                    historical_data and len(historical_data) > 0,
-                    f"데이터 로드 실패 또는 빈 데이터: {len(historical_data) if historical_data else 0}개",
-                    historical_data,
-                )
+        # 🔍 고급 데이터 검증 시스템 적용
+        from src.pipeline.data_validation import DataValidator
 
-                logger.info(f"데이터_로드 완료 ({time.time() - start_time:.2f}초)")
-                logger.info(f"✅ 데이터 로드 완료: {len(historical_data)}개 회차")
+        validator = DataValidator(config)
+        validation_result = validator.validate_lottery_data(historical_data)
 
-            # 분석기 초기화 - 실패 시 즉시 종료
-            # 🔧 통합 성능 추적기 사용
-            profiler.track_memory()
+        if not validation_result.is_valid:
+            logger.error(f"데이터 검증 실패: {len(validation_result.errors)}개 오류")
+            for error in validation_result.errors[:5]:  # 처음 5개 오류만 표시
+                logger.error(f"  - {error}")
+            return False
 
-            def init_analyzer(analyzer_type: str):
-                """분석기 초기화 래퍼"""
-                if analyzer_type == "pair":
-                    from src.analysis.pair_analyzer import PairAnalyzer
+        logger.info(
+            f"✅ 데이터 검증 완료 (품질 점수: {validation_result.quality_score})"
+        )
 
-                    analyzer = PairAnalyzer()
-                    validate_and_fail_fast(
-                        analyzer is not None, f"{analyzer_type} 분석기 초기화 실패"
-                    )
-                    return analyzer
+        # 경고 사항 로깅
+        if validation_result.warnings:
+            logger.warning(f"데이터 품질 경고 {len(validation_result.warnings)}개:")
+            for warning in validation_result.warnings[:3]:
+                logger.warning(f"  - {warning}")
+
+        # 이상치 정보 로깅
+        if validation_result.anomalies:
+            logger.info(f"감지된 이상치: {len(validation_result.anomalies)}개")
+
+        # 품질 보고서 생성 및 저장
+        quality_report = validator.generate_quality_report(historical_data)
+        validator.save_quality_report(quality_report)
+
+        # 2단계: 분석기 초기화
+        logger.info("🔧 2단계: 분석기 초기화")
+
+        def init_analyzer(analyzer_type: str):
+            """분석기 초기화 헬퍼 함수"""
+            try:
+                # ConfigProxy 대신 딕셔너리 설정 직접 전달
+                config_dict = config if isinstance(config, dict) else config._config
+
+                if analyzer_type == "pattern":
+                    return PatternAnalyzer(config_dict)
+                elif analyzer_type == "distribution":
+                    from src.analysis.distribution_analyzer import DistributionAnalyzer
+
+                    return DistributionAnalyzer(config_dict)
+                elif analyzer_type == "roi":
+                    from src.analysis.roi_analyzer import ROIAnalyzer
+
+                    return ROIAnalyzer(config_dict)
+                elif analyzer_type == "pair":
+                    return PairAnalyzer(config_dict)
                 elif analyzer_type == "vectorizer":
-                    from src.analysis.pattern_vectorizer import PatternVectorizer
-
-                    analyzer = PatternVectorizer()
-                    validate_and_fail_fast(
-                        analyzer is not None, f"{analyzer_type} 분석기 초기화 실패"
-                    )
-                    return analyzer
-                elif analyzer_type == "pattern":
-                    from src.analysis.pattern_analyzer import PatternAnalyzer
-
-                    analyzer = PatternAnalyzer()
-                    validate_and_fail_fast(
-                        analyzer is not None, f"{analyzer_type} 분석기 초기화 실패"
-                    )
-                    return analyzer
+                    return PatternVectorizer(config_dict)
                 else:
-                    strict_handler.handle_critical_error(
-                        ValueError(f"알 수 없는 분석기 타입: {analyzer_type}"),
-                        "분석기 초기화 실패",
-                    )
+                    raise ValueError(f"알 수 없는 분석기 타입: {analyzer_type}")
+            except Exception as e:
+                logger.error(f"{analyzer_type} 분석기 초기화 실패: {e}")
+                # 기본 설정으로 재시도
+                try:
+                    # 기본 설정 딕셔너리 생성
+                    default_config = {
+                        "analysis": {},
+                        "paths": {
+                            "cache_dir": "data/cache",
+                            "result_dir": "data/result",
+                        },
+                        "vectorizer": {"use_cache": True, "normalize_output": True},
+                        "filtering": {
+                            "remove_low_variance_features": True,
+                            "variance_threshold": 0.01,
+                        },
+                        "caching": {
+                            "enable_feature_cache": True,
+                            "max_cache_size": 10000,
+                        },
+                    }
+
+                    if analyzer_type == "pattern":
+                        return PatternAnalyzer(default_config)
+                    elif analyzer_type == "distribution":
+                        from src.analysis.distribution_analyzer import (
+                            DistributionAnalyzer,
+                        )
+
+                        return DistributionAnalyzer(default_config)
+                    elif analyzer_type == "roi":
+                        from src.analysis.roi_analyzer import ROIAnalyzer
+
+                        return ROIAnalyzer(default_config)
+                    elif analyzer_type == "pair":
+                        return PairAnalyzer(default_config)
+                    elif analyzer_type == "vectorizer":
+                        return PatternVectorizer(default_config)
+                except Exception as e2:
+                    logger.error(f"{analyzer_type} 분석기 기본 초기화도 실패: {e2}")
                     return None
 
-            # 분석기들 초기화
-            from src.analysis.pair_analyzer import PairAnalyzer
-            from src.analysis.pattern_vectorizer import PatternVectorizer
-            from src.analysis.pattern_analyzer import PatternAnalyzer
+        # 분석기들 초기화
+        pattern_analyzer = init_analyzer("pattern")
+        distribution_analyzer = init_analyzer("distribution")
+        roi_analyzer = init_analyzer("roi")
+        pair_analyzer = init_analyzer("pair")
+        vectorizer = init_analyzer("vectorizer")
 
-            pair_analyzer: PairAnalyzer = init_analyzer("pair")
-            logger.info("✅ pair 분석기 초기화 완료")
+        # 초기화 실패 체크
+        analyzers = {
+            "pattern": pattern_analyzer,
+            "distribution": distribution_analyzer,
+            "roi": roi_analyzer,
+            "pair": pair_analyzer,
+            "vectorizer": vectorizer,
+        }
 
-            pattern_vectorizer: PatternVectorizer = init_analyzer("vectorizer")
-            logger.info("✅ vectorizer 분석기 초기화 완료")
+        failed_analyzers = [
+            name for name, analyzer in analyzers.items() if analyzer is None
+        ]
+        if failed_analyzers:
+            logger.error(f"다음 분석기 초기화 실패: {failed_analyzers}")
+            return False
 
-            pattern_analyzer: PatternAnalyzer = init_analyzer("pattern")
-            logger.info("✅ pattern 분석기 초기화 완료")
+        logger.info("모든 분석기 초기화 완료")
 
-            logger.info("✅ 모든 분석기 초기화 완료")
+        # 3단계: 병렬 분석 실행
+        logger.info("⚡ 3단계: 병렬 분석 실행")
+        analysis_results = {}
 
-            # 디렉토리 설정 및 생성 - 실패 시 즉시 종료
-            result_dir = Path("data/result")
-            cache_dir = Path("data/cache")
-            analysis_dir = result_dir / "analysis"
-
-            # 디렉토리 생성
-            for directory in [result_dir, analysis_dir, cache_dir]:
-                directory.mkdir(parents=True, exist_ok=True)
-                validate_and_fail_fast(
-                    directory.exists(), f"디렉토리 생성 실패: {directory}"
+        # 메모리 관리 스코프 내에서 실행
+        if memory_manager:
+            with memory_manager.allocation_scope():
+                analysis_results = run_parallel_analysis(
+                    historical_data, analyzers, config
                 )
+        else:
+            analysis_results = run_parallel_analysis(historical_data, analyzers, config)
 
-            logger.info("✅ 디렉토리 설정 완료")
+        if not analysis_results:
+            logger.error("분석 실행 실패")
+            return False
 
-            # 3. 최적화된 패턴 분석 실행 - 실패 시 즉시 종료
-            with profiler.profile("최적화된_패턴_분석"):
-                logger.info("🚀 2단계: 최적화된 패턴 분석 수행 중...")
+        logger.info(f"분석 완료: {len(analysis_results)}개 결과")
 
-                analysis_start = time.time()
+        # 4단계: 고급 특성 추출 및 벡터 생성
+        logger.info("🔢 4단계: 고급 특성 추출 및 벡터 생성")
 
-                # 청크 단위로 분석 수행
-                chunk_size = CHUNK_PROCESSING_CONFIG["historical_data"]
+        try:
+            # 통합 분석 결과 생성
+            unified_analysis = merge_analysis_results(analysis_results)
 
-                def analyze_chunk(chunk_data):
-                    result = pattern_analyzer.analyze(chunk_data)
-                    validate_and_fail_fast(
-                        result is not None,
-                        f"패턴 분석 실패: 청크 크기 {len(chunk_data)}",
+            # 🧠 고급 특성 추출 엔진 적용
+            from src.analysis.feature_extractor import FeatureExtractor
+
+            feature_extractor = FeatureExtractor(config)
+            extraction_result = feature_extractor.extract_all_features(unified_analysis)
+
+            logger.info(
+                f"특성 추출 완료: {len(extraction_result.feature_names)}개 특성"
+            )
+            logger.info(f"특성 그룹: {list(extraction_result.feature_groups.keys())}")
+
+            # 특성 최적화 (선택적)
+            if extraction_result.feature_matrix.size > 0:
+                optimized_features, optimized_names, importance_scores = (
+                    feature_extractor.optimize_feature_selection(
+                        extraction_result.feature_matrix,
+                        extraction_result.feature_names,
                     )
-                    return result
+                )
+                logger.info(f"특성 최적화 완료: {len(optimized_names)}개 특성 선택")
+            else:
+                optimized_features = extraction_result.feature_matrix
+                optimized_names = extraction_result.feature_names
 
-                # 전체 데이터 분석 (메모리 효율적)
-                if len(historical_data) > chunk_size:
-                    logger.info(
-                        f"대용량 데이터 감지: {len(historical_data)}개 -> {chunk_size} 단위로 처리"
-                    )
-                    chunk_results = process_data_chunks_optimized(
-                        historical_data, chunk_size, analyze_chunk
-                    )
-                    validate_and_fail_fast(
-                        chunk_results is not None and len(chunk_results) > 0,
-                        "청크 분석 결과가 비어 있음",
-                    )
+            # 벡터화 실행 (기존 벡터화 시스템과 병행)
+            feature_vector = None
+            feature_names = []
 
-                    # 청크 결과 병합
-                    analysis_result = pattern_analyzer.merge_analysis_results(
-                        chunk_results
+            if vectorizer is not None:
+                try:
+                    feature_vector, feature_names = (
+                        vectorizer.vectorize_extended_features(unified_analysis)
                     )
-                    validate_and_fail_fast(
-                        analysis_result is not None, "청크 결과 병합 실패"
+                    if feature_vector is not None and len(feature_vector) > 0:
+                        logger.info(f"기존 벡터화 시스템: {len(feature_vector)}차원")
+                except Exception as e:
+                    logger.warning(f"기존 벡터화 시스템 오류: {e}")
+                    feature_vector = None
+                    feature_names = []
+
+            # 두 벡터 시스템 결합
+            if feature_vector is not None and len(feature_vector) > 0:
+                if optimized_features.size > 0:
+                    # 차원이 다를 수 있으므로 안전하게 결합
+                    combined_vector = np.concatenate(
+                        [feature_vector.flatten(), optimized_features.flatten()]
                     )
+                    combined_names = feature_names + optimized_names
+                    logger.info(f"벡터 시스템 결합 완료: {len(combined_vector)}차원")
                 else:
-                    analysis_result = analyze_chunk(historical_data)
-
-                analysis_duration = time.time() - analysis_start
-                # 🔧 통합 성능 추적기 사용
-                profiler.track_time("pattern_analysis", analysis_duration)
-
-                logger.info(f"✅ 패턴 분석 완료 ({analysis_duration:.2f}초)")
-                profiler.track_memory()
-
-            # 4. 최적화된 추가 분석 (병렬 처리) - 안전한 ThreadPoolExecutor 사용
-            with profiler.profile("최적화된_추가_분석"):
-                logger.info("🚀 3단계: 최적화된 추가 분석 수행 중...")
-
-                additional_analysis_start = time.time()
-
-                def run_additional_analysis():
-                    """추가 분석을 병렬로 실행"""
-                    analysis_tasks = {}
-
-                    with ThreadPoolExecutor(
-                        max_workers=CHUNK_PROCESSING_CONFIG["parallel_workers"]
-                    ) as executor:
-                        # 각 분석을 병렬로 실행
-                        futures = {
-                            executor.submit(
-                                calculate_pair_frequency,
-                                historical_data,
-                                logger=logger,
-                                chunk_size=chunk_size,
-                            ): "pair_frequency",
-                            executor.submit(
-                                calculate_segment_entropy,
-                                historical_data,
-                                segments=5,
-                                logger=logger,
-                            ): "segment_entropy",
-                            executor.submit(
-                                calculate_number_gaps,
-                                historical_data,
-                                logger=logger,
-                            ): "number_gaps",
-                            executor.submit(
-                                calculate_cluster_distribution,
-                                historical_data,
-                                n_clusters=5,
-                                logger=logger,
-                            ): "cluster_distribution",
-                        }
-
-                        # 결과 수집
-                        for future in as_completed(futures):
-                            analysis_type = futures[future]
-                            result = future.result()
-                            validate_and_fail_fast(
-                                result is not None, f"{analysis_type} 분석 실패"
-                            )
-                            analysis_tasks[analysis_type] = result
-                            logger.info(f"✅ {analysis_type} 분석 완료")
-
-                        # ThreadPoolExecutor 정리 확인
-                        logger.debug("추가 분석 ThreadPoolExecutor 정리 완료")
-
-                    return analysis_tasks
-
-                additional_results = run_additional_analysis()
-                validate_and_fail_fast(
-                    additional_results is not None and len(additional_results) > 0,
-                    "추가 분석 결과가 비어 있음",
+                    combined_vector = feature_vector
+                    combined_names = feature_names
+            else:
+                # 기존 벡터화 실패시 새로운 특성 추출 결과 사용
+                combined_vector = (
+                    optimized_features.flatten()
+                    if optimized_features.size > 0
+                    else np.array([])
                 )
+                combined_names = optimized_names
 
-                additional_duration = time.time() - additional_analysis_start
-                # 🔧 통합 성능 추적기 사용
-                profiler.track_time("additional_analysis", additional_duration)
+            if len(combined_vector) == 0:
+                logger.error("특성 벡터 생성 실패")
+                return False
 
-                logger.info(f"✅ 추가 분석 완료 ({additional_duration:.2f}초)")
-                profiler.track_memory()
+            logger.info(f"최종 특성 벡터 생성 완료: {len(combined_vector)}차원")
 
-            # 5. 최적화된 벡터화 - 실패 시 즉시 종료
-            with profiler.profile("최적화된_벡터화"):
-                logger.info("🚀 4단계: 최적화된 벡터화 수행 중...")
+            # 벡터 품질 검증
+            if not validate_feature_vector(combined_vector, combined_names, config):
+                logger.error("특성 벡터 품질 검증 실패")
+                return False
 
-                vectorization_start = time.time()
+        except Exception as e:
+            logger.error(f"특성 벡터 생성 중 오류: {e}")
+            log_exception_with_trace(e)
+            return False
 
-                # 분석 결과를 병합
-                combined_analysis = dict(analysis_result)
-                combined_analysis.update(
-                    {
-                        "pair_frequency": additional_results.get("pair_frequency", {}),
-                        "segment_entropy": additional_results.get(
-                            "segment_entropy", np.array([])
-                        ),
-                        "number_gaps": additional_results.get("number_gaps", {}),
-                        "cluster_distribution": additional_results.get(
-                            "cluster_distribution", ({}, {})
-                        ),
-                    }
-                )
+        # 5단계: 결과 저장
+        logger.info("💾 5단계: 결과 저장")
 
-                validate_and_fail_fast(
-                    combined_analysis is not None and len(combined_analysis) > 0,
-                    "병합된 분석 결과가 비어 있음",
-                )
+        try:
+            # 분석 결과 저장
+            save_analysis_results(unified_analysis, config)
 
-                # 벡터화 수행
-                feature_vectors, feature_names = (
-                    pattern_vectorizer.vectorize_extended_features(combined_analysis)
-                )
+            # 특성 벡터 저장
+            if vectorizer is not None:
+                vector_path = vectorizer.save_vector_to_file(combined_vector)
+                names_path = vectorizer.save_names_to_file(combined_names)
+            else:
+                # vectorizer가 None인 경우 직접 저장
+                from pathlib import Path
+                import json
 
-                validate_and_fail_fast(
-                    feature_vectors is not None and feature_names is not None,
-                    "벡터화 실패",
-                )
-                validate_and_fail_fast(
-                    len(feature_vectors) > 0 and len(feature_names) > 0,
-                    f"벡터화 결과가 비어 있음: vectors={len(feature_vectors)}, names={len(feature_names)}",
-                )
+                cache_dir = Path("data/cache")
+                cache_dir.mkdir(parents=True, exist_ok=True)
 
-                vectorization_duration = time.time() - vectorization_start
-                # 🔧 통합 성능 추적기 사용
-                profiler.track_time("vectorization", vectorization_duration)
+                vector_path = cache_dir / "feature_vector_full.npy"
+                names_path = cache_dir / "feature_vector_full.names.json"
 
-                logger.info(
-                    f"✅ 벡터화 완료: {feature_vectors.shape} ({vectorization_duration:.2f}초)"
-                )
+                np.save(vector_path, combined_vector)
+                with open(names_path, "w", encoding="utf-8") as f:
+                    json.dump(combined_names, f, ensure_ascii=False, indent=2)
 
-            # 6. 결과 저장 및 검증 - 실패 시 즉시 종료
-            with profiler.profile("결과_저장_검증"):
-                logger.info("🚀 5단계: 결과 저장 및 검증 중...")
+                vector_path = str(vector_path)
+                names_path = str(names_path)
 
-                # 벡터 및 특성 이름 저장
-                vector_file = cache_dir / "feature_vectors_full.npy"
-                names_file = cache_dir / "feature_vector_full.names.json"
+            logger.info(f"결과 저장 완료:")
+            logger.info(f"  - 벡터 파일: {vector_path}")
+            logger.info(f"  - 이름 파일: {names_path}")
 
-                np.save(vector_file, feature_vectors)
-                validate_and_fail_fast(
-                    vector_file.exists(), f"벡터 파일 저장 실패: {vector_file}"
-                )
+        except Exception as e:
+            logger.error(f"결과 저장 중 오류: {e}")
+            return False
 
-                with open(names_file, "w", encoding="utf-8") as f:
-                    json.dump(feature_names, f, indent=2, ensure_ascii=False)
-                validate_and_fail_fast(
-                    names_file.exists(), f"특성 이름 파일 저장 실패: {names_file}"
-                )
+        # 6단계: 성능 보고서 생성
+        logger.info("📈 6단계: 성능 보고서 생성")
 
-                # 분석 결과 저장
-                analysis_file = analysis_dir / "optimized_analysis_result.json"
-                with open(analysis_file, "w", encoding="utf-8") as f:
-                    json.dump(
-                        combined_analysis,
-                        f,
-                        indent=2,
-                        ensure_ascii=False,
-                        cls=LotteryJSONEncoder,
-                    )
-                validate_and_fail_fast(
-                    analysis_file.exists(), f"분석 결과 파일 저장 실패: {analysis_file}"
-                )
+        try:
+            execution_time = time.time() - start_time
 
-                logger.info("✅ 모든 결과 저장 완료")
+            # 성능 보고서 데이터 수집
+            performance_data = {
+                "execution_time": execution_time,
+                "data_size": len(historical_data),
+                "vector_dimensions": len(combined_vector),
+                "analysis_results_count": len(analysis_results),
+                "memory_usage": get_memory_usage(),
+                "data_quality_score": validation_result.quality_score,
+                "feature_extraction_quality": extraction_result.quality_metrics,
+                "optimization_used": {
+                    "process_pool": process_pool_manager is not None,
+                    "memory_manager": memory_manager is not None,
+                    "hybrid_optimizer": hybrid_optimizer is not None,
+                },
+            }
 
-            # 최종 성능 리포트
-            total_duration = time.time() - start_time
-            # 🔧 통합 성능 추적기 사용
-            profiler.track_time("total_duration", total_duration)
+            # 성능 보고서 저장
+            save_performance_report(performance_data, "optimized_data_analysis")
 
-            logger.info("✅ 최적화된 데이터 분석 완료!")
-            logger.info(f"📊 전체 실행 시간: {total_duration:.2f}초")
+            logger.info(f"성능 보고서 생성 완료 (실행시간: {execution_time:.2f}초)")
 
-            # 성능 리포트 저장
-            performance_file = analysis_dir / "performance_report.json"
-            with open(performance_file, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "total_duration": total_duration,
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    },
-                    f,
-                    indent=2,
-                    ensure_ascii=False,
-                )
+        except Exception as e:
+            logger.warning(f"성능 보고서 생성 중 오류: {e}")
 
-            return True
+        # 최적화 시스템 정리
+        cleanup_optimization_systems()
+
+        logger.info(
+            f"✅ 최적화된 데이터 분석 파이프라인 완료 (총 {time.time() - start_time:.2f}초)"
+        )
+        return True
 
     except Exception as e:
-        logger.error(f"최적화된 데이터 분석 파이프라인 실행 중 오류: {e}")
+        logger.error(f"❌ 데이터 분석 파이프라인 실행 중 오류: {e}")
         return False
+
+
+def validate_lottery_data(historical_data: List[LotteryNumber]) -> bool:
+    """로또 데이터 검증"""
+    try:
+        if not historical_data:
+            logger.error("빈 데이터셋")
+            return False
+
+        for i, draw in enumerate(historical_data):
+            # 번호 개수 검증
+            if len(draw.numbers) != 6:
+                logger.error(
+                    f"회차 {draw.draw_no}: 번호 개수 오류 ({len(draw.numbers)}개)"
+                )
+                return False
+
+            # 번호 범위 검증
+            for number in draw.numbers:
+                if not (1 <= number <= 45):
+                    logger.error(f"회차 {draw.draw_no}: 번호 범위 오류 ({number})")
+                    return False
+
+            # 중복 번호 검증
+            if len(set(draw.numbers)) != 6:
+                logger.error(f"회차 {draw.draw_no}: 중복 번호 존재")
+                return False
+
+        logger.info(f"데이터 검증 완료: {len(historical_data)}회차 모두 정상")
+        return True
+
+    except Exception as e:
+        logger.error(f"데이터 검증 중 오류: {e}")
+        return False
+
+
+def run_parallel_analysis(
+    historical_data: List[LotteryNumber],
+    analyzers: Dict[str, Any],
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """병렬 분석 실행"""
+    analysis_results = {}
+
+    try:
+        logger.info("병렬 분석 시작")
+
+        # 분석 작업 정의
+        analysis_tasks = [
+            ("pattern", analyzers["pattern"]),
+            ("distribution", analyzers["distribution"]),
+            ("roi", analyzers["roi"]),
+            ("pair", analyzers["pair"]),
+        ]
+
+        # 프로세스 풀이 있으면 병렬 실행, 없으면 순차 실행
+        if process_pool_manager and len(analysis_tasks) > 1:
+            logger.info("프로세스 풀을 사용한 병렬 분석")
+
+            with ThreadPoolExecutor(max_workers=len(analysis_tasks)) as executor:
+                future_to_name = {}
+
+                for name, analyzer in analysis_tasks:
+                    if analyzer:
+                        future = executor.submit(
+                            safe_analysis_execution, name, analyzer, historical_data
+                        )
+                        future_to_name[future] = name
+
+                # 결과 수집
+                for future in as_completed(future_to_name):
+                    name = future_to_name[future]
+                    try:
+                        result = future.result(timeout=300)  # 5분 타임아웃
+                        if result:
+                            analysis_results[name] = result
+                            logger.info(f"{name} 분석 완료")
+                        else:
+                            logger.warning(f"{name} 분석 결과 없음")
+                    except Exception as e:
+                        logger.error(f"{name} 분석 실패: {e}")
+        else:
+            logger.info("순차 분석 실행")
+
+            for name, analyzer in analysis_tasks:
+                if analyzer:
+                    try:
+                        result = safe_analysis_execution(
+                            name, analyzer, historical_data
+                        )
+                        if result:
+                            analysis_results[name] = result
+                            logger.info(f"{name} 분석 완료")
+                    except Exception as e:
+                        logger.error(f"{name} 분석 실패: {e}")
+
+        logger.info(f"병렬 분석 완료: {len(analysis_results)}개 결과")
+        return analysis_results
+
+    except Exception as e:
+        logger.error(f"병렬 분석 실행 중 오류: {e}")
+        return {}
+
+
+def safe_analysis_execution(
+    name: str, analyzer: Any, historical_data: List[LotteryNumber]
+) -> Optional[Dict[str, Any]]:
+    """안전한 분석 실행"""
+    try:
+        logger.info(f"{name} 분석 시작")
+        result = analyzer.analyze(historical_data)
+        logger.info(f"{name} 분석 성공")
+        return result
+    except Exception as e:
+        logger.error(f"{name} 분석 중 오류: {e}")
+        return None
+
+
+def merge_analysis_results(analysis_results: Dict[str, Any]) -> Dict[str, Any]:
+    """분석 결과들을 통합"""
+    try:
+        unified_analysis = {
+            "metadata": {
+                "analysis_count": len(analysis_results),
+                "timestamp": datetime.now().isoformat(),
+                "version": "1.0.0",
+            }
+        }
+
+        # 각 분석 결과를 통합
+        for analysis_type, result in analysis_results.items():
+            if result:
+                unified_analysis[analysis_type] = result
+
+        logger.info(f"분석 결과 통합 완료: {len(unified_analysis)}개 항목")
+        return unified_analysis
+
+    except Exception as e:
+        logger.error(f"분석 결과 통합 중 오류: {e}")
+        return {}
+
+
+def validate_feature_vector(
+    feature_vector: np.ndarray, feature_names: List[str], config: Dict[str, Any]
+) -> bool:
+    """특성 벡터 품질 검증"""
+    try:
+        # 기본 검증
+        if feature_vector is None or len(feature_vector) == 0:
+            logger.error("빈 특성 벡터")
+            return False
+
+        if feature_names is None or len(feature_names) == 0:
+            logger.error("빈 특성 이름 리스트")
+            return False
+
+        # 차원 일치 검증
+        if len(feature_vector) != len(feature_names):
+            logger.error(
+                f"벡터 차원 불일치: 벡터={len(feature_vector)}, 이름={len(feature_names)}"
+            )
+            return False
+
+        # 최소 차원 검증
+        try:
+            min_dimensions = config["vector"]["min_required_dimension"]
+            if len(feature_vector) < min_dimensions:
+                logger.error(
+                    f"벡터 차원 부족: {len(feature_vector)} < {min_dimensions}"
+                )
+                return False
+        except (KeyError, TypeError):
+            logger.warning("최소 차원 설정을 찾을 수 없음")
+
+        # NaN/Inf 검증
+        if np.any(np.isnan(feature_vector)) or np.any(np.isinf(feature_vector)):
+            logger.error("벡터에 NaN 또는 Inf 값 포함")
+            return False
+
+        logger.info(f"특성 벡터 검증 완료: {len(feature_vector)}차원")
+        return True
+
+    except Exception as e:
+        logger.error(f"특성 벡터 검증 중 오류: {e}")
+        return False
+
+
+def save_analysis_results(
+    unified_analysis: Dict[str, Any], config: Dict[str, Any]
+) -> None:
+    """분석 결과 저장"""
+    try:
+        # 결과 디렉토리 생성
+        result_dir = Path("data/result/analysis")
+        result_dir.mkdir(parents=True, exist_ok=True)
+
+        # JSON 파일로 저장
+        result_file = result_dir / "optimized_analysis_result.json"
+
+        with open(result_file, "w", encoding="utf-8") as f:
+            json.dump(
+                unified_analysis,
+                f,
+                ensure_ascii=False,
+                indent=2,
+                cls=LotteryJSONEncoder,
+            )
+
+        logger.info(f"분석 결과 저장 완료: {result_file}")
+
+    except Exception as e:
+        logger.error(f"분석 결과 저장 중 오류: {e}")
+        raise
+
+
+def save_performance_report(performance_data: Dict[str, Any], module_name: str) -> None:
+    """성능 보고서 저장"""
+    try:
+        # 보고서 디렉토리 생성
+        report_dir = Path("data/result/performance_reports")
+        report_dir.mkdir(parents=True, exist_ok=True)
+
+        # 보고서 파일 저장
+        report_file = report_dir / f"{module_name}_performance_report.json"
+
+        with open(report_file, "w", encoding="utf-8") as f:
+            json.dump(performance_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"성능 보고서 저장 완료: {report_file}")
+
+    except Exception as e:
+        logger.error(f"성능 보고서 저장 중 오류: {e}")
+
+
+def get_memory_usage() -> Dict[str, float]:
+    """현재 메모리 사용량 조회"""
+    try:
+        process = psutil.Process()
+        memory_info = process.memory_info()
+
+        return {
+            "rss_mb": memory_info.rss / 1024 / 1024,  # MB
+            "vms_mb": memory_info.vms / 1024 / 1024,  # MB
+            "percent": process.memory_percent(),
+        }
+    except Exception:
+        return {"rss_mb": 0, "vms_mb": 0, "percent": 0}
+
+
+def cleanup_optimization_systems() -> None:
+    """최적화 시스템 정리"""
+    global process_pool_manager, hybrid_optimizer, memory_manager
+
+    try:
+        if process_pool_manager:
+            process_pool_manager.shutdown()
+            logger.info("프로세스 풀 정리 완료")
+
+        if memory_manager:
+            memory_manager.cleanup()
+            logger.info("메모리 관리자 정리 완료")
+
+        if hybrid_optimizer:
+            hybrid_optimizer.cleanup()
+            logger.info("하이브리드 최적화 시스템 정리 완료")
+
+    except Exception as e:
+        logger.warning(f"최적화 시스템 정리 중 오류: {e}")
+    finally:
+        # 전역 변수 초기화
+        process_pool_manager = None
+        hybrid_optimizer = None
+        memory_manager = None
 
 
 def run_data_analysis() -> bool:

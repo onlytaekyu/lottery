@@ -1,8 +1,0 @@
-{
-  "removed_outliers": 13,
-  "original_samples": 100,
-  "remaining_samples": 87,
-  "removal_ratio": 0.13,
-  "z_threshold": 2.5,
-  "timestamp": "2025-05-27T12:24:21.357666"
-}

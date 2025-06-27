@@ -1,9 +1,0 @@
-{
-  "vector_type": "graph_structure",
-  "is_test": true,
-  "timestamp": "2025-05-27T10:07:48.078970",
-  "vector_shape": [
-    128
-  ],
-  "feature_count": 128
-}

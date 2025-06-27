@@ -4,11 +4,19 @@
 이 모듈은 로또 번호의 다양한 분포 패턴(홀짝, 고저, 범위 등)을 분석하는 기능을 제공합니다.
 """
 
+import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
+from collections import Counter, defaultdict
+import math
 
 from .base_analyzer import BaseAnalyzer
 from src.shared.types import LotteryNumber
+from src.utils.error_handler_refactored import get_logger
+from src.utils.unified_performance import performance_monitor
+from src.utils.unified_config import ConfigProxy
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -49,6 +57,22 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
         """
         super().__init__(config or {}, "distribution")
 
+        # ConfigProxy 변환
+        if not isinstance(self.config, ConfigProxy):
+            self.config = ConfigProxy(self.config)
+
+        # 성능 최적화 시스템 초기화
+        from src.utils.memory_manager import get_memory_manager
+
+        self.memory_manager = get_memory_manager()
+
+        # 분포 분석 설정
+        self.range_segments = 9  # 1-45를 9개 구간으로 분할
+        self.sum_ranges = [(50, 100), (101, 150), (151, 200), (201, 250), (251, 300)]
+
+        logger.info("DistributionAnalyzer 초기화 완료")
+
+    @performance_monitor
     def analyze(
         self, historical_data: List[LotteryNumber]
     ) -> Dict[str, List[DistributionPattern]]:
@@ -61,7 +85,9 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
         Returns:
             Dict[str, List[DistributionPattern]]: 분석된 분포 패턴들
         """
-        with performance_monitor("distribution_pattern_analysis"):
+        with self.memory_manager.allocation_scope():
+            logger.info(f"분포 패턴 분석 시작: {len(historical_data)}개 데이터")
+
             # 캐시 확인
             cache_key = self._create_cache_key(
                 "distribution_analysis", len(historical_data)
@@ -69,6 +95,7 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
             cached_result = self._check_cache(cache_key)
 
             if cached_result:
+                logger.info("캐시된 분포 분석 결과 사용")
                 return cached_result
 
             # 분석 수행
@@ -78,47 +105,63 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
             sum_patterns = self._analyze_sum_distribution(historical_data)
             gap_patterns = self._analyze_consecutive_gaps(historical_data)
 
+            # 추가 분포 분석
+            prime_patterns = self._analyze_prime_distribution(historical_data)
+            decade_patterns = self._analyze_decade_distribution(historical_data)
+            position_patterns = self._analyze_position_distribution(historical_data)
+
             result = {
                 "even_odd": even_odd_patterns,
                 "low_high": low_high_patterns,
                 "ranges": range_patterns,
                 "sum_ranges": sum_patterns,
                 "gaps": gap_patterns,
+                "prime_distribution": prime_patterns,
+                "decade_distribution": decade_patterns,
+                "position_distribution": position_patterns,
             }
 
             # 결과 캐싱
-            self.cache_manager.set(cache_key, result)
+            if hasattr(self, "cache_manager"):
+                self.cache_manager.set(cache_key, result)
 
+            logger.info("분포 패턴 분석 완료")
             return result
+
+    def _analyze_impl(
+        self, historical_data: List[LotteryNumber], *args, **kwargs
+    ) -> Dict[str, List[DistributionPattern]]:
+        """BaseAnalyzer 인터페이스 구현"""
+        return self.analyze(historical_data)
 
     def _check_cache(
         self, cache_key: str
     ) -> Optional[Dict[str, List[DistributionPattern]]]:
         """캐시된 분석 결과를 확인하고 반환합니다."""
         try:
-            cached_result = self.cache_manager.get(cache_key)
+            if hasattr(self, "cache_manager"):
+                cached_result = self.cache_manager.get(cache_key)
 
-            if cached_result:
-                # 캐시된 결과가 딕셔너리 형태로 반환되면 DistributionPattern 객체로 변환
-                if isinstance(cached_result, dict):
-                    result = {}
-                    for key, patterns in cached_result.items():
-                        if isinstance(patterns, list):
-                            result[key] = [
-                                (
-                                    DistributionPattern.from_dict(pattern)
-                                    if isinstance(pattern, dict)
-                                    else pattern
-                                )
-                                for pattern in patterns
-                            ]
-                        else:
-                            result[key] = patterns
-                    return result
-                return cached_result
+                if cached_result:
+                    # 캐시된 결과가 딕셔너리 형태로 반환되면 DistributionPattern 객체로 변환
+                    if isinstance(cached_result, dict):
+                        result = {}
+                        for key, patterns in cached_result.items():
+                            if isinstance(patterns, list):
+                                result[key] = [
+                                    (
+                                        DistributionPattern.from_dict(pattern)
+                                        if isinstance(pattern, dict)
+                                        else pattern
+                                    )
+                                    for pattern in patterns
+                                ]
+                            else:
+                                result[key] = patterns
+                        return result
+                    return cached_result
         except Exception as e:
-            print(f"캐시 데이터 액세스 오류: {str(e)}")
-            # 오류 발생 시 캐시 무시
+            logger.warning(f"캐시 데이터 액세스 오류: {str(e)}")
 
         return None
 
@@ -145,29 +188,16 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
         patterns.sort(key=lambda x: x[1], reverse=True)
 
         # 백분위 계산
-        total_freq = sum(freq for _, freq in patterns)
-        cum_freq = 0
-        result = []
-
-        for pattern, freq in patterns:
-            cum_freq += freq
-            percentile = cum_freq / total_freq
-            result.append(
-                DistributionPattern(
-                    pattern=pattern, frequency=freq, percentile=percentile
-                )
-            )
-
-        return result
+        return self._calculate_percentiles(patterns)
 
     def _analyze_low_high(self, data: List[LotteryNumber]) -> List[DistributionPattern]:
         """고저 분포 패턴을 분석합니다."""
         pattern_counts = {}
         total_draws = len(data)
 
-        # 중간값 기준(1-23 낮음, 24-45 높음)
+        # 중간값 기준(1-22 낮음, 23-45 높음)
         for draw in data:
-            low_count = sum(1 for n in draw.numbers if 1 <= n <= 23)
+            low_count = sum(1 for n in draw.numbers if 1 <= n <= 22)
             high_count = 6 - low_count
             pattern = (low_count, high_count)
 
@@ -179,17 +209,196 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
             frequency = count / total_draws
             patterns.append((pattern, frequency))
 
-        # 빈도별 정렬
         patterns.sort(key=lambda x: x[1], reverse=True)
+        return self._calculate_percentiles(patterns)
 
-        # 백분위 계산
+    def _analyze_range_distribution(
+        self, data: List[LotteryNumber]
+    ) -> List[DistributionPattern]:
+        """범위별 분포 패턴을 분석합니다."""
+        pattern_counts = {}
+        total_draws = len(data)
+
+        # 9개 구간으로 분할 (1-5, 6-10, ..., 41-45)
+        ranges = [(i * 5 + 1, (i + 1) * 5) for i in range(9)]
+
+        for draw in data:
+            range_counts = [0] * 9
+            for number in draw.numbers:
+                for i, (start, end) in enumerate(ranges):
+                    if start <= number <= end:
+                        range_counts[i] += 1
+                        break
+
+            # 가장 많은 번호를 포함한 상위 2개 구간 패턴
+            sorted_ranges = sorted(
+                enumerate(range_counts), key=lambda x: x[1], reverse=True
+            )
+            top_ranges = tuple(sorted([sorted_ranges[0][0], sorted_ranges[1][0]]))
+
+            pattern_counts[top_ranges] = pattern_counts.get(top_ranges, 0) + 1
+
+        patterns = []
+        for pattern, count in pattern_counts.items():
+            frequency = count / total_draws
+            patterns.append((pattern, frequency))
+
+        patterns.sort(key=lambda x: x[1], reverse=True)
+        return self._calculate_percentiles(patterns)
+
+    def _analyze_sum_distribution(
+        self, data: List[LotteryNumber]
+    ) -> List[DistributionPattern]:
+        """합계 분포 패턴을 분석합니다."""
+        pattern_counts = {}
+        total_draws = len(data)
+
+        for draw in data:
+            total_sum = sum(draw.numbers)
+
+            # 합계 범위 분류
+            range_id = -1
+            for i, (min_sum, max_sum) in enumerate(self.sum_ranges):
+                if min_sum <= total_sum <= max_sum:
+                    range_id = i
+                    break
+
+            if range_id == -1:  # 범위 밖
+                if total_sum < 50:
+                    range_id = -2  # 매우 낮음
+                else:
+                    range_id = -3  # 매우 높음
+
+            pattern = (range_id, total_sum // 20)  # 20단위로 그룹화
+            pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+
+        patterns = []
+        for pattern, count in pattern_counts.items():
+            frequency = count / total_draws
+            patterns.append((pattern, frequency))
+
+        patterns.sort(key=lambda x: x[1], reverse=True)
+        return self._calculate_percentiles(patterns)
+
+    def _analyze_consecutive_gaps(
+        self, data: List[LotteryNumber]
+    ) -> List[DistributionPattern]:
+        """연속 번호 갭 패턴을 분석합니다."""
+        pattern_counts = {}
+        total_draws = len(data)
+
+        for draw in data:
+            sorted_numbers = sorted(draw.numbers)
+            gaps = []
+
+            for i in range(1, len(sorted_numbers)):
+                gap = sorted_numbers[i] - sorted_numbers[i - 1]
+                gaps.append(gap)
+
+            # 갭 패턴 분류
+            consecutive_count = sum(1 for gap in gaps if gap == 1)
+            large_gap_count = sum(1 for gap in gaps if gap > 10)
+
+            pattern = (consecutive_count, large_gap_count)
+            pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+
+        patterns = []
+        for pattern, count in pattern_counts.items():
+            frequency = count / total_draws
+            patterns.append((pattern, frequency))
+
+        patterns.sort(key=lambda x: x[1], reverse=True)
+        return self._calculate_percentiles(patterns)
+
+    def _analyze_prime_distribution(
+        self, data: List[LotteryNumber]
+    ) -> List[DistributionPattern]:
+        """소수 분포 패턴을 분석합니다."""
+        primes = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43}
+        pattern_counts = {}
+        total_draws = len(data)
+
+        for draw in data:
+            prime_count = sum(1 for n in draw.numbers if n in primes)
+            composite_count = 6 - prime_count
+            pattern = (prime_count, composite_count)
+
+            pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+
+        patterns = []
+        for pattern, count in pattern_counts.items():
+            frequency = count / total_draws
+            patterns.append((pattern, frequency))
+
+        patterns.sort(key=lambda x: x[1], reverse=True)
+        return self._calculate_percentiles(patterns)
+
+    def _analyze_decade_distribution(
+        self, data: List[LotteryNumber]
+    ) -> List[DistributionPattern]:
+        """10의 자리 분포 패턴을 분석합니다."""
+        pattern_counts = {}
+        total_draws = len(data)
+
+        for draw in data:
+            decade_counts = [0] * 5  # 0-9, 10-19, 20-29, 30-39, 40-45
+
+            for number in draw.numbers:
+                decade = min(number // 10, 4)  # 40-45는 4번째 그룹
+                decade_counts[decade] += 1
+
+            # 상위 2개 10의 자리 패턴
+            sorted_decades = sorted(
+                enumerate(decade_counts), key=lambda x: x[1], reverse=True
+            )
+            pattern = tuple(sorted([sorted_decades[0][0], sorted_decades[1][0]]))
+
+            pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+
+        patterns = []
+        for pattern, count in pattern_counts.items():
+            frequency = count / total_draws
+            patterns.append((pattern, frequency))
+
+        patterns.sort(key=lambda x: x[1], reverse=True)
+        return self._calculate_percentiles(patterns)
+
+    def _analyze_position_distribution(
+        self, data: List[LotteryNumber]
+    ) -> List[DistributionPattern]:
+        """위치별 번호 분포 패턴을 분석합니다."""
+        pattern_counts = {}
+        total_draws = len(data)
+
+        for draw in data:
+            sorted_numbers = sorted(draw.numbers)
+
+            # 첫 번째와 마지막 번호의 위치 패턴
+            first_range = (sorted_numbers[0] - 1) // 15  # 0, 1, 2 (1-15, 16-30, 31-45)
+            last_range = (sorted_numbers[-1] - 1) // 15
+
+            pattern = (first_range, last_range)
+            pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+
+        patterns = []
+        for pattern, count in pattern_counts.items():
+            frequency = count / total_draws
+            patterns.append((pattern, frequency))
+
+        patterns.sort(key=lambda x: x[1], reverse=True)
+        return self._calculate_percentiles(patterns)
+
+    def _calculate_percentiles(
+        self, patterns: List[Tuple[Tuple[int, int], float]]
+    ) -> List[DistributionPattern]:
+        """패턴 리스트에서 백분위를 계산합니다."""
         total_freq = sum(freq for _, freq in patterns)
         cum_freq = 0
         result = []
 
         for pattern, freq in patterns:
             cum_freq += freq
-            percentile = cum_freq / total_freq
+            percentile = cum_freq / total_freq if total_freq > 0 else 0
             result.append(
                 DistributionPattern(
                     pattern=pattern, frequency=freq, percentile=percentile
@@ -198,119 +407,36 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
 
         return result
 
-    def _analyze_range_distribution(
-        self, data: List[LotteryNumber]
-    ) -> List[DistributionPattern]:
-        """번호 범위 분포 패턴을 분석합니다."""
-        range_counts = {i: 0 for i in range(5)}  # 5개 범위
-        total_draws = len(data)
+    def get_distribution_summary(
+        self, historical_data: List[LotteryNumber]
+    ) -> Dict[str, Any]:
+        """분포 분석 요약 정보를 반환합니다."""
+        analysis_result = self.analyze(historical_data)
 
-        # 범위 정의
-        ranges = [(1, 10), (11, 20), (21, 30), (31, 40), (41, 45)]
+        summary = {}
+        for category, patterns in analysis_result.items():
+            if patterns:
+                most_common = patterns[0]
+                summary[category] = {
+                    "most_common_pattern": most_common.pattern,
+                    "frequency": most_common.frequency,
+                    "total_patterns": len(patterns),
+                    "diversity_score": self._calculate_diversity_score(patterns),
+                }
 
-        # 각 범위별 번호 수 계산
-        for draw in data:
-            for num in draw.numbers:
-                for i, (start, end) in enumerate(ranges):
-                    if start <= num <= end:
-                        range_counts[i] += 1
-                        break
+        return summary
 
-        # 빈도 계산
-        total_numbers = total_draws * 6
-        frequencies = {i: count / total_numbers for i, count in range_counts.items()}
+    def _calculate_diversity_score(self, patterns: List[DistributionPattern]) -> float:
+        """패턴 다양성 점수를 계산합니다."""
+        if not patterns:
+            return 0.0
 
-        # 패턴 생성
-        patterns = []
-        for i, (start, end) in enumerate(ranges):
-            patterns.append(
-                DistributionPattern(
-                    pattern=(start, end),
-                    frequency=frequencies[i],
-                    percentile=sum(
-                        1 for f in frequencies.values() if f <= frequencies[i]
-                    )
-                    / len(frequencies),
-                )
-            )
+        # 엔트로피 기반 다양성 계산
+        entropy = 0.0
+        for pattern in patterns:
+            if pattern.frequency > 0:
+                entropy -= pattern.frequency * math.log2(pattern.frequency)
 
-        return sorted(patterns, key=lambda p: p.frequency, reverse=True)
-
-    def _analyze_sum_distribution(
-        self, data: List[LotteryNumber]
-    ) -> List[DistributionPattern]:
-        """합계 분포 패턴을 분석합니다."""
-        sum_counts = {}
-        total_draws = len(data)
-
-        # 합계 범위 정의 (일반적으로 합계는 21~255 사이의 값)
-        sum_ranges = {
-            "very_low": (21, 100),
-            "low": (101, 125),
-            "medium": (126, 155),
-            "high": (156, 180),
-            "very_high": (181, 255),
-        }
-        range_counts = {k: 0 for k in sum_ranges}
-
-        # 각 번호조합의 합계 계산 및 카운트
-        for draw in data:
-            total_sum = sum(draw.numbers)
-            for range_name, (start, end) in sum_ranges.items():
-                if start <= total_sum <= end:
-                    range_counts[range_name] += 1
-                    break
-
-        # 패턴 생성
-        patterns = []
-        for range_name, count in range_counts.items():
-            frequency = count / total_draws
-            patterns.append(
-                DistributionPattern(
-                    pattern=sum_ranges[range_name],  # 범위 튜플
-                    frequency=frequency,
-                    percentile=sum(
-                        1 for f in range_counts.values() if f / total_draws <= frequency
-                    )
-                    / len(range_counts),
-                )
-            )
-
-        return sorted(patterns, key=lambda p: p.frequency, reverse=True)
-
-    def _analyze_consecutive_gaps(
-        self, data: List[LotteryNumber]
-    ) -> List[DistributionPattern]:
-        """연속된 번호간 간격 패턴을 분석합니다."""
-        # 간격 범위 정의
-        gap_ranges = [(1, 3), (4, 6), (7, 10), (11, 15), (16, 44)]
-        gap_counts = {gap_range: 0 for gap_range in gap_ranges}
-        total_gaps = 0
-
-        # 각 번호조합의 연속 간격 분석
-        for draw in data:
-            sorted_numbers = sorted(draw.numbers)
-            for i in range(len(sorted_numbers) - 1):
-                gap = sorted_numbers[i + 1] - sorted_numbers[i]
-                total_gaps += 1
-                for gap_range in gap_ranges:
-                    if gap_range[0] <= gap <= gap_range[1]:
-                        gap_counts[gap_range] += 1
-                        break
-
-        # 패턴 생성
-        patterns = []
-        for gap_range, count in gap_counts.items():
-            frequency = count / total_gaps
-            patterns.append(
-                DistributionPattern(
-                    pattern=gap_range,
-                    frequency=frequency,
-                    percentile=sum(
-                        1 for f in gap_counts.values() if f / total_gaps <= frequency
-                    )
-                    / len(gap_counts),
-                )
-            )
-
-        return sorted(patterns, key=lambda p: p.frequency, reverse=True)
+        # 정규화 (0-1 범위)
+        max_entropy = math.log2(len(patterns)) if len(patterns) > 1 else 1
+        return entropy / max_entropy if max_entropy > 0 else 0.0

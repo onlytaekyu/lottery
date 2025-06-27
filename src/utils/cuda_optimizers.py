@@ -36,6 +36,7 @@ from .error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 
+
 @dataclass
 class CudaConfig:
     """CUDA 최적화 설정"""
@@ -95,6 +96,7 @@ class CudaConfig:
             logger.info("CUDA 최적화 설정 완료")
         except Exception as e:
             logger.error(f"CUDA 최적화 설정 실패: {str(e)}")
+
 
 class BaseCudaOptimizer:
     """CUDA 최적화 클래스"""
@@ -445,9 +447,11 @@ class BaseCudaOptimizer:
         except Exception as e:
             logger.error(f"소멸자 실행 실패: {str(e)}")
 
+
 """
 CUDA 최적화 및 AMP(Automatic Mixed Precision) 유틸리티
 """
+
 
 class AMPTrainer:
     """AMP(Automatic Mixed Precision) 트레이너"""
@@ -564,6 +568,7 @@ class AMPTrainer:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+
 def get_device_info() -> Dict[str, Any]:
     """현재 디바이스 정보를 반환"""
     info = {
@@ -583,11 +588,13 @@ def get_device_info() -> Dict[str, Any]:
 
     return info
 
+
 def optimize_memory():
     """CUDA 메모리 최적화"""
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
 
 def setup_cuda_memory_pool():
     """GPU 메모리 풀 설정"""
@@ -613,6 +620,7 @@ def setup_cuda_memory_pool():
     else:
         logger.warning("CUDA를 사용할 수 없어 GPU 메모리 풀을 설정하지 않습니다.")
 
+
 def get_cuda_memory_info() -> Dict[str, Any]:
     """CUDA 메모리 정보 반환"""
     if not torch.cuda.is_available():
@@ -632,3 +640,19 @@ def get_cuda_memory_info() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"CUDA 메모리 정보 수집 실패: {str(e)}")
         return {"cuda_available": True, "error": str(e)}
+
+
+# CudaOptimizer 별칭 설정
+CudaOptimizer = BaseCudaOptimizer
+
+
+def get_cuda_optimizer(config: Optional[CudaConfig] = None) -> CudaOptimizer:
+    """CUDA 최적화기 인스턴스를 반환합니다.
+
+    Args:
+        config: CUDA 설정 객체
+
+    Returns:
+        CudaOptimizer: CUDA 최적화기 인스턴스
+    """
+    return CudaOptimizer(config)

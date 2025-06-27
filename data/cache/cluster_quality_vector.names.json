@@ -1,9 +1,0 @@
-[
-  "silhouette_score",
-  "cohesiveness_score",
-  "avg_distance_between_clusters",
-  "balance_score",
-  "largest_cluster_size_norm",
-  "cluster_count_norm",
-  "cluster_entropy_score"
-]
