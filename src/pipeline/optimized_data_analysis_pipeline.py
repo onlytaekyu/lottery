@@ -38,7 +38,7 @@ from src.utils.error_handler_refactored import (
 )
 from src.utils.state_vector_cache import get_cache
 from src.utils.data_loader import load_draw_history, LotteryJSONEncoder
-from src.utils.config_loader import load_config
+from src.utils.unified_config import load_config
 from src.utils.unified_performance import get_profiler
 
 # 최적화 시스템 import

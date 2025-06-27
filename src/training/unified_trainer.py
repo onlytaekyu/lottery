@@ -25,7 +25,7 @@ from ..analysis.pattern_analyzer import PatternAnalyzer
 from ..training.train_rl import RLTrainer
 from ..training.train_rl_extended import EnhancedRLTrainer
 from ..core.state_vector_builder import StateVectorBuilder
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 from ..utils.cuda_optimizers import AMPTrainer
 from ..utils.unified_report import save_report
 from ..utils.model_saver import save_model

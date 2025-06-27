@@ -16,7 +16,7 @@ from datetime import datetime
 
 from ..shared.types import LotteryNumber
 from ..utils.error_handler_refactored import get_logger
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 from ..utils.unified_performance import performance_monitor
 
 # 로거 설정

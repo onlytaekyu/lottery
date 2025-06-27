@@ -26,7 +26,6 @@ try:
 except ImportError:
     CUDA_OPTIMIZER_AVAILABLE = False
 
-
 @dataclass
 class BatchSizeConfig:
     """배치 크기 설정 클래스"""
@@ -80,7 +79,6 @@ class BatchSizeConfig:
         # 최적 배치 크기가 없으면 초기 배치 크기 사용
         if self.optimal_batch_size is None:
             self.optimal_batch_size = self.initial_batch_size
-
 
 class DynamicBatchSize:
     """
@@ -707,7 +705,6 @@ class DynamicBatchSize:
         """소멸자"""
         self.cleanup()
 
-
 def get_available_memory(device: Union[str, torch.device]) -> Tuple[int, int]:
     """
     사용 가능한 메모리 용량 확인
@@ -751,7 +748,6 @@ def get_available_memory(device: Union[str, torch.device]) -> Tuple[int, int]:
         logger.error(f"메모리 정보 획득 중 오류 발생: {str(e)}")
         # 기본값 반환 (단위: 바이트, 약 4GB 사용 가능)
         return 8 * (1024**3), 4 * (1024**3)
-
 
 def estimate_batch_size(
     sample_input_size: int,
@@ -800,7 +796,6 @@ def estimate_batch_size(
         return 1
 
     return estimated_batch_size
-
 
 def get_safe_batch_size(
     initial_batch_size: int = 32,
@@ -883,7 +878,6 @@ def get_safe_batch_size(
     )
     return min_batch_size
 
-
 def adjust_batch_size_for_gpu_memory(
     model: torch.nn.Module,
     input_shape: Tuple[int, ...],
@@ -957,7 +951,6 @@ def adjust_batch_size_for_gpu_memory(
 
     logger.info(f"자동 조정된 배치 크기: {best_batch_size}")
     return best_batch_size
-
 
 class DynamicBatchSizeController:
     """동적 배치 크기 컨트롤러"""

@@ -40,7 +40,7 @@ def main():
 
         # 필요한 모듈 임포트
         from src.utils.data_loader import load_draw_history
-        from src.utils.config_loader import load_config
+        from src.utils.unified_config import load_config
         from src.analysis.unified_analyzer import UnifiedAnalyzer
         from src.analysis.pattern_vectorizer import PatternVectorizer
         from src.utils.unified_report import save_analysis_performance_report

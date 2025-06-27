@@ -19,7 +19,6 @@ from .error_handler_refactored import get_logger, log_exception_with_trace
 
 logger = get_logger(__name__)
 
-
 @dataclass
 class ProcessPoolConfig:
     """ProcessPool 설정"""
@@ -31,7 +30,6 @@ class ProcessPoolConfig:
     enable_monitoring: bool = True
     auto_restart: bool = True
     restart_threshold: int = 100  # 작업 수행 후 재시작
-
 
 class ProcessPoolManager:
     """프로세스 풀 관리자"""
@@ -220,10 +218,8 @@ class ProcessPoolManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()
 
-
 # 전역 ProcessPool 관리자 인스턴스
 _global_process_pool_manager = None
-
 
 def get_process_pool_manager(
     config: Optional[ProcessPoolConfig] = None,
@@ -238,7 +234,6 @@ def get_process_pool_manager(
 
     return _global_process_pool_manager
 
-
 @contextmanager
 def process_pool_context(config: Optional[ProcessPoolConfig] = None):
     """ProcessPool 컨텍스트 매니저"""
@@ -251,7 +246,6 @@ def process_pool_context(config: Optional[ProcessPoolConfig] = None):
     finally:
         if manager:
             manager.shutdown()
-
 
 def parallel_map(
     func: Callable, data_list: List[Any], chunk_size: Optional[int] = None, **kwargs
@@ -289,7 +283,6 @@ def parallel_map(
                 results.append(chunk_result)
 
     return results
-
 
 def cleanup_process_pool():
     """전역 ProcessPool 정리"""

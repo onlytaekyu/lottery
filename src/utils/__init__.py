@@ -1,18 +1,16 @@
 """
-로또 번호 예측 시스템 - 통합 유틸리티 (완전 최적화 버전)
+로또 번호 예측 시스템 - 통합 유틸리티 (최적화 버전)
 
-Lazy import 패턴을 적용하여 초기 로딩 시간을 최적화했습니다.
-필요한 모듈만 런타임에 로드됩니다.
+필요한 모듈만 런타임에 로드하여 초기 로딩 시간을 최적화합니다.
 """
 
 from typing import Any, Optional
 
-# 🚀 핵심 시스템만 즉시 로드 (가벼운 모듈들)
+# 핵심 시스템만 즉시 로드
 from .cache_paths import get_cache_dir, CACHE_DIR
 
-# 🔄 Lazy import 캐시
+# Lazy import 캐시
 _imported_items = {}
-
 
 def get_logger(*args, **kwargs):
     """필요시에만 로거 로드"""
@@ -22,7 +20,6 @@ def get_logger(*args, **kwargs):
         _imported_items["logger"] = _get_logger
     return _imported_items["logger"](*args, **kwargs)
 
-
 def get_profiler():
     """필요시에만 프로파일러 로드"""
     if "profiler" not in _imported_items:
@@ -31,42 +28,20 @@ def get_profiler():
         _imported_items["profiler"] = _get_profiler
     return _imported_items["profiler"]()
 
-
 def load_config(config_name: str = "main"):
-    """필요시에만 설정 로드"""
+    """필요시에만 설정 로드 (unified_config 사용)"""
     if "load_config" not in _imported_items:
-        from .config_loader import load_config as _load_config
+        from .unified_config import load_config as _load_config
 
         _imported_items["load_config"] = _load_config
     return _imported_items["load_config"](config_name)
-
-
-def get_heavy_module(module_name: str):
-    """무거운 모듈을 필요시에만 로드"""
-    heavy_modules = {
-        "torch": lambda: __import__("torch"),
-        "psutil": lambda: __import__("psutil"),
-        "sklearn": lambda: __import__("sklearn"),
-        "tensorrt": lambda: __import__("tensorrt"),
-    }
-
-    if module_name in heavy_modules:
-        try:
-            return heavy_modules[module_name]()
-        except ImportError:
-            logger = get_logger("utils.heavy_import")
-            logger.warning(f"Heavy module {module_name} not available")
-            return None
-    else:
-        raise ValueError(f"Unknown heavy module: {module_name}")
-
 
 def __getattr__(name: str) -> Any:
     """모듈 레벨 지연 로딩"""
     # 자주 사용되는 항목들의 모듈 매핑
     module_mapping = {
         # 클래스들
-        "ConfigProxy": ("config_loader", "ConfigProxy"),
+        "ConfigProxy": ("unified_config", "ConfigProxy"),
         "UnifiedPerformanceTracker": (
             "unified_performance",
             "UnifiedPerformanceTracker",
@@ -82,6 +57,7 @@ def __getattr__(name: str) -> Any:
         "save_feature_names": ("feature_name_tracker", "save_feature_names"),
         "load_feature_names": ("feature_name_tracker", "load_feature_names"),
         "strict_error_handler": ("error_handler_refactored", "strict_error_handler"),
+        "validate_vector": ("unified_validation", "validate_vector"),
     }
 
     if name in module_mapping:
@@ -101,12 +77,10 @@ def __getattr__(name: str) -> Any:
 
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
-
 def cleanup_resources():
     """리소스 정리"""
     global _imported_items
     _imported_items.clear()
-
 
 def get_import_stats():
     """import 통계 반환"""
@@ -117,7 +91,6 @@ def get_import_stats():
         ),
     }
 
-
 # 즉시 로드하지 않고 함수로 제공
 __all__ = [
     "get_logger",
@@ -125,7 +98,5 @@ __all__ = [
     "load_config",
     "CACHE_DIR",
     "get_cache_dir",
-    "get_heavy_module",
     "cleanup_resources",
-    "get_import_stats",
 ]

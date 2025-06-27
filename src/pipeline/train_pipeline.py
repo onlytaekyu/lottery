@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 from src.models.lightgbm_model import LightGBMModel
 from src.models.xgboost_model import XGBoostModel
 from src.utils.data_loader import load_draw_history
-from src.utils.config_loader import load_config
+from src.utils.unified_config import load_config
 from src.utils.error_handler_refactored import get_logger, log_exception_with_trace
 from src.analysis.pattern_vectorizer import PatternVectorizer
 

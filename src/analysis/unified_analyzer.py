@@ -20,7 +20,7 @@ from ..utils.error_handler_refactored import get_logger
 from ..utils.unified_performance import performance_monitor
 from ..shared.types import LotteryNumber, PatternAnalysis
 from ..analysis.pattern_vectorizer import PatternVectorizer
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 
 from .roi_analyzer import ROIAnalyzer, ROIMetrics
 from .pattern_analyzer import PatternAnalyzer

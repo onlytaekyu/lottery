@@ -22,7 +22,7 @@ from sklearn.cluster import KMeans
 from datetime import datetime
 
 from ..utils.error_handler_refactored import get_logger
-from ..utils.config_loader import ConfigProxy, load_config
+from ..utils.unified_config import ConfigProxy, load_config
 from ..utils.performance_utils import MemoryTracker
 from ..utils.batch_controller import CPUBatchProcessor
 from ..utils.unified_performance import get_profiler, Profiler

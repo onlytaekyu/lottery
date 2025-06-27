@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from threading import Lock, Thread
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 from torch.utils.data import DataLoader
 
 # 스레드 로컬 캐시 가져오기 (memory_manager에서 가져오도록 변경)
@@ -35,7 +35,6 @@ from .error_recovery import ErrorRecovery, RecoveryConfig
 from .error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
-
 
 @dataclass
 class CudaConfig:
@@ -96,7 +95,6 @@ class CudaConfig:
             logger.info("CUDA 최적화 설정 완료")
         except Exception as e:
             logger.error(f"CUDA 최적화 설정 실패: {str(e)}")
-
 
 class BaseCudaOptimizer:
     """CUDA 최적화 클래스"""
@@ -447,11 +445,9 @@ class BaseCudaOptimizer:
         except Exception as e:
             logger.error(f"소멸자 실행 실패: {str(e)}")
 
-
 """
 CUDA 최적화 및 AMP(Automatic Mixed Precision) 유틸리티
 """
-
 
 class AMPTrainer:
     """AMP(Automatic Mixed Precision) 트레이너"""
@@ -568,7 +564,6 @@ class AMPTrainer:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-
 def get_device_info() -> Dict[str, Any]:
     """현재 디바이스 정보를 반환"""
     info = {
@@ -588,13 +583,11 @@ def get_device_info() -> Dict[str, Any]:
 
     return info
 
-
 def optimize_memory():
     """CUDA 메모리 최적화"""
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
-
 
 def setup_cuda_memory_pool():
     """GPU 메모리 풀 설정"""
@@ -619,7 +612,6 @@ def setup_cuda_memory_pool():
             logger.error(f"GPU 메모리 풀 설정 실패: {str(e)}")
     else:
         logger.warning("CUDA를 사용할 수 없어 GPU 메모리 풀을 설정하지 않습니다.")
-
 
 def get_cuda_memory_info() -> Dict[str, Any]:
     """CUDA 메모리 정보 반환"""

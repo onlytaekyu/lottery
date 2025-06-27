@@ -22,7 +22,7 @@ import argparse
 from datetime import datetime
 from collections import defaultdict, deque
 from torch.utils.data import DataLoader, Dataset
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 from ..shared.types import LotteryNumber, ModelPrediction
 from ..utils.error_handler_refactored import get_logger
 from .unified_trainer import UnifiedTrainer

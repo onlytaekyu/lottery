@@ -30,7 +30,6 @@ from .feature_name_tracker import (
 
 logger = get_logger(__name__)
 
-
 def save_feature_vector_and_metadata(
     vector: np.ndarray,
     feature_names: List[str],
@@ -121,7 +120,6 @@ def save_feature_vector_and_metadata(
         logger.error(f"벡터 및 메타데이터 저장 중 오류 발생: {e}")
         return False
 
-
 def save_vector_bundle(
     vector: np.ndarray,
     feature_names: List[str],
@@ -156,7 +154,6 @@ def save_vector_bundle(
     except Exception as e:
         logger.error(f"벡터 번들 저장 실패: {e}")
         return False
-
 
 def load_feature_vector(
     base_path: str = "data/cache/feature_vector_full",
@@ -213,7 +210,6 @@ def load_feature_vector(
     except Exception as e:
         logger.error(f"특성 벡터 로드 실패: {e}")
         raise
-
 
 def export_vector_with_filtering(
     vector: np.ndarray,
@@ -300,7 +296,6 @@ def export_vector_with_filtering(
     except Exception as e:
         logger.error(f"벡터 내보내기 중 오류 발생: {e}")
         return False
-
 
 def export_gnn_state_inputs(
     pair_graph_vector: np.ndarray,

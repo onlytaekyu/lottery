@@ -4,7 +4,7 @@
 
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 from ..utils.cuda_optimizers import AMPTrainer
 from ..shared.types import LotteryNumber
 from ..utils.error_handler_refactored import get_logger

@@ -16,7 +16,7 @@ import json
 from datetime import datetime
 
 from .unified_logging import get_logger
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 
 # 로거 설정
 logger = get_logger(__name__)
@@ -24,7 +24,6 @@ logger = get_logger(__name__)
 # 전역 캐시 인스턴스
 _GLOBAL_CACHE_INSTANCE = None
 _GLOBAL_CACHE_LOCK = threading.Lock()
-
 
 def get_cache(
     config: Optional[Union[Dict[str, Any], ConfigProxy]] = None,
@@ -45,7 +44,6 @@ def get_cache(
             _GLOBAL_CACHE_INSTANCE = StateVectorCache(config)
 
     return _GLOBAL_CACHE_INSTANCE
-
 
 class StateVectorCache:
     """

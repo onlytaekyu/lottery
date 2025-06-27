@@ -12,14 +12,13 @@ from typing import Dict, List, Tuple, Any, Optional, Callable, Union
 
 from ..shared.types import LotteryNumber, PatternFeatures
 from ..utils.unified_logging import get_logger
-from ..utils.config_loader import ConfigProxy, load_config
+from ..utils.unified_config import ConfigProxy, load_config
 
 # 싱글톤 인스턴스
 _pattern_filter_instance = None
 
 # 로거 설정
 logger = get_logger(__name__)
-
 
 class PatternFilter:
     """로또 번호 패턴 필터링 클래스"""
@@ -879,7 +878,6 @@ class PatternFilter:
 
         # 필터 결과 및 정보 반환
         return should_filter, results
-
 
 def get_pattern_filter(
     config: Optional[Union[Dict[str, Any], ConfigProxy]] = None,

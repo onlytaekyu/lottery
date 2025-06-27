@@ -19,7 +19,7 @@ from ..utils.unified_performance import performance_monitor
 from ..utils.cache_manager import CacheManager
 from ..shared.types import LotteryNumber
 from ..utils.error_handler_refactored import get_logger
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 
 # 제네릭 타입 변수 정의
 T = TypeVar("T")

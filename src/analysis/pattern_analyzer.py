@@ -24,7 +24,7 @@ from ..utils.error_handler_refactored import get_logger
 from ..shared.types import LotteryNumber, PatternAnalysis
 from ..utils.memory_manager import MemoryManager
 from ..analysis.base_analyzer import BaseAnalyzer
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 from ..utils.unified_report import safe_convert, save_analysis_performance_report
 from ..utils.unified_performance import performance_monitor
 from ..shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality

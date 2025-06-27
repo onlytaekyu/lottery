@@ -39,7 +39,6 @@ TEMP_CACHE_DIR = CACHE_DIR / "temp"
 _initialized = False
 _init_lock = threading.Lock()
 
-
 def _ensure_cache_dirs_initialized():
     """캐시 디렉토리가 초기화되었는지 확인하고 필요시 초기화합니다."""
     global _initialized
@@ -51,7 +50,6 @@ def _ensure_cache_dirs_initialized():
             return
         init_cache_dirs()
         _initialized = True
-
 
 def get_cache_dir(category: Optional[str] = None) -> Path:
     """
@@ -71,7 +69,6 @@ def get_cache_dir(category: Optional[str] = None) -> Path:
     cache_dir = CACHE_DIR / category
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
-
 
 def init_cache_dirs():
     """모든 캐시 디렉토리를 초기화합니다."""
@@ -114,7 +111,6 @@ def init_cache_dirs():
         logger.error(f"캐시 디렉토리 초기화 실패: {str(e)}")
         raise RuntimeError(f"캐시 디렉토리 초기화 실패: {str(e)}")
 
-
 def _migrate_old_cache(old_cache_dir: Path):
     """이전 캐시 디렉토리에서 파일을 마이그레이션합니다."""
     try:
@@ -145,6 +141,5 @@ def _migrate_old_cache(old_cache_dir: Path):
             logger.info(f"캐시 마이그레이션 완료: {old_cache_dir} -> {CACHE_DIR}")
     except Exception as e:
         logger.error(f"캐시 마이그레이션 중 오류 발생: {str(e)}")
-
 
 # 모듈 로드 시 자동 초기화 제거 - lazy 초기화 사용

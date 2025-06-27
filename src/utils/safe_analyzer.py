@@ -14,7 +14,6 @@ logger = get_logger(__name__)
 T = TypeVar("T")
 U = TypeVar("U")
 
-
 def safe_analyze(analyzer: Optional[Any], data: Any, *args, **kwargs) -> Optional[Any]:
     """
     분석기의 analyze 메서드를 안전하게 호출
@@ -49,7 +48,6 @@ def safe_analyze(analyzer: Optional[Any], data: Any, *args, **kwargs) -> Optiona
         logger.error(f"분석 중 오류 발생: {str(e)}")
         return None
 
-
 def safe_get(data: Optional[Dict[Any, T]], key: Any, default: U = None) -> Union[T, U]:
     """
     사전에서 키 값을 안전하게 가져오기
@@ -73,7 +71,6 @@ def safe_get(data: Optional[Dict[Any, T]], key: Any, default: U = None) -> Union
         logger.debug(f"키 접근 중 오류 발생: {str(e)}")
         return default
 
-
 def str_to_int(value: Any) -> Any:
     """
     문자열을 정수로 안전하게 변환
@@ -92,7 +89,6 @@ def str_to_int(value: Any) -> Any:
         except (ValueError, TypeError):
             return value
     return value
-
 
 def safe_cluster_lookup(
     clusters: Optional[Dict[Any, Any]], number: Any
@@ -135,7 +131,6 @@ def safe_cluster_lookup(
     except Exception as e:
         logger.debug(f"클러스터 조회 중 오류 발생: {str(e)}")
         return None
-
 
 def safe_call(func: Optional[Callable], *args, **kwargs) -> Optional[Any]:
     """

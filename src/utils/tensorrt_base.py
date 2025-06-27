@@ -58,10 +58,8 @@ from .error_recovery import ErrorRecovery, RecoveryConfig
 
 logger = get_logger(__name__)
 
-
 # CudaConfig는 unified_config.py에서 import됨
 from .unified_config import CudaConfig
-
 
 class BaseCudaOptimizer:
     """CUDA 최적화 기본 클래스"""
@@ -90,10 +88,8 @@ class BaseCudaOptimizer:
     def cleanup(self):
         """리소스 정리 (하위 클래스에서 구현)"""
 
-
 # 하위 호환성을 위한 별칭
 TensorRTConfig = CudaConfig
-
 
 class LayerType:
     """TensorRT 레이어 타입"""
@@ -106,7 +102,6 @@ class LayerType:
     ELEMENTWISE = "ElementWise"
     FULLY_CONNECTED = "FullyConnected"
 
-
 class ElementWiseOperation:
     """요소별 연산 타입"""
 
@@ -118,13 +113,11 @@ class ElementWiseOperation:
     DIV = "Div"
     POW = "Pow"
 
-
 class PoolingType:
     """풀링 연산 타입"""
 
     MAX = "Max"
     AVERAGE = "Average"
-
 
 class TensorRTBase(BaseCudaOptimizer):
     """TensorRT 최적화 기본 클래스"""

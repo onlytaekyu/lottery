@@ -13,7 +13,6 @@ from typing import Dict, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 
-
 class LogLevel(Enum):
     """로그 레벨 열거형"""
 
@@ -22,7 +21,6 @@ class LogLevel(Enum):
     WARNING = logging.WARNING
     ERROR = logging.ERROR
     CRITICAL = logging.CRITICAL
-
 
 @dataclass
 class LogConfig:
@@ -39,7 +37,6 @@ class LogConfig:
     max_file_size: int = 10 * 1024 * 1024  # 10MB
     backup_count: int = 5
     encoding: str = "utf-8"
-
 
 class UnifiedLogger:
     """통합 로거 클래스"""
@@ -243,17 +240,14 @@ class UnifiedLogger:
             "initialized": cls._initialized,
         }
 
-
 # 편의 함수들
 def get_logger(name: str, config: Optional[LogConfig] = None) -> logging.Logger:
     """통합 로거 반환 (편의 함수)"""
     return UnifiedLogger.get_logger(name, config)
 
-
 def log_exception(logger_name: str, exception: Exception, context: str = ""):
     """예외 로깅 편의 함수"""
     UnifiedLogger.log_exception(logger_name, exception, context)
-
 
 def configure_performance_logging() -> logging.Logger:
     """성능 로깅 전용 설정"""
@@ -265,7 +259,6 @@ def configure_performance_logging() -> logging.Logger:
     )
     return UnifiedLogger.get_logger("performance", config)
 
-
 def configure_error_logging() -> logging.Logger:
     """에러 로깅 전용 설정"""
     config = LogConfig(
@@ -276,12 +269,10 @@ def configure_error_logging() -> logging.Logger:
     )
     return UnifiedLogger.get_logger("error", config)
 
-
 # 초기화 함수 (기존 코드와의 호환성)
 def init_logging_system():
     """로깅 시스템 초기화 (기존 API 호환성)"""
     UnifiedLogger._initialize_logging_system()
-
 
 # 전역 정리 함수
 def cleanup_logging():

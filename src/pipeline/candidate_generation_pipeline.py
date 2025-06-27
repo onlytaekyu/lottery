@@ -17,7 +17,7 @@ from typing import Dict, List, Any, Optional
 
 from src.core.ml_candidate_generator import MLCandidateGenerator
 from src.utils.data_loader import load_draw_history
-from src.utils.config_loader import load_config
+from src.utils.unified_config import load_config
 from src.utils.error_handler_refactored import get_logger
 from src.utils.unified_performance import get_profiler
 from src.utils.pattern_filter import get_pattern_filter

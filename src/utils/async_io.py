@@ -17,7 +17,6 @@ from .error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 
-
 @dataclass
 class AsyncIOConfig:
     """비동기 IO 설정 클래스"""
@@ -34,7 +33,6 @@ class AsyncIOConfig:
     encryption_key: str = ""
     encryption_iv: str = ""
     stats: Dict[str, Any] = field(default_factory=dict)
-
 
 class AsyncIOManager:
     """비동기 IO 관리자 클래스"""

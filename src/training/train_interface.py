@@ -637,7 +637,7 @@ class TrainInterface:
             )
 
             # ConfigProxy 생성
-            from ..utils.config_loader import ConfigProxy
+            from ..utils.unified_config import ConfigProxy
 
             config_proxy = ConfigProxy(config_dict)
 
@@ -1010,7 +1010,7 @@ def train_models(args, config):
     # 모드에 따라 처리
     try:
         # ConfigProxy 생성
-        from ..utils.config_loader import ConfigProxy
+        from ..utils.unified_config import ConfigProxy
 
         config_proxy = ConfigProxy(config)
 

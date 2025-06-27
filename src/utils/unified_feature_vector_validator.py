@@ -24,7 +24,6 @@ ESSENTIAL_FEATURES = [
     "pair_score",
 ]
 
-
 def validate_feature_vector_with_config(
     config: Dict[str, Any], names_file_path: str
 ) -> List[str]:
@@ -42,7 +41,6 @@ def validate_feature_vector_with_config(
     except Exception as e:
         logger.error(f"특성 벡터 검증 실패: {e}")
         return []
-
 
 def check_vector_dimensions(
     vector_path: str,
@@ -70,7 +68,6 @@ def check_vector_dimensions(
             raise
         return False
 
-
 def create_feature_registry(
     config: Dict[str, Any], registry_path: str
 ) -> Dict[str, Any]:
@@ -85,7 +82,6 @@ def create_feature_registry(
         json.dump(registry, f, indent=2, ensure_ascii=False)
 
     return registry
-
 
 def check_feature_mapping_consistency(
     feature_names: List[str], registry: Dict[str, Any]
@@ -103,7 +99,6 @@ def check_feature_mapping_consistency(
 
     return inconsistencies
 
-
 def sync_vectors_and_names(vector_path: str, names_path: str) -> bool:
     """벡터와 이름 동기화"""
     try:
@@ -112,7 +107,6 @@ def sync_vectors_and_names(vector_path: str, names_path: str) -> bool:
         logger.error(f"동기화 실패: {e}")
         return False
 
-
 def ensure_essential_features(feature_names: List[str]) -> List[str]:
     """필수 특성 보장"""
     result = feature_names.copy()
@@ -120,7 +114,6 @@ def ensure_essential_features(feature_names: List[str]) -> List[str]:
         if essential not in result:
             result.append(essential)
     return result
-
 
 def safe_float_conversion(value: Any) -> float:
     """안전한 float 변환"""
@@ -133,7 +126,6 @@ def safe_float_conversion(value: Any) -> float:
             return 0.0
     except (ValueError, TypeError):
         return 0.0
-
 
 def detect_outliers(
     vector_path: str, names_path: str, z_threshold: float = 2.5
@@ -152,7 +144,6 @@ def detect_outliers(
         logger.error(f"이상치 탐지 실패: {e}")
         return np.array([]), []
 
-
 def save_outlier_information(
     vector_path: str, outlier_mask: np.ndarray, outlier_indices: List[int]
 ) -> Tuple[str, str]:
@@ -166,7 +157,6 @@ def save_outlier_information(
         json.dump(outlier_indices, f)
 
     return str(mask_path), str(indices_path)
-
 
 def analyze_vector_statistics(vector_path: str, names_path: str) -> Dict[str, Any]:
     """벡터 통계 분석"""

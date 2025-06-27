@@ -12,11 +12,10 @@ import gc
 import time
 
 from .error_handler_refactored import get_logger
-from .config_loader import ConfigProxy
+from .unified_config import ConfigProxy
 from .performance_utils import MemoryTracker
 
 logger = get_logger(__name__)
-
 
 class DynamicBatchSizeController:
     """동적 배치 크기 조정 컨트롤러"""
@@ -82,7 +81,6 @@ class DynamicBatchSizeController:
             "memory_usage": torch.cuda.memory_allocated()
             / torch.cuda.get_device_properties(0).total_memory,
         }
-
 
 class CPUBatchProcessor:
     """CPU 기반 배치 처리 컨트롤러"""

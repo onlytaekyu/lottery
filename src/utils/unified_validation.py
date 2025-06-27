@@ -15,14 +15,12 @@ from .unified_performance import performance_monitor
 
 logger = get_logger(__name__)
 
-
 class ValidationLevel(Enum):
     """검증 레벨"""
 
     BASIC = "basic"  # 기본 검증
     STRICT = "strict"  # 엄격한 검증
     COMPLETE = "complete"  # 완전한 검증
-
 
 @dataclass
 class ValidationResult:
@@ -54,7 +52,6 @@ class ValidationResult:
         status = "통과" if self.is_valid else "실패"
         return f"검증 {status} (에러: {len(self.errors)}, 경고: {len(self.warnings)})"
 
-
 class BaseValidator(ABC):
     """기본 검증기 인터페이스"""
 
@@ -69,7 +66,6 @@ class BaseValidator(ABC):
     def get_name(self) -> str:
         """검증기 이름 반환"""
         return self.__class__.__name__
-
 
 class VectorValidator(BaseValidator):
     """벡터 데이터 검증기"""
@@ -181,7 +177,6 @@ class VectorValidator(BaseValidator):
             }
         )
 
-
 class UnifiedValidationManager:
     """통합 검증 관리자"""
 
@@ -232,10 +227,8 @@ class UnifiedValidationManager:
             result.add_error(f"검증 중 예외 발생: {str(e)}")
             return result
 
-
 # 편의 함수들
 _global_validation_manager = None
-
 
 def get_validation_manager() -> UnifiedValidationManager:
     """전역 검증 관리자 반환"""
@@ -244,14 +237,12 @@ def get_validation_manager() -> UnifiedValidationManager:
         _global_validation_manager = UnifiedValidationManager()
     return _global_validation_manager
 
-
 def validate_vector(
     vector_data: np.ndarray, level: ValidationLevel = ValidationLevel.BASIC
 ) -> ValidationResult:
     """벡터 검증 (편의 함수)"""
     validator = VectorValidator(level)
     return validator.validate(vector_data)
-
 
 def strict_validate_and_fail_fast(
     validator_name: str, data: Any, context: str = "", **kwargs

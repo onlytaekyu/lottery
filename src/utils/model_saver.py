@@ -19,11 +19,10 @@ from dataclasses import dataclass
 from .memory_manager import MemoryManager, MemoryConfig
 from .unified_logging import get_logger
 import traceback
-from .config_loader import ConfigProxy
+from .unified_config import ConfigProxy
 
 # 로거 설정
 logger = get_logger(__name__)
-
 
 @dataclass
 class CheckpointMetadata:
@@ -38,7 +37,6 @@ class CheckpointMetadata:
     dependencies: List[str]
     metrics: Dict[str, float]
     is_valid: bool = True
-
 
 class ModelSaver:
     """모델 저장/로드 시스템"""
@@ -629,7 +627,6 @@ class ModelSaver:
         except Exception as e:
             self.logger.error(f"모델 저장 시스템 리소스 정리 중 오류 발생: {str(e)}")
 
-
 def save_model(
     model: torch.nn.Module,
     model_type: str,
@@ -679,7 +676,6 @@ def save_model(
     except Exception as e:
         logger.error(f"모델 저장 실패: {str(e)}")
         return ""
-
 
 def load_model(
     model_class: Type[torch.nn.Module], path: str, device: Optional[torch.device] = None

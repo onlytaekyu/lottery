@@ -8,11 +8,10 @@ DAEBAK_AI 시스템 전체에서 일관된 정규화 적용을 위해 사용됩�
 import numpy as np
 from typing import List, Union, Dict, Any, Optional
 from ..utils.error_handler_refactored import get_logger
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 
 # 로거 설정
 logger = get_logger(__name__)
-
 
 class Normalizer:
     """
@@ -290,19 +289,16 @@ class Normalizer:
             self.logger.warning(f"알 수 없는 정규화 방식: {method}, 기본값 zscore 사용")
             return self.z_score_normalize(array, **kwargs)
 
-
 # 모듈 레벨 함수 (단순 래퍼)
 def z_score_normalize(array, **kwargs):
     """Z-Score 정규화 수행 - 모듈 레벨 함수"""
     normalizer = Normalizer()
     return normalizer.z_score_normalize(array, **kwargs)
 
-
 def min_max_normalize(array, **kwargs):
     """Min-Max 정규화 수행 - 모듈 레벨 함수"""
     normalizer = Normalizer()
     return normalizer.min_max_normalize(array, **kwargs)
-
 
 def z_score_filter(array, threshold=2.5):
     """Z-Score 기반 이상치 필터링 - 모듈 레벨 함수"""

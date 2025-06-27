@@ -15,8 +15,7 @@ import json
 import hashlib
 from pathlib import Path
 from .error_handler_refactored import get_logger
-from .memory_manager import ThreadLocalCache  # 중복 제거를 위해 import
-
+from .memory_manager import ThreadLocalCache
 
 class CacheManager:
     """

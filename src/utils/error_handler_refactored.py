@@ -13,7 +13,6 @@ from functools import wraps
 # 통합 시스템 사용
 from .unified_logging import get_logger, log_exception, init_logging_system
 
-
 class StrictErrorHandler:
     """엄격한 에러 처리 시스템"""
 
@@ -50,7 +49,6 @@ class StrictErrorHandler:
         # 검증 에러는 즉시 시스템 종료
         self.handle_critical_error(error, f"데이터 검증 실패: {context}")
 
-
 def strict_error_handler(context: str, exit_on_error: bool = True):
     """
     엄격한 에러 처리 데코레이터
@@ -73,7 +71,6 @@ def strict_error_handler(context: str, exit_on_error: bool = True):
 
     return decorator
 
-
 def validate_and_fail_fast(condition: bool, error_message: str, data: Any = None):
     """
     조건 검증 후 실패 시 즉시 시스템 종료
@@ -87,7 +84,6 @@ def validate_and_fail_fast(condition: bool, error_message: str, data: Any = None
         error_handler = StrictErrorHandler()
         error = RuntimeError(error_message)
         error_handler.handle_validation_error(error, error_message, data)
-
 
 class SafeModeManager:
     """안전 모드 관리자"""
@@ -116,22 +112,18 @@ class SafeModeManager:
         else:
             return func(*args, **kwargs)
 
-
 # 편의 함수들 (기존 API 호환성)
 def log_exception_with_trace(logger_name: str, exception: Exception, context: str = ""):
     """예외와 스택 트레이스를 함께 로깅 (통합 시스템 사용)"""
     log_exception(logger_name, exception, context)
 
-
 def handle_exception(exc_type, exc_value, exc_traceback):
     """전역 예외 핸들러 (통합 시스템에서 자동 처리됨)"""
     # 통합 로깅 시스템에서 자동으로 처리하므로 별도 구현 불필요
 
-
 # 전역 인스턴스
 _global_error_handler = None
 _global_safe_mode_manager = None
-
 
 def get_error_handler() -> StrictErrorHandler:
     """전역 에러 핸들러 반환"""
@@ -140,14 +132,12 @@ def get_error_handler() -> StrictErrorHandler:
         _global_error_handler = StrictErrorHandler()
     return _global_error_handler
 
-
 def get_safe_mode_manager() -> SafeModeManager:
     """전역 안전 모드 관리자 반환"""
     global _global_safe_mode_manager
     if _global_safe_mode_manager is None:
         _global_safe_mode_manager = SafeModeManager()
     return _global_safe_mode_manager
-
 
 # 기존 코드와의 호환성을 위한 함수들
 def setup_logger(*args, **kwargs):
@@ -157,7 +147,6 @@ def setup_logger(*args, **kwargs):
         "setup_logger는 더 이상 사용되지 않습니다. unified_logging.get_logger를 사용하세요."
     )
     return get_logger(kwargs.get("name", "default"))
-
 
 # 자동 초기화
 init_logging_system()

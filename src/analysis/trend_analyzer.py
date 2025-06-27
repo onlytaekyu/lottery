@@ -19,7 +19,7 @@ from datetime import datetime
 
 from ..utils.error_handler_refactored import get_logger
 from ..shared.types import LotteryNumber
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 from .base_analyzer import BaseAnalyzer
 
 # 로거 설정

@@ -29,7 +29,7 @@ from ..utils.cuda_optimizers import AMPTrainer
 from ..utils.batch_controller import DynamicBatchSizeController
 from ..utils.cache_manager import ThreadLocalCache
 from ..utils.performance_utils import MemoryTracker
-from ..utils.config_loader import ConfigProxy
+from ..utils.unified_config import ConfigProxy
 
 # 로거 설정
 logger = get_logger(__name__)

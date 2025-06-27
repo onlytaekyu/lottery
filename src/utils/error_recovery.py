@@ -15,7 +15,6 @@ from .error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 
-
 @dataclass
 class RecoveryConfig:
     """복구 설정 클래스"""
@@ -26,7 +25,6 @@ class RecoveryConfig:
     max_cpu_percent: float = 90.0
     cleanup_threshold: int = 1000
     stats: Dict[str, Any] = field(default_factory=dict)
-
 
 class ErrorRecovery:
     """오류 복구 관리자 클래스"""

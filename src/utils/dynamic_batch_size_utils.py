@@ -14,7 +14,6 @@ from .error_handler_refactored import get_logger
 # 로거 설정
 logger = get_logger(__name__)
 
-
 def get_available_memory(
     device: Optional[Union[str, torch.device]] = None,
 ) -> Tuple[int, int]:
@@ -64,7 +63,6 @@ def get_available_memory(
     except ImportError:
         logger.warning("psutil 모듈을 찾을 수 없습니다. 기본값 반환.")
         return 8 * 1024**3, 16 * 1024**3  # 기본값: 사용 가능 8GB, 총 16GB
-
 
 def get_safe_batch_size(
     initial_batch_size: int = 32,
@@ -149,7 +147,6 @@ def get_safe_batch_size(
 
     return batch_size
 
-
 def clean_memory():
     """
     메모리 정리
@@ -162,7 +159,6 @@ def clean_memory():
 
     # 가비지 컬렉션 실행
     gc.collect()
-
 
 def estimate_model_size(model: torch.nn.Module) -> int:
     """
@@ -191,7 +187,6 @@ def estimate_model_size(model: torch.nn.Module) -> int:
     )  # 가중치, 그래디언트, 옵티마이저 상태를 고려한 대략적인 추정
 
     return total_size
-
 
 def adjust_for_mixed_precision(batch_size: int, enabled: bool = False) -> int:
     """

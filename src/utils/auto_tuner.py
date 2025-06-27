@@ -47,17 +47,14 @@ T = TypeVar("T")
 # 타입 정의
 BestParams = Dict[str, Any]
 
-
 # 타입 힌트를 위한 Protocol 정의
 class SearcherProtocol(Protocol):
     def search(
         self, objective_fn: Callable[[Dict[str, Any]], float], **kwargs
     ) -> Optional[Dict[str, Any]]: ...
 
-
 # 런타임에서는 SearcherType을 Any로 처리
 SearcherType = Any
-
 
 # 새로운 함수 추가
 def run_autotune(
@@ -228,7 +225,6 @@ def run_autotune(
 
     return result
 
-
 @dataclass
 class TuningConfig:
     """튜닝 설정"""
@@ -241,7 +237,6 @@ class TuningConfig:
     parallel_trials: int = 4
     enable_pruning: bool = True
     save_history: bool = True
-
 
 class HyperParameter:
     """하이퍼파라미터 정의 클래스"""
@@ -265,7 +260,6 @@ class HyperParameter:
             return np.random.choice(self.kwargs.get("choices", []))
         else:
             raise ValueError(f"지원하지 않는 파라미터 타입: {self.param_type}")
-
 
 class Trial:
     """튜닝 시도"""
@@ -302,7 +296,6 @@ class Trial:
             return 0.0
         end = self.end_time or time.time()
         return end - self.start_time
-
 
 class GridSearch:
     """
@@ -484,7 +477,6 @@ class GridSearch:
                 best_params = result["params"]
 
         return best_params
-
 
 class RandomSearch:
     """
@@ -720,7 +712,6 @@ class RandomSearch:
         )
 
         return best_result.get("params")
-
 
 class AutoTuner:
     """자동 튜닝 시스템"""

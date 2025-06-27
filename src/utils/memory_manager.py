@@ -28,7 +28,6 @@ from .error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
 
-
 # CUDA 설정 플랫폼별 최적화
 def get_cuda_alloc_config():
     """플랫폼에 따른 CUDA 메모리 할당 설정 반환"""
@@ -37,16 +36,13 @@ def get_cuda_alloc_config():
     else:
         return "expandable_segments:True,max_split_size_mb:512"
 
-
 # CUDA 설정 적용
 if torch.cuda.is_available():
     cuda_config = get_cuda_alloc_config()
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = cuda_config
     logger.info(f"CUDA 메모리 설정: {cuda_config}")
 
-
 T = TypeVar("T")
-
 
 @dataclass
 class ThreadLocalConfig:
@@ -58,7 +54,6 @@ class ThreadLocalConfig:
     cleanup_interval: float = 300.0  # 5분
     stats: Dict[str, Any] = field(default_factory=dict)
 
-
 @dataclass
 class ThreadLocalCacheEntry(Generic[T]):
     """스레드 로컬 캐시 항목 클래스"""
@@ -68,7 +63,6 @@ class ThreadLocalCacheEntry(Generic[T]):
     access_count: int = 0
     last_access: float = 0.0
     ttl: float = 0.0
-
 
 class ThreadLocalCache(Generic[T]):
     """스레드 로컬 캐시 클래스"""
@@ -244,7 +238,6 @@ class ThreadLocalCache(Generic[T]):
             for key in self._stats:
                 self._stats[key] = 0
 
-
 # 메모리 관리 설정 클래스
 @dataclass
 class MemoryConfig:
@@ -388,7 +381,6 @@ class MemoryConfig:
                 setattr(self, key, value)
         self.__post_init__()  # 업데이트된 값 검증
 
-
 @dataclass
 class CacheEntry:
     """캐시 항목 클래스"""
@@ -406,7 +398,6 @@ class CacheEntry:
         """접근 정보 업데이트"""
         self.access_count += 1
         self.last_access = time.time()
-
 
 class MemoryPool:
     """메모리 풀"""
@@ -552,7 +543,6 @@ class MemoryPool:
         except Exception as e:
             logger.error(f"메모리 풀 정리 실패: {str(e)}")
 
-
 class TensorCache:
     """텐서 캐시"""
 
@@ -675,7 +665,6 @@ class TensorCache:
             stats["items_count"] = len(self.cache)
             stats["device"] = self.device  # type: ignore
             return stats
-
 
 class MemoryManager:
     """메모리 관리자"""
@@ -1454,7 +1443,6 @@ class MemoryManager:
             # 오류 발생 시 보수적인 값 반환
             return max(1, min(8, getattr(self.config, "min_batch_size", 1)))
 
-
 def cleanup_analysis():
     """명시적 메모리 해제 함수"""
     try:
@@ -1474,7 +1462,6 @@ def cleanup_analysis():
 
     except Exception as e:
         logger.error(f"메모리 정리 중 오류: {str(e)}")
-
 
 @contextmanager
 def memory_managed_analysis():
@@ -1496,7 +1483,6 @@ def memory_managed_analysis():
         # 최종 메모리 상태 기록
         end_memory = psutil.virtual_memory()
         logger.info(f"분석 완료 - 메모리 사용량: {end_memory.percent:.1f}%")
-
 
 def get_memory_manager(config: Optional[MemoryConfig] = None) -> MemoryManager:
     """메모리 관리자 싱글톤 인스턴스 반환"""

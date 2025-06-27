@@ -20,7 +20,6 @@ from .cuda_optimizers import CudaOptimizer, CudaConfig
 
 logger = get_logger(__name__)
 
-
 class OptimizationStrategy(Enum):
     """최적화 전략"""
 
@@ -29,7 +28,6 @@ class OptimizationStrategy(Enum):
     MEMORY_OPTIMIZED = "memory_optimized"
     GPU_ACCELERATED = "gpu_accelerated"
     HYBRID = "hybrid"
-
 
 @dataclass
 class TaskInfo:
@@ -42,7 +40,6 @@ class TaskInfo:
     memory_intensive: bool = False
     cpu_intensive: bool = True
 
-
 @dataclass
 class HybridConfig:
     """하이브리드 최적화 설정"""
@@ -53,7 +50,6 @@ class HybridConfig:
     gpu_threshold: float = 80.0  # 80% GPU 사용량 임계점
     min_parallel_size: int = 100  # 병렬 처리 최소 데이터 크기
     enable_monitoring: bool = True
-
 
 class HybridOptimizer:
     """하이브리드 최적화 관리자"""
@@ -328,10 +324,8 @@ class HybridOptimizer:
 
         logger.info("하이브리드 최적화 시스템 종료 완료")
 
-
 # 전역 하이브리드 최적화 인스턴스
 _global_hybrid_optimizer = None
-
 
 def get_hybrid_optimizer(config: Optional[HybridConfig] = None) -> HybridOptimizer:
     """전역 하이브리드 최적화 관리자 반환"""
@@ -343,7 +337,6 @@ def get_hybrid_optimizer(config: Optional[HybridConfig] = None) -> HybridOptimiz
         _global_hybrid_optimizer = HybridOptimizer(config)
 
     return _global_hybrid_optimizer
-
 
 def optimize(task_info: Dict[str, Any]):
     """
@@ -381,7 +374,6 @@ def optimize(task_info: Dict[str, Any]):
         return wrapper
 
     return decorator
-
 
 def cleanup_hybrid_optimizer():
     """전역 하이브리드 최적화 시스템 정리"""
