@@ -23,6 +23,22 @@ from src.utils.cache_manager import CacheManager
 logger = get_logger(__name__)
 
 
+def safe_index_access(data, index=0):
+    """
+    타입 안전한 인덱스 접근 함수
+
+    Args:
+        data: 접근할 데이터
+        index: 접근할 인덱스 (기본값: 0)
+
+    Returns:
+        인덱스에 해당하는 값 또는 None
+    """
+    if hasattr(data, "__getitem__") and hasattr(data, "__len__"):
+        return data[index] if len(data) > index else None  # type: ignore
+    return data
+
+
 @dataclass
 class FeatureGroup:
     """특성 그룹을 나타내는 데이터 클래스"""
@@ -798,7 +814,11 @@ class FeatureExtractor:
 
         # numpy.where를 사용하여 타입 안전한 방식으로 특성 이름 선택
         selected_indices = np.where(non_zero_var_mask)[0]
-        selected_names = [feature_names[i] for i in selected_indices]
+        selected_names = [
+            safe_index_access(feature_names, i)
+            for i in selected_indices
+            if safe_index_access(feature_names, i) is not None
+        ]
 
         importance_scores = variances[non_zero_var_mask]
 
@@ -834,7 +854,11 @@ class FeatureExtractor:
 
             # numpy.where를 사용하여 타입 안전한 방식으로 특성 이름 선택
             selected_indices = np.where(selected_mask)[0]
-            selected_names = [feature_names[i] for i in selected_indices]
+            selected_names = [
+                safe_index_access(feature_names, i)
+                for i in selected_indices
+                if safe_index_access(feature_names, i) is not None
+            ]
 
             importance_scores = selector.scores_[selected_mask]
 
