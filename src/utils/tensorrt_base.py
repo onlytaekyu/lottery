@@ -10,9 +10,8 @@ import os
 import time
 import json
 import hashlib
-import numpy as np
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Union, Sequence, Dict
+from typing import Any, List, Optional, Union, Sequence
 from pathlib import Path
 from threading import Lock
 
@@ -55,7 +54,6 @@ except (ImportError, AttributeError):
 from .error_handler_refactored import get_logger
 from .memory_manager import MemoryManager, MemoryConfig
 from .async_io import AsyncIOManager, AsyncIOConfig
-from .unified_performance import get_profiler
 from .error_recovery import ErrorRecovery, RecoveryConfig
 
 logger = get_logger(__name__)
@@ -134,7 +132,6 @@ class BaseCudaOptimizer:
 
     def cleanup(self):
         """리소스 정리 (하위 클래스에서 구현)"""
-        pass
 
 
 # 하위 호환성을 위한 별칭

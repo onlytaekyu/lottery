@@ -4,25 +4,13 @@
 자동 배치 크기 조정, 메모리 효율적인 연산, 연산 스케줄링 등의 기능을 포함합니다.
 """
 
-import time
 import torch
 import torch.nn as nn
-import gc
-import psutil
-import logging
-import os
-import platform
-import sys
-import traceback
-from typing import Dict, List, Tuple, Any, Optional, Callable
-from dataclasses import dataclass, field
-from contextlib import contextmanager
+from typing import Dict, List, Any, Optional, Callable
+from dataclasses import dataclass
 from threading import Lock, Thread
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
-import numpy as np
-from pathlib import Path
-from torch.cuda.amp import autocast, GradScaler
 from ..utils.config_loader import ConfigProxy
 from torch.utils.data import DataLoader
 
@@ -38,7 +26,7 @@ from .memory_manager import (
 from .async_io import AsyncIOManager, AsyncIOConfig
 
 # 성능 추적 관련 임포트
-from .unified_performance import get_profiler, Profiler
+from .unified_performance import Profiler
 
 # 오류 복구 관련 임포트
 from .error_recovery import ErrorRecovery, RecoveryConfig
@@ -150,7 +138,6 @@ class BaseCudaOptimizer:
         # 기본 설정값
         num_workers = 2
         prefetch_factor = 2
-        num_streams = 2
 
         self._inference_queue: Queue = Queue(maxsize=num_workers * prefetch_factor)
         self._result_queue: Queue = Queue(maxsize=num_workers * prefetch_factor)

@@ -7,7 +7,7 @@
 
 import sys
 import traceback
-from typing import Optional, Any, Callable
+from typing import Any, Callable
 from functools import wraps
 
 # 통합 시스템 사용
@@ -126,7 +126,6 @@ def log_exception_with_trace(logger_name: str, exception: Exception, context: st
 def handle_exception(exc_type, exc_value, exc_traceback):
     """전역 예외 핸들러 (통합 시스템에서 자동 처리됨)"""
     # 통합 로깅 시스템에서 자동으로 처리하므로 별도 구현 불필요
-    pass
 
 
 # 전역 인스턴스

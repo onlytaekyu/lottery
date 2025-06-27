@@ -8,9 +8,6 @@
 import torch
 import gc
 from typing import Optional, Union, Tuple
-import logging
-import numpy as np
-from pathlib import Path
 
 from .error_handler_refactored import get_logger
 
@@ -46,7 +43,7 @@ def get_available_memory(
             total_memory = torch.cuda.get_device_properties(index).total_memory
 
             # 현재 할당된 메모리
-            allocated_memory = torch.cuda.memory_allocated(index)
+            torch.cuda.memory_allocated(index)
 
             # 현재 예약된 메모리 (캐시 포함)
             reserved_memory = torch.cuda.memory_reserved(index)

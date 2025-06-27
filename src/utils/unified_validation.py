@@ -4,11 +4,8 @@
 벡터 무결성, 패턴 검증, 파일 검증 등의 중복 코드를 제거하고 통합합니다.
 """
 
-import os
 import numpy as np
-import json
-from pathlib import Path
-from typing import Dict, Any, Optional, List, Union, Tuple, Callable
+from typing import Dict, Any, List
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -68,7 +65,6 @@ class BaseValidator(ABC):
     @abstractmethod
     def validate(self, data: Any, **kwargs) -> ValidationResult:
         """데이터 검증"""
-        pass
 
     def get_name(self) -> str:
         """검증기 이름 반환"""

@@ -6,7 +6,6 @@
 Grid Search, Random Search, Bayesian Optimization 기법을 지원합니다.
 """
 
-import os
 import time
 import numpy as np
 import pandas as pd  # type: ignore
@@ -14,8 +13,6 @@ import threading
 import random
 import json
 import itertools
-import gc
-import platform
 import yaml  # type: ignore
 from typing import (
     Dict,
@@ -24,16 +21,11 @@ from typing import (
     Optional,
     Union,
     Callable,
-    Tuple,
-    cast,
     TypeVar,
-    Type,
-    TYPE_CHECKING,
     Protocol,
 )
 from pathlib import Path
 from datetime import datetime
-import logging
 import psutil  # type: ignore
 import sys
 import importlib
@@ -1375,7 +1367,7 @@ class AutoTuner:
                                     )
 
                                     analyzer = PatternAnalyzer()
-                                    analysis = analyzer.analyze_patterns(train_data)
+                                    analyzer.analyze_patterns(train_data)
                                     # 간단한 점수 계산으로 반환
                                     return 0.5  # 임의의 점수
                                 except Exception as e:

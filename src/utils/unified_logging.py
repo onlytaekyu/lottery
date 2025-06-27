@@ -7,11 +7,9 @@
 import logging
 import logging.handlers
 import sys
-import os
 import threading
 from pathlib import Path
-from typing import Dict, Optional, Union, Set, Any
-from datetime import datetime
+from typing import Dict, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 

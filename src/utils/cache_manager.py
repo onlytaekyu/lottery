@@ -8,7 +8,7 @@ import os
 import pickle
 import time
 from collections import OrderedDict
-from typing import Any, Optional, Dict, Union
+from typing import Any, Optional, Dict
 import numpy as np
 import torch
 import json
@@ -16,6 +16,7 @@ import hashlib
 from pathlib import Path
 from .error_handler_refactored import get_logger
 import threading
+from .memory_manager import ThreadLocalCache  # 중복 제거를 위해 import
 
 
 class CacheManager:
@@ -536,48 +537,3 @@ class CacheManager:
             self.pattern_analyzer.tensor_cache.put(key, result)
         else:
             self.put(key, result)
-
-
-class ThreadLocalCache:
-    """스레드 로컬 캐시 관리자"""
-
-    def __init__(self):
-        self._local = threading.local()
-        self._logger = get_logger(__name__)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """캐시된 값 조회"""
-        try:
-            return getattr(self._local, key, default)
-        except Exception as e:
-            self._logger.error(f"캐시 조회 중 오류 발생: {str(e)}")
-            return default
-
-    def set(self, key: str, value: Any) -> None:
-        """캐시 값 설정"""
-        try:
-            setattr(self._local, key, value)
-        except Exception as e:
-            self._logger.error(f"캐시 설정 중 오류 발생: {str(e)}")
-
-    def delete(self, key: str) -> None:
-        """캐시 값 삭제"""
-        try:
-            delattr(self._local, key)
-        except Exception as e:
-            self._logger.error(f"캐시 삭제 중 오류 발생: {str(e)}")
-
-    def clear(self) -> None:
-        """모든 캐시 삭제"""
-        try:
-            self._local.__dict__.clear()
-        except Exception as e:
-            self._logger.error(f"캐시 초기화 중 오류 발생: {str(e)}")
-
-    def get_all(self) -> Dict[str, Any]:
-        """모든 캐시 값 조회"""
-        try:
-            return dict(self._local.__dict__)
-        except Exception as e:
-            self._logger.error(f"캐시 전체 조회 중 오류 발생: {str(e)}")
-            return {}

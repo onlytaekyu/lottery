@@ -27,9 +27,9 @@ from .unified_performance import (
     MemoryTracker,
 )
 from .unified_config import (
-    UnifiedConfigManager,
-    get_paths,
-    load_config as get_unified_config,
+    ConfigProxy,
+    get_config_manager,
+    load_config as unified_load_config,
 )
 from .unified_validation import (
     UnifiedValidationManager,
@@ -55,11 +55,11 @@ from .error_handler_refactored import (
 )
 
 # 🔧 기존 유지 시스템들 (우선순위 2)
-from .config_loader import load_config, ConfigProxy
+from .config_loader import load_config, get_default_config, save_config
 from .data_loader import load_draw_history
 from .cache_paths import get_cache_dir, CACHE_DIR
 from .vector_exporter import save_vector_bundle
-from .memory_manager import MemoryManager, MemoryConfig
+from .memory_manager import ThreadLocalCache, MemoryManager, get_memory_manager
 from .cuda_optimizers import CudaConfig
 from .model_saver import ModelSaver
 from .cache_manager import CacheManager
@@ -75,19 +75,19 @@ def initialize_unified_systems():
 
     try:
         # 설정 관리자 초기화
-        config_manager = UnifiedConfigManager()
+        get_config_manager()
         logger.info("설정 관리자 초기화 완료")
 
         # 성능 추적기 초기화
-        performance_tracker = UnifiedPerformanceTracker()
+        UnifiedPerformanceTracker()
         logger.info("성능 추적기 초기화 완료")
 
         # 검증 관리자 초기화
-        validation_manager = UnifiedValidationManager()
+        UnifiedValidationManager()
         logger.info("검증 관리자 초기화 완료")
 
         # 보고서 작성기 초기화
-        report_writer = UnifiedReportWriter()
+        UnifiedReportWriter()
         logger.info("보고서 작성기 초기화 완료")
 
         logger.info("✅ 통합 시스템 초기화 완료")
@@ -119,7 +119,7 @@ def get_system_status():
         }
 
         # 설정 관리자 상태
-        config_manager = UnifiedConfigManager()
+        config_manager = get_config_manager()
         status["config"] = {
             "configs_loaded": len(config_manager._configs),
             "cache_hits": getattr(config_manager, "_cache_hits", 0),
@@ -178,9 +178,6 @@ __all__ = [
     "Profiler",  # 호환성
     "PerformanceTracker",  # 호환성
     "MemoryTracker",  # 호환성
-    "UnifiedConfigManager",
-    "get_paths",
-    "get_unified_config",
     "UnifiedValidationManager",
     "ValidationLevel",
     "validate_vector",
@@ -199,13 +196,15 @@ __all__ = [
     "get_error_handler",
     # 🔧 기존 유지 시스템들
     "load_config",
-    "ConfigProxy",
+    "get_default_config",
+    "save_config",
     "load_draw_history",
     "get_cache_dir",
     "CACHE_DIR",
     "save_vector_bundle",
     "MemoryManager",
-    "MemoryConfig",
+    "ThreadLocalCache",
+    "get_memory_manager",
     "CudaConfig",
     "ModelSaver",
     "CacheManager",
@@ -216,6 +215,10 @@ __all__ = [
     "initialize_unified_systems",
     "get_system_status",
     "cleanup_resources",
+    # 설정 관리
+    "ConfigProxy",
+    "get_config_manager",
+    "unified_load_config",
 ]
 
 # 🎉 시스템 초기화 메시지

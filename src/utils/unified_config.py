@@ -9,8 +9,8 @@ import yaml
 import json
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, Union, List, Type, TypeVar, Generic
-from dataclasses import dataclass, field
+from typing import Dict, Any, Optional, List, TypeVar
+from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
 from .unified_logging import get_logger
@@ -83,12 +83,10 @@ class ConfigValidator(ABC):
     @abstractmethod
     def validate(self, config: Dict[str, Any]) -> bool:
         """설정 검증"""
-        pass
 
     @abstractmethod
     def get_required_keys(self) -> List[str]:
         """필수 키 목록 반환"""
-        pass
 
 
 class DefaultConfigValidator(ConfigValidator):

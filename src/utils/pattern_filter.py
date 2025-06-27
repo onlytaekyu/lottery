@@ -4,13 +4,11 @@
 이 모듈은 로또 번호 패턴을 필터링하는 기능을 제공합니다.
 """
 
-import os
 import hashlib
 import json
-import logging
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Tuple, Set, Any, Optional, Callable, Union, cast
+from typing import Dict, List, Tuple, Any, Optional, Callable, Union
 
 from ..shared.types import LotteryNumber, PatternFeatures
 from ..utils.unified_logging import get_logger

@@ -5,7 +5,7 @@
 None 객체에 메서드 호출을 방지하고, 예외를 처리하여 안정성을 높입니다.
 """
 
-from typing import Any, Dict, List, Optional, Union, TypeVar, Generic, Callable
+from typing import Any, Dict, Optional, Union, TypeVar, Callable
 from .unified_logging import get_logger
 
 # 로거 설정

@@ -15,29 +15,21 @@ from typing import (
     Optional,
     Union,
     Dict,
-    cast,
     TypeVar,
-    Generic,
-    TYPE_CHECKING,
-    Sequence,
 )
 from pathlib import Path
 import json
 from sklearn.preprocessing import MinMaxScaler
 import os
 from sklearn.model_selection import train_test_split
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from queue import Queue
 import threading
-import tempfile
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
-import warnings
-from numpy.typing import NDArray, ArrayLike
 
 # 상대 임포트 사용
 from .error_handler_refactored import get_logger
-from .memory_manager import MemoryManager, MemoryConfig
+from .memory_manager import MemoryManager
 from ..shared.types import LotteryNumber
 from ..analysis.pattern_vectorizer import PatternVectorizer
 

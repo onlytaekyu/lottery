@@ -271,7 +271,7 @@ class ModelSaver:
 
                 # 메타데이터 로드
                 with open(checkpoint_dir / "metadata.json", "r") as f:
-                    metadata = CheckpointMetadata(**json.load(f))
+                    CheckpointMetadata(**json.load(f))
 
                 # 설정 로드
                 with open(checkpoint_dir / "config.json", "r") as f:
