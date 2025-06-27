@@ -47,6 +47,10 @@ class PatternVectorizer:
         self.config = config if config is not None else {}
         self.logger = get_logger(__name__)
 
+        # 데이터 로더 초기화 (캐시된 데이터 접근용)
+        self._data_loader = None
+        self._latest_draw_count = None  # 캐시된 최신 회차 수
+
         # 🚀 성능 최적화 시스템 초기화
         try:
             from ..utils.memory_manager import MemoryManager, MemoryConfig
@@ -145,6 +149,79 @@ class PatternVectorizer:
         logger.info(
             f"벡터 청사진 시스템 초기화 완료: 총 {self.total_expected_dims}차원"
         )
+
+    def _get_latest_draw_count(self) -> int:
+        """
+        캐시된 데이터에서 최신 회차 수를 동적으로 가져옵니다.
+
+        Returns:
+            int: 최신 회차 수
+        """
+        try:
+            # 데이터 로더가 없으면 초기화
+            if self._data_loader is None:
+                from ..utils.data_loader import DataLoader
+
+                # ConfigProxy 오류 방지를 위해 간단한 설정만 전달
+                simple_config = {}
+                try:
+                    # ConfigProxy나 dict 타입에 관계없이 안전하게 접근
+                    if hasattr(self.config, "__getitem__"):
+                        data_config = (
+                            self.config.get("data")
+                            if hasattr(self.config, "get")
+                            else self.config.get("data", None)
+                        )
+                        if data_config:
+                            simple_config = {"data": data_config}
+                except (TypeError, AttributeError, KeyError):
+                    pass  # 설정 접근 실패 시 빈 설정 사용
+                self._data_loader = DataLoader(simple_config)
+
+            # 캐시된 최신 회차 수가 없거나 오래된 경우 갱신
+            if self._latest_draw_count is None:
+                all_data = self._data_loader.get_all_data()
+                if all_data:
+                    self._latest_draw_count = len(all_data)
+                    self.logger.info(
+                        f"최신 회차 수 캐시 갱신: {self._latest_draw_count}회"
+                    )
+                else:
+                    self._latest_draw_count = 1172  # 기본값 (안전장치)
+                    self.logger.warning("데이터 로드 실패, 기본값 사용: 1172회")
+
+            return self._latest_draw_count
+
+        except Exception as e:
+            self.logger.error(f"최신 회차 수 가져오기 실패: {e}")
+            # 안전장치: 직접 CSV 파일에서 라인 수 확인
+            try:
+                from pathlib import Path
+
+                csv_path = (
+                    Path(__file__).parent.parent.parent / "data" / "raw" / "lottery.csv"
+                )
+                if csv_path.exists():
+                    with open(csv_path, "r", encoding="utf-8") as f:
+                        line_count = sum(1 for _ in f) - 1  # 헤더 제외
+                    self.logger.info(f"CSV 파일에서 직접 회차 수 확인: {line_count}회")
+                    return line_count
+            except Exception as csv_error:
+                self.logger.error(f"CSV 파일 직접 읽기 실패: {csv_error}")
+
+            return 1172  # 최종 기본값 반환
+
+    def refresh_draw_count_cache(self) -> None:
+        """
+        회차 수 캐시를 강제로 갱신합니다.
+        새로운 회차 데이터가 추가되었을 때 호출하세요.
+        """
+        try:
+            self._latest_draw_count = None  # 캐시 무효화
+            new_count = self._get_latest_draw_count()  # 새로 로드
+            self.logger.info(f"회차 수 캐시 강제 갱신 완료: {new_count}회")
+        except Exception as e:
+            self.logger.error(f"회차 수 캐시 갱신 실패: {e}")
 
     def _initialize_vector_blueprint(self):
         """
@@ -3992,7 +4069,10 @@ class PatternVectorizer:
             value = self.safe_float_conversion(pattern_data.get(stat, default_val))
             # 0-1 범위로 정규화
             if stat == "total_draws":
-                value = min(1.0, value / 1200.0)  # 총 추첨 수 기준 정규화
+                latest_draw_count = self._get_latest_draw_count()
+                value = min(
+                    1.0, value / float(latest_draw_count)
+                )  # 총 추첨 수 기준 정규화 (동적 최신 회차)
             elif "frequency" in stat:
                 value = min(1.0, max(0.0, value))  # 빈도는 이미 정규화됨
             else:

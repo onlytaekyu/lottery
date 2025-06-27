@@ -33,6 +33,7 @@ from ..models.lightgbm_model import LightGBMModel
 from ..models.xgboost_model import XGBoostModel
 from ..analysis.pattern_vectorizer import PatternVectorizer
 from ..shared.types import LotteryNumber
+from ..shared.graph_utils import calculate_pair_frequency
 from ..utils.unified_report import save_performance_report
 
 # 로거 설정
@@ -447,7 +448,9 @@ class MLCandidateGenerator:
             if not pair_freq_path.exists():
                 # 파일이 없으면 쌍 빈도 분석 실행
                 self.logger.info("쌍 빈도 데이터 파일이 없어 계산합니다.")
-                pair_frequency = self._calculate_pair_frequency(historical_data)
+                pair_frequency = calculate_pair_frequency(
+                    historical_data, logger=self.logger
+                )
 
                 # 계산된 값 저장
                 cache_dir = Path("data/cache")
@@ -482,7 +485,9 @@ class MLCandidateGenerator:
                     )
                 except Exception as e:
                     self.logger.warning(f"쌍 빈도 데이터 로드 실패: {e}")
-                    pair_frequency = self._calculate_pair_frequency(historical_data)
+                    pair_frequency = calculate_pair_frequency(
+                        historical_data, logger=self.logger
+                    )
 
             # 2. 세그먼트 중심성 데이터 로드
             segment_centrality_vector = None
@@ -882,39 +887,6 @@ class MLCandidateGenerator:
                 candidates.append(sorted(random.sample(range(1, 46), 6)))
 
         return candidates
-
-    def _calculate_pair_frequency(
-        self, data: List[LotteryNumber]
-    ) -> Dict[Tuple[int, int], float]:
-        """
-        번호 쌍의 출현 빈도를 계산합니다.
-
-        Args:
-            data: 분석할 과거 당첨 번호 목록
-
-        Returns:
-            번호 쌍별 출현 빈도 (정규화된 값)
-        """
-        total_draws = len(data)
-        pair_counts = {}
-
-        # 모든 번호 쌍의 출현 횟수 계산
-        for draw in data:
-            numbers = draw.numbers
-            for i in range(len(numbers)):
-                for j in range(i + 1, len(numbers)):
-                    num1, num2 = min(numbers[i], numbers[j]), max(
-                        numbers[i], numbers[j]
-                    )
-                    pair = (num1, num2)
-                    pair_counts[pair] = pair_counts.get(pair, 0) + 1
-
-        # 빈도로 변환 (출현 횟수 / 전체 추첨 횟수)
-        pair_frequency = {
-            pair: count / total_draws for pair, count in pair_counts.items()
-        }
-
-        return pair_frequency
 
     def _filter_and_score_candidates(
         self, candidates: List[List[int]], historical_data: List[LotteryNumber]
