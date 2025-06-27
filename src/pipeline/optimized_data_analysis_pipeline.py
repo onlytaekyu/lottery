@@ -172,81 +172,6 @@ def initialize_optimization_systems(config: Dict[str, Any]):
         memory_manager = None
 
 
-class OptimizedPerformanceTracker:
-    """최적화된 성능 추적기"""
-
-    def __init__(self):
-        self.metrics = {}
-        self.cache_hits = 0
-        self.cache_misses = 0
-        self.memory_usage = []
-        self.processing_times = {}
-        self.optimization_stats = {}
-
-    def track_cache_hit(self):
-        self.cache_hits += 1
-
-    def track_cache_miss(self):
-        self.cache_misses += 1
-
-    def get_cache_hit_rate(self) -> float:
-        total = self.cache_hits + self.cache_misses
-        return self.cache_hits / total if total > 0 else 0.0
-
-    def track_memory_usage(self):
-        memory_info = psutil.virtual_memory()
-        self.memory_usage.append(
-            {
-                "timestamp": time.time(),
-                "used_percent": memory_info.percent,
-                "available_mb": memory_info.available / (1024 * 1024),
-            }
-        )
-
-    def track_processing_time(self, operation: str, duration: float):
-        if operation not in self.processing_times:
-            self.processing_times[operation] = []
-        self.processing_times[operation].append(duration)
-
-    def track_optimization_result(self, operation: str, strategy: str, speedup: float):
-        """최적화 결과 추적"""
-        if operation not in self.optimization_stats:
-            self.optimization_stats[operation] = {}
-
-        if strategy not in self.optimization_stats[operation]:
-            self.optimization_stats[operation][strategy] = {
-                "count": 0,
-                "total_speedup": 0.0,
-                "avg_speedup": 0.0,
-            }
-
-        stats = self.optimization_stats[operation][strategy]
-        stats["count"] += 1
-        stats["total_speedup"] += speedup
-        stats["avg_speedup"] = stats["total_speedup"] / stats["count"]
-
-    def get_performance_summary(self) -> Dict[str, Any]:
-        return {
-            "cache_hit_rate": self.get_cache_hit_rate(),
-            "total_cache_operations": self.cache_hits + self.cache_misses,
-            "avg_memory_usage": (
-                np.mean([m["used_percent"] for m in self.memory_usage])
-                if self.memory_usage
-                else 0
-            ),
-            "processing_times": {
-                op: {
-                    "avg": np.mean(times),
-                    "min": np.min(times),
-                    "max": np.max(times),
-                    "count": len(times),
-                }
-                for op, times in self.processing_times.items()
-            },
-            "optimization_stats": self.optimization_stats,
-        }
-
-
 @optimize(
     task_info={
         "function_type": "analysis",
@@ -368,27 +293,31 @@ def safe_analysis_step(step_name: str, func, *args, **kwargs):
 @strict_error_handler("최적화된 데이터 분석 파이프라인", exit_on_error=True)
 def run_optimized_data_analysis() -> bool:
     """
-    최적화된 데이터 분석 및 전처리 실행
+    최적화된 데이터 분석 파이프라인 실행
+
+    성능 최적화 기능:
+    - 중복 제거된 통합 함수 사용
+    - 세분화된 캐싱 시스템
+    - 메모리 효율적 청크 처리
+    - 병렬 처리 지원
+    - 하이브리드 최적화 시스템
+    - 통합 성능 모니터링
 
     Returns:
-        bool: 작업 성공 여부 (실패 시 시스템 종료)
+        bool: 성공 여부
     """
     start_time = time.time()
-    performance_tracker = OptimizedPerformanceTracker()
 
-    # 메모리 관리 컨텍스트 매니저 사용
-    from src.utils.memory_manager import memory_managed_analysis
-    from src.utils.unified_performance import get_profiler
-
-    # 프로파일러 초기화
+    # 🔧 통합 성능 추적기 사용
     profiler = get_profiler()
 
-    with memory_managed_analysis():
-        with profiler.profile("전체_파이프라인"):
-            logger.info("🚀 최적화된 데이터 분석 및 전처리 시작")
+    try:
+        with profiler.profile("전체_데이터_분석_파이프라인"):
+            logger.info("🚀 최적화된 데이터 분석 파이프라인 시작")
 
             # 1. 설정 로드 - 실패 시 즉시 종료
             with profiler.profile("설정_로드"):
+                logger.info("🚀 0단계: 설정 로드 중...")
                 logger.info("설정_로드 시작")
 
                 config = load_config()
@@ -421,7 +350,8 @@ def run_optimized_data_analysis() -> bool:
                 logger.info(f"✅ 데이터 로드 완료: {len(historical_data)}개 회차")
 
             # 분석기 초기화 - 실패 시 즉시 종료
-            performance_tracker.track_memory_usage()
+            # 🔧 통합 성능 추적기 사용
+            profiler.track_memory()
 
             def init_analyzer(analyzer_type: str):
                 """분석기 초기화 래퍼"""
@@ -527,12 +457,11 @@ def run_optimized_data_analysis() -> bool:
                     analysis_result = analyze_chunk(historical_data)
 
                 analysis_duration = time.time() - analysis_start
-                performance_tracker.track_processing_time(
-                    "pattern_analysis", analysis_duration
-                )
+                # 🔧 통합 성능 추적기 사용
+                profiler.track_time("pattern_analysis", analysis_duration)
 
                 logger.info(f"✅ 패턴 분석 완료 ({analysis_duration:.2f}초)")
-                performance_tracker.track_memory_usage()
+                profiler.track_memory()
 
             # 4. 최적화된 추가 분석 (병렬 처리) - 안전한 ThreadPoolExecutor 사용
             with profiler.profile("최적화된_추가_분석"):
@@ -596,12 +525,11 @@ def run_optimized_data_analysis() -> bool:
                 )
 
                 additional_duration = time.time() - additional_analysis_start
-                performance_tracker.track_processing_time(
-                    "additional_analysis", additional_duration
-                )
+                # 🔧 통합 성능 추적기 사용
+                profiler.track_time("additional_analysis", additional_duration)
 
                 logger.info(f"✅ 추가 분석 완료 ({additional_duration:.2f}초)")
-                performance_tracker.track_memory_usage()
+                profiler.track_memory()
 
             # 5. 최적화된 벡터화 - 실패 시 즉시 종료
             with profiler.profile("최적화된_벡터화"):
@@ -644,9 +572,8 @@ def run_optimized_data_analysis() -> bool:
                 )
 
                 vectorization_duration = time.time() - vectorization_start
-                performance_tracker.track_processing_time(
-                    "vectorization", vectorization_duration
-                )
+                # 🔧 통합 성능 추적기 사용
+                profiler.track_time("vectorization", vectorization_duration)
 
                 logger.info(
                     f"✅ 벡터화 완료: {feature_vectors.shape} ({vectorization_duration:.2f}초)"
@@ -689,11 +616,11 @@ def run_optimized_data_analysis() -> bool:
 
             # 최종 성능 리포트
             total_duration = time.time() - start_time
-            performance_summary = performance_tracker.get_performance_summary()
+            # 🔧 통합 성능 추적기 사용
+            profiler.track_time("total_duration", total_duration)
 
             logger.info("✅ 최적화된 데이터 분석 완료!")
             logger.info(f"📊 전체 실행 시간: {total_duration:.2f}초")
-            logger.info(f"📈 성능 요약: {performance_summary}")
 
             # 성능 리포트 저장
             performance_file = analysis_dir / "performance_report.json"
@@ -701,7 +628,6 @@ def run_optimized_data_analysis() -> bool:
                 json.dump(
                     {
                         "total_duration": total_duration,
-                        "performance_summary": performance_summary,
                         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                     },
                     f,
@@ -710,6 +636,10 @@ def run_optimized_data_analysis() -> bool:
                 )
 
             return True
+
+    except Exception as e:
+        logger.error(f"최적화된 데이터 분석 파이프라인 실행 중 오류: {e}")
+        return False
 
 
 def run_data_analysis() -> bool:

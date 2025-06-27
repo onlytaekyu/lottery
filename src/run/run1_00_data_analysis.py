@@ -43,10 +43,11 @@ def main():
         from src.utils.config_loader import load_config
         from src.analysis.unified_analyzer import UnifiedAnalyzer
         from src.analysis.pattern_vectorizer import PatternVectorizer
-        from src.utils.performance_report_writer import save_analysis_performance_report
-        from src.utils.performance_tracker import PerformanceTracker
-        from src.utils.profiler import Profiler
-        from src.utils.feature_vector_validator import (
+        from src.utils.unified_report import save_analysis_performance_report
+
+        # 🔧 통합 성능 추적기 사용
+        from src.utils.unified_performance import get_profiler
+        from src.utils.unified_feature_vector_validator import (
             validate_feature_vector_with_config,
             check_vector_dimensions,
             create_feature_registry,
@@ -87,9 +88,8 @@ def main():
             logger.warning(f"설정 검증 중 오류 발생: {str(e)}")
             logger.warning("일부 필수 설정이 누락되어 기본값을 사용합니다.")
 
-        # 성능 추적 및 프로파일링 설정
-        profiler = Profiler(config)
-        performance_tracker = PerformanceTracker()
+        # 🔧 통합 성능 추적기 사용
+        profiler = get_profiler()
         profiler.start("total")
 
         # 데이터 로드
@@ -317,7 +317,8 @@ def main():
             "vector_dim": feature_vectors.shape[1],
             "vector_nan_rate": float(np.isnan(feature_vectors).sum())
             / feature_vectors.size,
-            "cache_hit_rate": performance_tracker.get_cache_hit_rate(),
+            # 🔧 통합 성능 추적기 사용
+            "cache_hit_rate": profiler.get_cache_hit_rate(),
             "analysis_time": time.time() - start_time,
             # 확장된 메트릭
             "outlier_count": (
@@ -354,7 +355,12 @@ def main():
                     data_metrics[f"cluster_{key}"] = cluster_metrics[key]
 
         perf_file = save_analysis_performance_report(
-            profiler, performance_tracker, config, "data_analysis", data_metrics
+            # 🔧 통합 성능 추적기 사용
+            profiler,
+            profiler,
+            config,
+            "data_analysis",
+            data_metrics,
         )
         logger.info(f"성능 보고서 저장 완료: {perf_file}")
 
