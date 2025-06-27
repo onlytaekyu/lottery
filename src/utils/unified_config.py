@@ -9,13 +9,14 @@ import yaml
 import json
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, List, TypeVar
-from dataclasses import dataclass
+from typing import Dict, Any, Optional, List, TypeVar, Union, Set
+from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
+import logging
 
 from .unified_logging import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -142,6 +143,114 @@ class DefaultConfigValidator(ConfigValidator):
             "training.use_filtered_vector",
             "analysis.enable_pattern_analysis",
         ]
+
+
+@dataclass
+class CudaConfig:
+    """통합 CUDA 최적화 설정 클래스"""
+
+    # 기본 GPU 설정
+    gpu_ids: List[int] = field(default_factory=lambda: [0])
+    num_workers: int = 2
+
+    # 배치 크기 관련 설정
+    batch_size: int = 32
+    min_batch_size: int = 1
+    max_batch_size: int = 256
+    optimal_batch_size: Optional[int] = None
+
+    # 메모리 설정
+    max_memory_usage: float = 0.8
+    output_size: Optional[List[int]] = None
+    input_size: Optional[List[int]] = None
+    normalize_inputs: bool = False
+
+    # AMP (자동 혼합 정밀도) 관련 설정
+    use_amp: bool = True
+    fp16_mode: bool = False
+
+    # cuDNN 관련 설정
+    use_cudnn: bool = True
+
+    # CUDA 그래프 관련 설정
+    use_graphs: bool = False
+
+    # TensorRT 캐시 설정
+    engine_cache_dir: str = "./data/cache/tensorrt/engines"
+    onnx_cache_dir: str = "./data/cache/tensorrt/onnx"
+    calibration_cache_dir: str = "./data/cache/tensorrt/calibration"
+    engine_cache_prefix: str = "engine"
+    engine_cache_suffix: str = ".trt"
+    engine_cache_version: str = "v1"
+    onnx_cache_prefix: str = "model"
+    onnx_cache_suffix: str = ".onnx"
+    onnx_cache_version: str = "v1"
+
+    def __post_init__(self):
+        """초기화 후처리"""
+        # CUDA 사용 가능성 확인
+        try:
+            import torch
+
+            cuda_available = torch.cuda.is_available()
+        except ImportError:
+            cuda_available = False
+
+        if not cuda_available:
+            logger.warning("CUDA를 사용할 수 없습니다. CPU 모드로 설정됩니다.")
+            self.use_amp = False
+            self.use_cudnn = False
+            self.use_graphs = False
+        else:
+            # CUDA 최적화 설정 적용
+            self._setup_cuda_optimizations()
+
+        # optimal_batch_size가 설정되지 않은 경우 batch_size 값 사용
+        if self.optimal_batch_size is None:
+            self.optimal_batch_size = self.batch_size
+
+        # 배치 크기 검증
+        if self.min_batch_size > self.max_batch_size:
+            logger.warning(
+                "min_batch_size가 max_batch_size보다 큽니다. 값을 조정합니다."
+            )
+            self.min_batch_size = min(self.min_batch_size, self.max_batch_size)
+
+        # 디렉토리 경로를 절대 경로로 변환
+        for dir_path in ["engine_cache_dir", "onnx_cache_dir", "calibration_cache_dir"]:
+            current_path = getattr(self, dir_path)
+            if isinstance(current_path, str) and not os.path.isabs(current_path):
+                # 상대 경로를 절대 경로로 변환
+                new_path = Path(__file__).parent.parent.parent / current_path
+                setattr(self, dir_path, str(new_path))
+
+        # 디렉토리 생성
+        for dir_path in [
+            self.engine_cache_dir,
+            self.onnx_cache_dir,
+            self.calibration_cache_dir,
+        ]:
+            os.makedirs(dir_path, exist_ok=True)
+
+    def _setup_cuda_optimizations(self):
+        """CUDA 최적화 설정"""
+        try:
+            import torch
+
+            # GPU 메모리 풀 설정
+            if hasattr(torch.cuda, "memory_pool"):
+                torch.cuda.empty_cache()
+
+            # cuDNN 최적화
+            if self.use_cudnn:
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+
+            logger.info("CUDA 최적화 설정 완료")
+        except Exception as e:
+            logger.error(f"CUDA 최적화 설정 실패: {str(e)}")
 
 
 class UnifiedConfigManager:

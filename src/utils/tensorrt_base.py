@@ -59,51 +59,8 @@ from .error_recovery import ErrorRecovery, RecoveryConfig
 logger = get_logger(__name__)
 
 
-@dataclass
-class CudaConfig:
-    """CUDA 최적화 설정 클래스"""
-
-    # 기본 설정
-    gpu_ids: List[int] = field(default_factory=lambda: [0])
-    num_workers: int = 2
-
-    # 메모리 설정
-    max_batch_size: int = 32
-    output_size: Optional[List[int]] = None
-    input_size: Optional[List[int]] = None
-    normalize_inputs: bool = False
-
-    # TensorRT 설정
-    fp16_mode: bool = False
-
-    # 캐시 설정
-    engine_cache_dir: str = "./cache/tensorrt/engines"
-    onnx_cache_dir: str = "./cache/tensorrt/onnx"
-    calibration_cache_dir: str = "./cache/tensorrt/calibration"
-    engine_cache_prefix: str = "engine"
-    engine_cache_suffix: str = ".trt"
-    engine_cache_version: str = "v1"
-    onnx_cache_prefix: str = "model"
-    onnx_cache_suffix: str = ".onnx"
-    onnx_cache_version: str = "v1"
-
-    def __post_init__(self):
-        """초기화 후처리"""
-        # 디렉토리 경로를 Path 객체로 변환
-        for dir_path in ["engine_cache_dir", "onnx_cache_dir", "calibration_cache_dir"]:
-            current_path = getattr(self, dir_path)
-            if isinstance(current_path, str):
-                # 상대 경로를 절대 경로로 변환
-                new_path = Path(__file__).parent.parent.parent / current_path
-                setattr(self, dir_path, str(new_path))
-
-        # 디렉토리 생성
-        for dir_path in [
-            self.engine_cache_dir,
-            self.onnx_cache_dir,
-            self.calibration_cache_dir,
-        ]:
-            os.makedirs(dir_path, exist_ok=True)
+# CudaConfig는 unified_config.py에서 import됨
+from .unified_config import CudaConfig
 
 
 class BaseCudaOptimizer:
