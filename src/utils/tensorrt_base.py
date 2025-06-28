@@ -61,6 +61,7 @@ logger = get_logger(__name__)
 # CudaConfig는 unified_config.py에서 import됨
 from .unified_config import CudaConfig
 
+
 class BaseCudaOptimizer:
     """CUDA 최적화 기본 클래스"""
 
@@ -88,8 +89,10 @@ class BaseCudaOptimizer:
     def cleanup(self):
         """리소스 정리 (하위 클래스에서 구현)"""
 
+
 # 하위 호환성을 위한 별칭
 TensorRTConfig = CudaConfig
+
 
 class LayerType:
     """TensorRT 레이어 타입"""
@@ -102,6 +105,7 @@ class LayerType:
     ELEMENTWISE = "ElementWise"
     FULLY_CONNECTED = "FullyConnected"
 
+
 class ElementWiseOperation:
     """요소별 연산 타입"""
 
@@ -113,11 +117,13 @@ class ElementWiseOperation:
     DIV = "Div"
     POW = "Pow"
 
+
 class PoolingType:
     """풀링 연산 타입"""
 
     MAX = "Max"
     AVERAGE = "Average"
+
 
 class TensorRTBase(BaseCudaOptimizer):
     """TensorRT 최적화 기본 클래스"""
@@ -583,8 +589,19 @@ class TensorRTBase(BaseCudaOptimizer):
                 return None
 
     def cleanup(self):
-        """리소스 정리 - 메모리 관리 개선"""
+        """리소스 정리 - Python 종료 시 안전한 정리"""
         try:
+            # Python 종료 상태 확인
+            import sys
+
+            if sys is None or getattr(sys, "meta_path", None) is None:
+                # Python이 종료 중이면 중요한 정리만 수행
+                if hasattr(self, "_trt_context"):
+                    self._trt_context = None
+                if hasattr(self, "_trt_model"):
+                    self._trt_model = None
+                return
+
             with self._profiler.profile("cleanup"):
                 # TensorRT 리소스 해제
                 if hasattr(self, "_trt_context") and self._trt_context is not None:
@@ -616,15 +633,27 @@ class TensorRTBase(BaseCudaOptimizer):
 
                 logger.info("리소스 정리 완료")
         except Exception as e:
-            logger.error(f"리소스 정리 실패: {str(e)}")
+            # Python 종료 시에는 로깅도 실패할 수 있음
+            try:
+                logger.error(f"리소스 정리 실패: {str(e)}")
+            except:
+                pass
 
     def __del__(self):
-        """소멸자"""
+        """소멸자 - Python 종료 시 안전한 정리"""
         try:
+            # Python 종료 상태 확인
+            import sys
+
+            if sys is None or getattr(sys, "meta_path", None) is None:
+                # Python이 종료 중이면 정리 작업을 건너뜀
+                return
+
             if hasattr(self, "cleanup"):
                 self.cleanup()
-        except Exception as e:
-            logger.error(f"소멸자 실행 실패: {str(e)}")
+        except Exception:
+            # Python 종료 시에는 로깅도 실패할 수 있으므로 조용히 무시
+            pass
 
     def _can_fuse_conv_relu(self, layer: Any) -> bool:
         """Conv + ReLU 융합 가능 여부 확인"""

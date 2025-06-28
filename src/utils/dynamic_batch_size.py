@@ -26,6 +26,7 @@ try:
 except ImportError:
     CUDA_OPTIMIZER_AVAILABLE = False
 
+
 @dataclass
 class BatchSizeConfig:
     """배치 크기 설정 클래스"""
@@ -79,6 +80,7 @@ class BatchSizeConfig:
         # 최적 배치 크기가 없으면 초기 배치 크기 사용
         if self.optimal_batch_size is None:
             self.optimal_batch_size = self.initial_batch_size
+
 
 class DynamicBatchSize:
     """
@@ -141,33 +143,38 @@ class DynamicBatchSize:
         self.use_gpu = self.config.use_gpu and self.gpu_available
         self.device = torch.device("cuda" if self.use_gpu else "cpu")
 
-        # CUDA 최적화 모듈 초기화 (사용 가능한 경우)
+        # CUDA 최적화 모듈 초기화 (싱글톤 사용)
         self.cuda_optimizer = None
         if self.use_gpu and CUDA_OPTIMIZER_AVAILABLE:
             try:
+                from .cuda_singleton_manager import (
+                    get_singleton_cuda_optimizer,
+                    CudaSingletonConfig,
+                )
+
                 # CudaConfig 초기화 시 None 안전하게 처리
                 max_batch_size = (
                     self.config.max_batch_size
                     if self.config.max_batch_size is not None
                     else 256
                 )
-                optimal_batch_size = (
-                    self.config.optimal_batch_size
-                    if self.config.optimal_batch_size is not None
-                    else self.batch_size
-                )
 
-                cuda_config = CudaConfig(
+                cuda_config = CudaSingletonConfig(
                     batch_size=self.batch_size,
                     min_batch_size=self.config.min_batch_size,
                     max_batch_size=max_batch_size,
-                    optimal_batch_size=optimal_batch_size,
                     use_amp=self.config.use_mixed_precision,
                 )
-                self.cuda_optimizer = BaseCudaOptimizer(cuda_config)
-                logger.info("CUDA 최적화 모듈 초기화 성공")
+                self.cuda_optimizer = get_singleton_cuda_optimizer(
+                    config=cuda_config, requester_name="dynamic_batch_size"
+                )
+
+                if self.cuda_optimizer:
+                    logger.debug("CUDA 최적화기 연결 완료 (dynamic_batch_size)")
+                else:
+                    logger.debug("CUDA 사용 불가능 (dynamic_batch_size)")
             except Exception as e:
-                logger.warning(f"CUDA 최적화 모듈 초기화 실패: {str(e)}")
+                logger.debug(f"CUDA 최적화기 연결 실패 (dynamic_batch_size): {str(e)}")
 
         # 초기 메모리 상태 확인
         self.initial_memory_usage = self._get_memory_usage()
@@ -705,6 +712,7 @@ class DynamicBatchSize:
         """소멸자"""
         self.cleanup()
 
+
 def get_available_memory(device: Union[str, torch.device]) -> Tuple[int, int]:
     """
     사용 가능한 메모리 용량 확인
@@ -748,6 +756,7 @@ def get_available_memory(device: Union[str, torch.device]) -> Tuple[int, int]:
         logger.error(f"메모리 정보 획득 중 오류 발생: {str(e)}")
         # 기본값 반환 (단위: 바이트, 약 4GB 사용 가능)
         return 8 * (1024**3), 4 * (1024**3)
+
 
 def estimate_batch_size(
     sample_input_size: int,
@@ -796,6 +805,7 @@ def estimate_batch_size(
         return 1
 
     return estimated_batch_size
+
 
 def get_safe_batch_size(
     initial_batch_size: int = 32,
@@ -878,6 +888,7 @@ def get_safe_batch_size(
     )
     return min_batch_size
 
+
 def adjust_batch_size_for_gpu_memory(
     model: torch.nn.Module,
     input_shape: Tuple[int, ...],
@@ -951,6 +962,7 @@ def adjust_batch_size_for_gpu_memory(
 
     logger.info(f"자동 조정된 배치 크기: {best_batch_size}")
     return best_batch_size
+
 
 class DynamicBatchSizeController:
     """동적 배치 크기 컨트롤러"""

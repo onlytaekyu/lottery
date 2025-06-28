@@ -124,17 +124,28 @@ class MLCandidateGenerator:
             self.logger.warning(f"메모리 관리자 초기화 실패: {e}")
             self.memory_manager = None
 
-        # CUDA 최적화 초기화
+        # CUDA 최적화 초기화 (싱글톤 사용)
         try:
-            cuda_config = CudaConfig(
+            from ..utils.cuda_singleton_manager import (
+                get_singleton_cuda_optimizer,
+                CudaSingletonConfig,
+            )
+
+            cuda_config = CudaSingletonConfig(
                 use_amp=True,
                 batch_size=256,  # ML 후보 생성은 큰 배치 사용
                 use_cudnn=True,
             )
-            self.cuda_optimizer = get_cuda_optimizer(cuda_config)
-            self.logger.info("✅ ML 후보 생성기 CUDA 최적화 초기화 완료")
+            self.cuda_optimizer = get_singleton_cuda_optimizer(
+                config=cuda_config, requester_name="ml_candidate_generator"
+            )
+
+            if self.cuda_optimizer:
+                self.logger.debug("CUDA 최적화기 연결 완료 (ml_candidate_generator)")
+            else:
+                self.logger.debug("CUDA 사용 불가능 (ml_candidate_generator)")
         except Exception as e:
-            self.logger.warning(f"CUDA 최적화 초기화 실패: {e}")
+            self.logger.debug(f"CUDA 최적화기 연결 실패 (ml_candidate_generator): {e}")
             self.cuda_optimizer = None
 
         # 프로세스 풀 관리자 초기화

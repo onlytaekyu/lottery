@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+
 @dataclass
 class ConfigPath:
     """설정 파일 경로 정보"""
@@ -33,6 +34,7 @@ class ConfigPath:
         self.main_config = os.path.normpath(self.main_config)
         self.optimization_config = os.path.normpath(self.optimization_config)
         self.pattern_analysis_config = os.path.normpath(self.pattern_analysis_config)
+
 
 @dataclass
 class DirectoryPaths:
@@ -75,6 +77,7 @@ class DirectoryPaths:
         """모델 파일 경로 반환"""
         return os.path.join(self.models_dir, filename)
 
+
 class ConfigValidator(ABC):
     """설정 검증 인터페이스"""
 
@@ -85,6 +88,7 @@ class ConfigValidator(ABC):
     @abstractmethod
     def get_required_keys(self) -> List[str]:
         """필수 키 목록 반환"""
+
 
 class DefaultConfigValidator(ConfigValidator):
     """기본 설정 검증기"""
@@ -139,6 +143,7 @@ class DefaultConfigValidator(ConfigValidator):
             "training.use_filtered_vector",
             "analysis.enable_pattern_analysis",
         ]
+
 
 @dataclass
 class CudaConfig:
@@ -243,9 +248,10 @@ class CudaConfig:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
 
-            logger.info("CUDA 최적화 설정 완료")
+            logger.debug("CUDA 최적화 설정 완료 (unified_config)")
         except Exception as e:
             logger.error(f"CUDA 최적화 설정 실패: {str(e)}")
+
 
 class UnifiedConfigManager:
     """통합 설정 관리자"""
@@ -438,6 +444,7 @@ class UnifiedConfigManager:
                 raise KeyError(f"설정 키 누락: {key_path}")
             return default
 
+
 class ConfigProxy:
     """설정 프록시 클래스 (기존 API 호환성)"""
 
@@ -466,10 +473,12 @@ class ConfigProxy:
         """중첩된 키 경로로 값 조회"""
         return self._manager.get_nested_value(self._config, key_path, default)
 
+
 # 편의 함수들
 def get_config_manager() -> UnifiedConfigManager:
     """통합 설정 관리자 반환"""
     return UnifiedConfigManager()
+
 
 def load_config(
     config_name: str = "main", file_path: Optional[str] = None
@@ -478,14 +487,17 @@ def load_config(
     manager = UnifiedConfigManager()
     return manager.get_config(config_name)
 
+
 def get_directory_paths() -> DirectoryPaths:
     """디렉토리 경로 설정 반환"""
     manager = UnifiedConfigManager()
     return manager.directory_paths
 
+
 def get_paths() -> DirectoryPaths:
     """경로 설정 반환 (별칭)"""
     return get_directory_paths()
+
 
 def get_config(config_name: str = "main") -> ConfigProxy:
     """설정 반환 (편의 함수)"""

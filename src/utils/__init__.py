@@ -141,13 +141,10 @@ def cleanup_resources():
 
 # 최적화된 로깅 시스템 함수들 추가
 def test_logging_system():
-    """로깅 시스템 테스트 실행"""
-    with _import_lock:
-        if "test_logging_system" not in _imported_items:
-            from .test_optimized_logging import run_logging_system_test
-
-            _imported_items["test_logging_system"] = run_logging_system_test
-    return _imported_items["test_logging_system"]()
+    """로깅 시스템 테스트 실행 (테스트 파일이 삭제되어 비활성화)"""
+    logger = get_logger(__name__)
+    logger.info("로깅 시스템 테스트가 비활성화되었습니다.")
+    return "테스트 파일이 삭제되어 테스트를 실행할 수 없습니다."
 
 
 def get_optimization_report():
@@ -170,6 +167,26 @@ def start_logging_monitoring(interval_seconds: int = 60):
     return _imported_items["start_logging_monitoring"](interval_seconds)
 
 
+def get_cuda_optimizer(requester_name: str = "unknown"):
+    """싱글톤 CUDA 최적화기 반환"""
+    with _import_lock:
+        if "get_cuda_optimizer" not in _imported_items:
+            from .cuda_singleton_manager import get_singleton_cuda_optimizer
+
+            _imported_items["get_cuda_optimizer"] = get_singleton_cuda_optimizer
+    return _imported_items["get_cuda_optimizer"](requester_name=requester_name)
+
+
+def get_cuda_statistics():
+    """CUDA 싱글톤 통계 반환"""
+    with _import_lock:
+        if "get_cuda_statistics" not in _imported_items:
+            from .cuda_singleton_manager import get_cuda_statistics as _get_stats
+
+            _imported_items["get_cuda_statistics"] = _get_stats
+    return _imported_items["get_cuda_statistics"]()
+
+
 # 즉시 로드하지 않고 함수로 제공
 __all__ = [
     "get_logger",
@@ -183,4 +200,6 @@ __all__ = [
     "test_logging_system",
     "get_optimization_report",
     "start_logging_monitoring",
+    "get_cuda_optimizer",
+    "get_cuda_statistics",
 ]

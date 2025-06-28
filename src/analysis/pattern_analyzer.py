@@ -100,17 +100,28 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         # 메모리 관리자 초기화 (기존 유지)
         self.memory_manager = MemoryManager()
 
-        # CUDA 최적화 초기화
+        # CUDA 최적화 초기화 (싱글톤 사용)
         try:
-            cuda_config = CudaConfig(
+            from ..utils.cuda_singleton_manager import (
+                get_singleton_cuda_optimizer,
+                CudaSingletonConfig,
+            )
+
+            cuda_config = CudaSingletonConfig(
                 use_amp=True,  # 자동 혼합 정밀도
                 batch_size=64,
                 use_cudnn=True,
             )
-            self.cuda_optimizer = get_cuda_optimizer(cuda_config)
-            self.logger.info("✅ CUDA 최적화 시스템 초기화 완료")
+            self.cuda_optimizer = get_singleton_cuda_optimizer(
+                config=cuda_config, requester_name="pattern_analyzer"
+            )
+
+            if self.cuda_optimizer:
+                self.logger.debug("CUDA 최적화기 연결 완료 (pattern_analyzer)")
+            else:
+                self.logger.debug("CUDA 사용 불가능 (pattern_analyzer)")
         except Exception as e:
-            self.logger.warning(f"CUDA 최적화 초기화 실패: {e}")
+            self.logger.debug(f"CUDA 최적화기 연결 실패 (pattern_analyzer): {e}")
             self.cuda_optimizer = None
 
         # 프로세스 풀 관리자 초기화

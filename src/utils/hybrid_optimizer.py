@@ -104,13 +104,24 @@ class HybridOptimizer:
             self.memory_manager = MemoryManager(memory_config)
             logger.info("MemoryManager 초기화 완료")
 
-            # CUDA 최적화 초기화 (선택적)
+            # CUDA 최적화 초기화 (싱글톤 사용)
             try:
-                cuda_config = CudaConfig(use_amp=True, use_cudnn=True)
-                self.cuda_optimizer = CudaOptimizer(cuda_config)
-                logger.info("CUDA 최적화 초기화 완료")
+                from .cuda_singleton_manager import (
+                    get_singleton_cuda_optimizer,
+                    CudaSingletonConfig,
+                )
+
+                cuda_config = CudaSingletonConfig(use_amp=True, use_cudnn=True)
+                self.cuda_optimizer = get_singleton_cuda_optimizer(
+                    config=cuda_config, requester_name="hybrid_optimizer"
+                )
+
+                if self.cuda_optimizer:
+                    logger.debug("CUDA 최적화기 연결 완료 (hybrid_optimizer)")
+                else:
+                    logger.debug("CUDA 사용 불가능 (hybrid_optimizer)")
             except Exception as e:
-                logger.info(f"CUDA 최적화 초기화 실패 (GPU 없음): {e}")
+                logger.debug(f"CUDA 최적화기 연결 실패 (hybrid_optimizer): {e}")
                 self.cuda_optimizer = None
 
         except Exception as e:

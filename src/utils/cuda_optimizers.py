@@ -93,7 +93,7 @@ class CudaConfig:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
 
-            logger.info("CUDA 최적화 설정 완료")
+            logger.debug("CUDA 최적화 설정 완료 (내부)")
         except Exception as e:
             logger.error(f"CUDA 최적화 설정 실패: {str(e)}")
 
@@ -175,7 +175,7 @@ class BaseCudaOptimizer:
                     if self.config.use_graphs:
                         self._initialize_cuda_graphs()
 
-            logger.info("CUDA 최적화기 초기화 완료")
+            logger.debug("CUDA 최적화기 초기화 완료 (내부)")
         except Exception as e:
             logger.error(f"CUDA 최적화기 초기화 실패: {str(e)}")
 
@@ -443,8 +443,20 @@ class BaseCudaOptimizer:
             logger.error(f"워커 루프 실행 실패: {str(e)}")
 
     def cleanup(self):
-        """리소스 정리"""
+        """리소스 정리 - Python 종료 시 안전한 정리"""
         try:
+            # Python 종료 상태 확인
+            import sys
+
+            if sys is None or getattr(sys, "meta_path", None) is None:
+                # Python이 종료 중이면 중요한 정리만 수행
+                if hasattr(self, "_executor") and self._executor:
+                    try:
+                        self._executor.shutdown(wait=False)
+                    except:
+                        pass
+                return
+
             with self._profiler.profile("cleanup"):
                 # 워커 스레드 종료
                 for _ in range(2):
@@ -474,14 +486,26 @@ class BaseCudaOptimizer:
 
                 logger.info("리소스 정리 완료")
         except Exception as e:
-            logger.error(f"리소스 정리 실패: {str(e)}")
+            # Python 종료 시에는 로깅도 실패할 수 있음
+            try:
+                logger.error(f"리소스 정리 실패: {str(e)}")
+            except:
+                pass
 
     def __del__(self):
-        """소멸자"""
+        """소멸자 - Python 종료 시 안전한 정리"""
         try:
+            # Python 종료 상태 확인
+            import sys
+
+            if sys is None or getattr(sys, "meta_path", None) is None:
+                # Python이 종료 중이면 정리 작업을 건너뜀
+                return
+
             self.cleanup()
-        except Exception as e:
-            logger.error(f"소멸자 실행 실패: {str(e)}")
+        except Exception:
+            # Python 종료 시에는 로깅도 실패할 수 있으므로 조용히 무시
+            pass
 
 
 """
