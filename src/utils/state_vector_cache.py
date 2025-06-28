@@ -69,13 +69,28 @@ class StateVectorCache:
         self.logger = get_logger(__name__)
 
         # ConfigProxy에서 직접 딕셔너리로 변환 (필요한 경우)
-        if isinstance(self.config, ConfigProxy):
-            self.config = self.config.to_dict()
+        if hasattr(self.config, "__class__") and "ConfigProxy" in str(
+            self.config.__class__
+        ):
+            # ConfigProxy는 딕셔너리처럼 사용 가능하므로 그대로 사용
+            pass
 
-        if "caching" not in self.config:
-            raise KeyError("설정에 'caching' 섹션이 없습니다.")
+        # ConfigProxy에서 안전하게 caching 설정 가져오기
+        try:
+            if hasattr(self.config, "get"):
+                caching_config = self.config.get("caching", {})
+            else:
+                caching_config = (
+                    self.config.get("caching", {})
+                    if hasattr(self.config, "get")
+                    else {}
+                )
 
-        caching_config = self.config["caching"]
+            if not caching_config:
+                raise KeyError("설정에 'caching' 섹션이 없습니다.")
+
+        except (KeyError, AttributeError) as e:
+            raise KeyError("설정에 'caching' 섹션이 없습니다.") from e
 
         # 필수 캐시 설정 키 확인
         required_keys = [
