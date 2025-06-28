@@ -10,8 +10,9 @@ from collections import Counter
 
 from .base_analyzer import BaseAnalyzer
 from ..shared.types import LotteryNumber
-from ..utils.error_handler_refactored import get_logger
+from ..utils import get_logger
 
+# 최적화된 로거 자동 할당
 logger = get_logger(__name__)
 
 

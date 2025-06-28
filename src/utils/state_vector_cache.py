@@ -18,7 +18,7 @@ from datetime import datetime
 from .unified_logging import get_logger
 from .unified_config import ConfigProxy
 
-# 로거 설정
+# 최적화된 로거 자동 할당
 logger = get_logger(__name__)
 
 # 전역 캐시 인스턴스

@@ -16,8 +16,9 @@ from pathlib import Path
 import time
 
 from ..base_model import ModelWithAMP
-from ...utils.error_handler_refactored import get_logger
+from ...utils import get_logger
 
+# 최적화된 로거 자동 할당
 logger = get_logger(__name__)
 
 
