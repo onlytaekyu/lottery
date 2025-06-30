@@ -50,54 +50,75 @@ class LogConfig:
 
 
 class DuplicateMessageFilter(logging.Filter):
-    """중복 메시지 필터링 클래스"""
+    """중복 메시지 필터 - 최강화 버전"""
 
-    def __init__(self, interval: int = 10):
+    def __init__(self, interval: float = 10.0):
         super().__init__()
-        self.interval = interval  # 중복 필터링 간격 (초)
-        self._recent_messages: Dict[str, float] = {}
-        self._message_lock = threading.RLock()
+        self.interval = interval
+        self.last_logged = {}
+        self.message_counts = {}
+        self.blocked_patterns = set()
+        self.global_block_list = set()  # 영구 차단 목록
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """중복 메시지 필터링"""
-        try:
-            # 성공 메시지와 완료 메시지만 필터링
-            message = record.getMessage()
-            if not ("✅" in message or "완료" in message or "성공" in message):
+        """메시지 필터링 - 최강화 로직"""
+        message = record.getMessage()
+        current_time = time.time()
+
+        # 🚨 영구 차단 패턴 (무한 반복 방지)
+        permanent_block_patterns = [
+            "동기화된 차원",
+            "향상된 벡터화 시스템 연결 완료",
+            "새로운 벡터화 인스턴스 생성",
+            "기존 청사진 시스템 비활성화",
+            "벡터 청사진 정의 완료",
+            "벡터 청사진 시스템 초기화 완료",
+            "168차원 표준 특성 이름 생성 완료",
+        ]
+
+        for pattern in permanent_block_patterns:
+            if pattern in message:
+                pattern_key = f"permanent_{hash(pattern)}"
+
+                # 패턴별로 첫 1회만 허용
+                if pattern_key not in self.global_block_list:
+                    self.global_block_list.add(pattern_key)
+                    return True  # 첫 번째만 허용
+                else:
+                    return False  # 이후 모든 메시지 차단
+
+        # 🔄 주기적 허용 패턴 (1시간마다)
+        periodic_patterns = ["초기화 완료", "생성 완료", "연결 완료"]
+
+        for pattern in periodic_patterns:
+            if pattern in message:
+                key = f"periodic_{hash(pattern)}"
+                if key in self.last_logged:
+                    if current_time - self.last_logged[key] < 3600:  # 1시간
+                        return False
+                self.last_logged[key] = current_time
                 return True
 
-            with self._message_lock:
-                # 메시지 해시 생성
-                msg_hash = hashlib.md5(message.encode()).hexdigest()
-                current_time = time.time()
+        # ⚠️ 경고 메시지 (24시간마다)
+        warning_patterns = [
+            "설정에서",
+            "찾을 수 없습니다",
+            "벡터 차원",
+            "차원 불일치",
+            "필수 특성이 누락",
+        ]
 
-                # 최근에 같은 메시지가 있었는지 확인
-                if msg_hash in self._recent_messages:
-                    last_time = self._recent_messages[msg_hash]
-                    if current_time - last_time < self.interval:
-                        return False  # 중복 메시지 필터링
-
-                # 메시지 시간 업데이트
-                self._recent_messages[msg_hash] = current_time
-
-                # 오래된 메시지 정리 (메모리 최적화)
-                if len(self._recent_messages) > 1000:
-                    self._cleanup_old_messages(current_time)
-
+        for pattern in warning_patterns:
+            if pattern in message:
+                key = f"warning_{hash(pattern)}"
+                if key in self.last_logged:
+                    if current_time - self.last_logged[key] < 86400:  # 24시간
+                        return False
+                self.last_logged[key] = current_time
                 return True
 
-        except Exception:
-            # 필터링 실패 시 메시지 통과
-            return True
-
-    def _cleanup_old_messages(self, current_time: float):
-        """오래된 메시지 정리"""
-        cutoff_time = current_time - self.interval * 2
-        self._recent_messages = {
-            msg_hash: timestamp
-            for msg_hash, timestamp in self._recent_messages.items()
-            if timestamp > cutoff_time
-        }
+        # 기타 메시지는 모두 허용
+        return True
 
 
 class OptimizedLoggerFactory:
@@ -118,12 +139,12 @@ class OptimizedLoggerFactory:
     _handler_cache: Dict[str, logging.Handler] = {}
     _handler_refs: Set[str] = set()
 
-    # 허용된 로그 파일 경로
+    # 허용된 로그 파일 경로 (단일 파일로 통합)
     ALLOWED_LOG_FILES = {
         "main": "logs/lottery.log",
-        "file_usage": "logs/file_usage.log",
-        "model": "logs/model.log",
-        "performance": "logs/performance.log",
+        # "file_usage": "logs/file_usage.log",  # 주석: 메인 로그에 통합
+        # "model": "logs/model.log",            # 주석: 메인 로그에 통합
+        # "performance": "logs/performance.log", # 주석: 메인 로그에 통합
         "error": "logs/error.log",
     }
 
@@ -300,25 +321,23 @@ class OptimizedLoggerFactory:
         return logging.Formatter(fmt=config.format_string, datefmt=config.date_format)
 
     def _get_log_file_for_logger(self, logger_name: str) -> str:
-        """로거 이름에 따른 적절한 로그 파일 반환"""
+        """로거 이름에 따른 적절한 로그 파일 반환 (단일 파일로 통합)"""
         name_lower = logger_name.lower()
 
-        if any(
-            keyword in name_lower for keyword in ["file", "data", "io", "cache", "disk"]
-        ):
-            return self.ALLOWED_LOG_FILES["file_usage"]
-        elif any(keyword in name_lower for keyword in ["model", "train", "inference"]):
-            return self.ALLOWED_LOG_FILES["model"]
-        elif any(
-            keyword in name_lower for keyword in ["performance", "profiler", "memory"]
-        ):
-            return self.ALLOWED_LOG_FILES["performance"]
-        elif any(
-            keyword in name_lower for keyword in ["error", "exception", "critical"]
-        ):
+        # 에러 로그만 별도 파일에 기록
+        if any(keyword in name_lower for keyword in ["error", "exception", "critical"]):
             return self.ALLOWED_LOG_FILES["error"]
         else:
+            # 모든 일반 로그는 메인 파일에 통합
             return self.ALLOWED_LOG_FILES["main"]
+
+        # 주석: 기존 분류 로직 (사용 안함)
+        # if any(keyword in name_lower for keyword in ["file", "data", "io", "cache", "disk"]):
+        #     return self.ALLOWED_LOG_FILES["file_usage"]
+        # elif any(keyword in name_lower for keyword in ["model", "train", "inference"]):
+        #     return self.ALLOWED_LOG_FILES["model"]
+        # elif any(keyword in name_lower for keyword in ["performance", "profiler", "memory"]):
+        #     return self.ALLOWED_LOG_FILES["performance"]
 
     def _global_exception_handler(self, exc_type, exc_value, exc_traceback):
         """전역 예외 핸들러"""

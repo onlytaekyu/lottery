@@ -152,9 +152,20 @@ class BaseCudaOptimizer:
         self._cuda_events: List[Any] = []  # type: ignore
         self._cuda_graphs: List[Any] = []  # type: ignore
         self._custom_kernels: Dict[str, Any] = {}  # type: ignore
-        self._initialize()
+        self._batch_processor = None  # 누락된 속성 추가
 
-    def _initialize(self):
+        # 초기화 상태 플래그
+        self._initialized = False
+        self._cleanup_called = False
+
+        try:
+            self._initialize_cuda()
+            self._initialized = True
+        except Exception as e:
+            logger.error(f"CUDA 최적화기 초기화 실패: {e}")
+            self._initialized = False
+
+    def _initialize_cuda(self):
         """초기화"""
         try:
             with self._profiler.profile("initialize"):
@@ -449,53 +460,87 @@ class BaseCudaOptimizer:
 
     def cleanup(self):
         """리소스 정리 - Python 종료 시 안전한 정리"""
+        if self._cleanup_called:
+            return
+
+        self._cleanup_called = True
+
         try:
             # Python 종료 상태 확인
             import sys
 
             if sys is None or getattr(sys, "meta_path", None) is None:
                 # Python이 종료 중이면 중요한 정리만 수행
-                if hasattr(self, "_executor") and self._executor:
-                    try:
-                        self._executor.shutdown(wait=False)
-                    except:
-                        pass
+                self._emergency_cleanup()
                 return
 
-            with self._profiler.profile("cleanup"):
-                # 워커 스레드 종료
-                for _ in range(2):
-                    self._inference_queue.put(None)
+            # 정상적인 정리 수행
+            self._perform_cleanup()
 
-                for worker in self._worker_threads:
-                    worker.join()
-
-                # 큐 비우기
-                while not self._inference_queue.empty():
-                    try:
-                        self._inference_queue.get_nowait()
-                    except:
-                        pass
-
-                while not self._result_queue.empty():
-                    try:
-                        self._result_queue.get_nowait()
-                    except:
-                        pass
-
-                # 리소스 해제
-                self._executor.shutdown(wait=True)
-                self._memory_manager.cleanup()
-                self._thread_cache.clear()
-                torch.cuda.empty_cache()
-
-                logger.info("리소스 정리 완료")
         except Exception as e:
             # Python 종료 시에는 로깅도 실패할 수 있음
             try:
-                logger.error(f"리소스 정리 실패: {str(e)}")
+                logger.error(f"CUDA 정리 실패: {e}")
             except:
                 pass
+
+    def _emergency_cleanup(self):
+        """긴급 정리 (Python 종료 시)"""
+        try:
+            if hasattr(self, "_executor") and self._executor:
+                self._executor.shutdown(wait=False)
+        except:
+            pass
+
+    def _perform_cleanup(self):
+        """정상적인 리소스 정리"""
+        try:
+            # 프로파일러 정리
+            if hasattr(self, "_profiler") and self._profiler:
+                try:
+                    self._profiler.cleanup()
+                except:
+                    pass
+
+            # 추론 큐 정리
+            if hasattr(self, "_inference_queue") and self._inference_queue:
+                try:
+                    self._inference_queue.clear()
+                except:
+                    pass
+
+            # 배치 프로세서 정리
+            if hasattr(self, "_batch_processor") and self._batch_processor:
+                try:
+                    self._batch_processor.cleanup()
+                except:
+                    pass
+
+            # 실행자 정리
+            if hasattr(self, "_executor") and self._executor:
+                try:
+                    self._executor.shutdown(wait=True, timeout=1.0)
+                except:
+                    pass
+
+            # CUDA 스트림 정리
+            if hasattr(self, "stream") and self.stream:
+                try:
+                    self.stream.synchronize()
+                except:
+                    pass
+
+            # 메모리 풀 정리
+            if hasattr(self, "_memory_pool") and self._memory_pool:
+                try:
+                    self._memory_pool.empty_cache()
+                except:
+                    pass
+
+            logger.info("리소스 정리 완료")
+
+        except Exception as e:
+            logger.error(f"리소스 정리 실패: {e}")
 
     def __del__(self):
         """소멸자 - Python 종료 시 안전한 정리"""

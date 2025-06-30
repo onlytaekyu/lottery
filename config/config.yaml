@@ -403,6 +403,7 @@ vectorizer:
     output_path: data/cache/feature_vectors_full.npy
   normalize_output: true
   use_cache: true
+  remove_low_variance: false
 weights:
   long_term: 0.6
   mid_term: 0.23

@@ -28,6 +28,10 @@ from .distribution_analyzer import DistributionAnalyzer
 from ..utils.pattern_filter import PatternFilter, get_pattern_filter
 from .base_analyzer import BaseAnalyzer
 
+# 추가 분석기 임포트 (1단계: cluster, trend 활성화)
+from .cluster_analyzer import ClusterAnalyzer
+from .trend_analyzer import TrendAnalyzer
+
 logger = get_logger(__name__)
 
 
@@ -48,10 +52,25 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         if not isinstance(self.config, ConfigProxy):
             self.config = ConfigProxy(self.config)
 
-        # 분석기 초기화
+        # 기존 분석기 초기화
         self.pattern_analyzer = PatternAnalyzer(config)  # type: ignore
         self.roi_analyzer = ROIAnalyzer(self.config)  # type: ignore
         self.distribution_analyzer = DistributionAnalyzer(self.config)  # type: ignore
+
+        # 새로 활성화된 분석기들 (1단계)
+        try:
+            self.cluster_analyzer = ClusterAnalyzer(self.config)  # type: ignore
+            self.logger.info("✅ 클러스터 분석기 활성화 완료")
+        except Exception as e:
+            self.logger.warning(f"클러스터 분석기 초기화 실패: {e}")
+            self.cluster_analyzer = None
+
+        try:
+            self.trend_analyzer = TrendAnalyzer(self.config)  # type: ignore
+            self.logger.info("✅ 트렌드 분석기 활성화 완료")
+        except Exception as e:
+            self.logger.warning(f"트렌드 분석기 초기화 실패: {e}")
+            self.trend_analyzer = None
 
         # 패턴 벡터라이저 초기화
         self.pattern_vectorizer = PatternVectorizer(self.config)  # type: ignore
@@ -108,6 +127,7 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
                 except Exception as e:
                     self.logger.warning(f"캐시 로드 실패: {e}")
 
+            # 기존 분석기들
             # 패턴 분석 (기존 + 추가 분석 함께 수행)
             self.performance_tracker.start_tracking("pattern_analysis")
             try:
@@ -126,10 +146,50 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             finally:
                 self.performance_tracker.stop_tracking("distribution_analysis")
 
-            # 결과 통합
+            # ROI 분석 (기존에 있었지만 누락된 부분 추가)
+            roi_results = {}
+            if self.roi_analyzer:
+                self.performance_tracker.start_tracking("roi_analysis")
+                try:
+                    roi_results = self.roi_analyzer.analyze(historical_data)
+                    self.logger.info("✅ ROI 분석 완료")
+                finally:
+                    self.performance_tracker.stop_tracking("roi_analysis")
+
+            # 새로 활성화된 분석기들 (1단계)
+            # 클러스터 분석
+            cluster_results = {}
+            if self.cluster_analyzer:
+                self.performance_tracker.start_tracking("cluster_analysis")
+                try:
+                    cluster_results = self.cluster_analyzer.analyze(historical_data)
+                    self.logger.info("✅ 클러스터 분석 완료")
+                except Exception as e:
+                    self.logger.warning(f"클러스터 분석 실패: {e}")
+                    cluster_results = {}
+                finally:
+                    self.performance_tracker.stop_tracking("cluster_analysis")
+
+            # 트렌드 분석
+            trend_results = {}
+            if self.trend_analyzer:
+                self.performance_tracker.start_tracking("trend_analysis")
+                try:
+                    trend_results = self.trend_analyzer.analyze(historical_data)
+                    self.logger.info("✅ 트렌드 분석 완료")
+                except Exception as e:
+                    self.logger.warning(f"트렌드 분석 실패: {e}")
+                    trend_results = {}
+                finally:
+                    self.performance_tracker.stop_tracking("trend_analysis")
+
+            # 결과 통합 (새로운 분석 결과 포함)
             result = {
                 "pattern_analysis": pattern_results.get("full_analysis", {}),
                 "distribution_pattern": distribution_pattern,
+                "roi_analysis": roi_results,  # ROI 분석 결과 추가
+                "cluster_analysis": cluster_results,  # 클러스터 분석 결과 추가
+                "trend_analysis": trend_results,  # 트렌드 분석 결과 추가
                 "data_count": len(historical_data),
                 "timestamp": int(time.time()),  # 현재 시간 타임스탬프
             }

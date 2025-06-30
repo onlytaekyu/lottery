@@ -100,20 +100,41 @@ def initialize_optimization_systems(config: Dict[str, Any]):
     global process_pool_manager, hybrid_optimizer, memory_manager
 
     try:
-        # 최적화 설정 로드
+        # 최적화 설정 로드 (별도 파일에서)
         optimization_config = config.get("optimization", {})
 
-        # ProcessPool 관리자 초기화
+        # optimization.yaml 파일에서 추가 설정 로드
         try:
-            process_pool_config = optimization_config.get(
-                "process_pool",
-                {
-                    "max_workers": min(4, psutil.cpu_count()),
-                    "chunk_size": 100,
-                    "timeout": 300,
-                },
-            )
-            process_pool_manager = get_process_pool_manager(process_pool_config)
+            from src.utils.unified_config import load_config as load_optimization_config
+
+            optimization_file_config = load_optimization_config("optimization")
+            if isinstance(optimization_file_config, dict):
+                # 파일 설정을 기본 설정과 병합
+                optimization_config.update(optimization_file_config)
+        except Exception as e:
+            logger.debug(f"optimization.yaml 로드 실패, 기본 설정 사용: {e}")
+
+            # ProcessPool 관리자 초기화
+        try:
+            process_pool_config = optimization_config.get("process_pool", {})
+            # 기본값 설정
+            if not isinstance(process_pool_config, dict):
+                process_pool_config = {}
+
+            # 안전한 기본값 설정
+            safe_config = {
+                "max_workers": process_pool_config.get(
+                    "max_workers", min(4, psutil.cpu_count())
+                ),
+                "chunk_size": process_pool_config.get("chunk_size", 100),
+                "timeout": process_pool_config.get("timeout", 300),
+                "memory_limit_mb": process_pool_config.get("memory_limit_mb", 1024),
+                "enable_monitoring": process_pool_config.get("enable_monitoring", True),
+                "auto_restart": process_pool_config.get("auto_restart", True),
+                "restart_threshold": process_pool_config.get("restart_threshold", 100),
+            }
+
+            process_pool_manager = get_process_pool_manager(safe_config)
             logger.info("ProcessPool 관리자 초기화 완료")
         except Exception as e:
             logger.warning(f"ProcessPool 관리자 초기화 실패: {e}")
@@ -454,54 +475,24 @@ def run_optimized_data_analysis() -> bool:
             # 통합 분석 결과 생성
             unified_analysis = merge_analysis_results(analysis_results)
 
-            # 🧠 고급 특성 추출 엔진 적용
-            from src.analysis.feature_extractor import FeatureExtractor
+            # 향상된 벡터화 시스템만 사용 (FeatureExtractor 비활성화)
+            logger.info("향상된 벡터화 시스템만 사용하여 특성 추출")
 
-            feature_extractor = FeatureExtractor(config)
-            extraction_result = feature_extractor.extract_all_features(unified_analysis)
+            # 기본값 설정
+            optimized_features = np.array([])
+            optimized_names = []
+            extraction_result = type(
+                "MockResult",
+                (),
+                {
+                    "quality_metrics": {"entropy": 0.0, "diversity": 0.0},
+                    "feature_names": [],
+                    "feature_matrix": np.array([]),
+                    "feature_groups": {},
+                },
+            )()
 
-            # extraction_result가 올바른 타입인지 확인
-            if hasattr(extraction_result, "feature_names") and hasattr(
-                extraction_result, "feature_matrix"
-            ):
-                logger.info(
-                    f"특성 추출 완료: {len(extraction_result.feature_names)}개 특성"
-                )
-                logger.info(
-                    f"특성 그룹: {list(extraction_result.feature_groups.keys())}"
-                )
-
-                # 특성 최적화 (선택적)
-                if extraction_result.feature_matrix.size > 0:
-                    optimized_features, optimized_names, importance_scores = (
-                        feature_extractor.optimize_feature_selection(
-                            extraction_result.feature_matrix,
-                            extraction_result.feature_names,
-                        )
-                    )
-                    logger.info(f"특성 최적화 완료: {len(optimized_names)}개 특성 선택")
-                else:
-                    optimized_features = extraction_result.feature_matrix
-                    optimized_names = extraction_result.feature_names
-            else:
-                logger.error(
-                    f"특성 추출 결과가 올바르지 않습니다: {type(extraction_result)}"
-                )
-                # 기본값 설정
-                optimized_features = np.array([])
-                optimized_names = []
-                extraction_result = type(
-                    "MockResult",
-                    (),
-                    {
-                        "quality_metrics": {},
-                        "feature_names": [],
-                        "feature_matrix": np.array([]),
-                        "feature_groups": {},
-                    },
-                )()
-
-            # 벡터화 실행 (기존 벡터화 시스템과 병행)
+            # 벡터화 실행 (향상된 벡터화 시스템 사용)
             feature_vector = None
             feature_names = []
 
@@ -622,10 +613,14 @@ def run_optimized_data_analysis() -> bool:
 
             # 특성 벡터 저장
             if vectorizer is not None:
-                vector_path = vectorizer.save_vector_to_file(combined_vector)
-                names_path = vectorizer.save_names_to_file(
-                    combined_names, "feature_vector_full.names.json"
+                success = vectorizer.save_vector_to_file(
+                    combined_vector, combined_names
                 )
+                if success:
+                    vector_path = "data/cache/feature_vector_full.npy"
+                    names_path = "data/cache/feature_vector_full.names.json"
+                else:
+                    logger.error("벡터 저장 실패")
             else:
                 # vectorizer가 None인 경우 직접 저장
                 from pathlib import Path

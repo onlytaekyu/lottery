@@ -38,11 +38,15 @@ def get_cuda_alloc_config():
         return "expandable_segments:True,max_split_size_mb:512"
 
 
-# CUDA 설정 적용
-if torch.cuda.is_available():
+# CUDA 설정 적용 (중복 방지)
+if torch.cuda.is_available() and "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
     cuda_config = get_cuda_alloc_config()
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = cuda_config
     logger.info(f"CUDA 메모리 설정: {cuda_config}")
+elif torch.cuda.is_available():
+    logger.debug(
+        f"CUDA 메모리 설정 이미 적용됨: {os.environ.get('PYTORCH_CUDA_ALLOC_CONF', 'N/A')}"
+    )
 
 T = TypeVar("T")
 
@@ -785,9 +789,12 @@ class MemoryManager:
             logger.info("CUDA를 사용할 수 없습니다")
             return
 
-        # CUDA 할당 설정
-        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = self.config.cuda_memory_config
-        logger.info(f"CUDA 메모리 설정: {self.config.cuda_memory_config}")
+        # CUDA 할당 설정 (중복 방지)
+        if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+            os.environ["PYTORCH_CUDA_ALLOC_CONF"] = self.config.cuda_memory_config
+            logger.debug(f"CUDA 메모리 설정: {self.config.cuda_memory_config}")
+        else:
+            logger.debug("CUDA 메모리 설정 이미 적용됨")
 
     def _start_worker_threads(self):
         """작업자 스레드 시작"""
@@ -815,7 +822,7 @@ class MemoryManager:
                 thread.start()
                 self.worker_threads.append(thread)
 
-            logger.info(
+            logger.debug(
                 f"메모리 관리자 작업자 스레드 {len(self.worker_threads)}개 시작됨"
             )
         except Exception as e:
@@ -1121,7 +1128,10 @@ class MemoryManager:
                         logger.debug("메모리 풀 정리 완료")
 
                 duration = time.time() - start_time
-                logger.info(f"메모리 정리 완료 (소요 시간: {duration:.2f}초)")
+                if duration > 0.1:  # 0.1초 이상 걸린 경우만 INFO 로그
+                    logger.info(f"메모리 정리 완료 (소요 시간: {duration:.2f}초)")
+                else:
+                    logger.debug(f"메모리 정리 완료 (소요 시간: {duration:.2f}초)")
 
         except Exception as e:
             logger.error(f"메모리 정리 중 오류 발생: {str(e)}")
@@ -1396,7 +1406,10 @@ class MemoryManager:
                         logger.debug("메모리 풀 정리 완료")
 
                 duration = time.time() - start_time
-                logger.info(f"메모리 정리 완료 (소요 시간: {duration:.2f}초)")
+                if duration > 0.1:  # 0.1초 이상 걸린 경우만 INFO 로그
+                    logger.info(f"메모리 정리 완료 (소요 시간: {duration:.2f}초)")
+                else:
+                    logger.debug(f"메모리 정리 완료 (소요 시간: {duration:.2f}초)")
 
                 return True
         except Exception as e:

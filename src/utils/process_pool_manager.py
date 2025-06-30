@@ -75,6 +75,7 @@ class ProcessPoolManager:
                 logger.info(
                     f"ProcessPool 초기화 완료: {self.config.max_workers}개 워커"
                 )
+                _initialization_logged = True
             else:
                 logger.debug(
                     f"ProcessPool 초기화 완료: {self.config.max_workers}개 워커"
@@ -249,7 +250,7 @@ _initialization_logged = False  # 초기화 로그 중복 방지
 
 
 def get_process_pool_manager(
-    config: Optional[ProcessPoolConfig] = None,
+    config: Optional[Union[ProcessPoolConfig, Dict[str, Any]]] = None,
 ) -> ProcessPoolManager:
     """전역 ProcessPool 관리자 반환 (싱글톤 패턴)"""
     global _global_process_pool_manager, _initialization_logged
@@ -259,7 +260,12 @@ def get_process_pool_manager(
             config = ProcessPoolConfig()
         _global_process_pool_manager = ProcessPoolManager(config)
         if not _initialization_logged:
-            logger.info(f"전역 ProcessPool 관리자 생성: {config.max_workers}개 워커")
+            # config가 딕셔너리인 경우 max_workers 키로 접근
+            if isinstance(config, dict):
+                max_workers = config.get("max_workers", 4)
+            else:
+                max_workers = config.max_workers
+            logger.info(f"전역 ProcessPool 관리자 생성: {max_workers}개 워커")
             _initialization_logged = True
     else:
         logger.debug("기존 전역 ProcessPool 관리자 재사용")
