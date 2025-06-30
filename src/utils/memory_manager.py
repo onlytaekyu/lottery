@@ -325,7 +325,7 @@ class MemoryConfig:
         default_factory=dict
     )
     memory_pool_stats: Dict[str, Any] = field(default_factory=dict)
-    auto_cleanup_interval: float = 60.0  # 자동 정리 간격
+    auto_cleanup_interval: float = 120.0  # 자동 정리 간격 (2분으로 증가)
 
     # 플랫폼별 메모리 설정
     platform: str = platform.system()

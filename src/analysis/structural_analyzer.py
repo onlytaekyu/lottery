@@ -15,6 +15,7 @@ from src.analysis.base_analyzer import BaseAnalyzer
 from src.shared.types import LotteryNumber
 from src.utils.error_handler_refactored import get_logger
 from src.shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality
+from src.utils.unified_performance import performance_monitor
 
 logger = get_logger(__name__)
 
@@ -29,7 +30,22 @@ class StructuralAnalyzer(BaseAnalyzer):
         Args:
             config: 분석에 사용할 설정
         """
-        super().__init__(config, analyzer_type="structural")
+        super().__init__(config, name="structural")
+
+    def _analyze_impl(
+        self, historical_data: List[LotteryNumber], *args, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        BaseAnalyzer의 추상 메서드 구현
+
+        Args:
+            historical_data: 분석할 과거 당첨 번호 목록
+            *args, **kwargs: 추가 매개변수
+
+        Returns:
+            Dict[str, Any]: 구조적 패턴 분석 결과
+        """
+        return self.analyze(historical_data)
 
     def analyze(self, historical_data: List[LotteryNumber]) -> Dict[str, Any]:
         """

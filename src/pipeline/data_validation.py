@@ -495,9 +495,13 @@ class DataValidator:
 
         return round(quality_score, 2)
 
-    def generate_quality_report(self, data: List[LotteryNumber]) -> DataQualityReport:
+    def generate_quality_report(
+        self, data: List[LotteryNumber], validation_result: ValidationResult = None
+    ) -> DataQualityReport:
         """데이터 품질 보고서 생성"""
-        validation_result = self.validate_lottery_data(data)
+        # 검증 결과가 제공되지 않은 경우에만 새로 검증
+        if validation_result is None:
+            validation_result = self.validate_lottery_data(data)
 
         # 유효하지 않은 회차 찾기
         invalid_draws = []

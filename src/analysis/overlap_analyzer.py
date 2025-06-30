@@ -25,7 +25,7 @@ class OverlapAnalyzer(BaseAnalyzer):
         Args:
             config: 분석에 사용할 설정
         """
-        super().__init__(config, analyzer_type="overlap")
+        super().__init__(config, name="overlap")
 
     def analyze(self, historical_data: List[LotteryNumber]) -> Dict[str, Any]:
         """

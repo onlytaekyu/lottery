@@ -25,7 +25,7 @@ class StatisticalAnalyzer(BaseAnalyzer):
         Args:
             config: 분석에 사용할 설정
         """
-        super().__init__(config, analyzer_type="statistical")
+        super().__init__(config, name="statistical")
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs

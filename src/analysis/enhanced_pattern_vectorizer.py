@@ -75,7 +75,7 @@ class EnhancedPatternVectorizer:
         Returns:
             결합된 벡터 (차원과 이름이 100% 일치 보장)
         """
-        logger.info("🚀 벡터-이름 동시 생성 시스템 시작")
+        logger.debug("🚀 벡터-이름 동시 생성 시스템 시작")
 
         # 🎯 Step 1: 순서 보장된 벡터+이름 동시 생성
         combined_vector = []
@@ -136,13 +136,13 @@ class EnhancedPatternVectorizer:
                 # 차원 축소
                 combined_vector = combined_vector[:target_dim]
                 combined_names = combined_names[:target_dim]
-                logger.info(f"벡터 차원 축소: {current_dim} → {target_dim}")
+                logger.debug(f"벡터 차원 축소: {current_dim} → {target_dim}")
             else:
                 # 차원 확장
                 while len(combined_vector) < target_dim:
                     combined_vector.append(np.random.uniform(0.1, 1.0))
                     combined_names.append(f"extended_feature_{len(combined_names)+1}")
-                logger.info(f"벡터 차원 확장: {current_dim} → {target_dim}")
+                logger.debug(f"벡터 차원 확장: {current_dim} → {target_dim}")
         else:
             logger.debug(f"벡터 차원 일치: {current_dim}차원 (조정 불필요)")
 
@@ -375,7 +375,7 @@ class EnhancedPatternVectorizer:
         remaining_features = self._calculate_remaining_features_real()
         essential_features.update(remaining_features)
 
-        logger.info(f"✅ 필수 특성 22개 실제 계산 완료")
+        logger.debug(f"✅ 필수 특성 22개 실제 계산 완료")
         return essential_features
 
     def _calculate_gap_stddev_real(self) -> float:
@@ -586,7 +586,7 @@ class EnhancedPatternVectorizer:
 
             # Step 1: 0값 특성 실제 계산으로 대체
             zero_indices = np.where(vector_array == 0.0)[0]
-            logger.info(
+            logger.debug(
                 f"0값 특성 {len(zero_indices)}개 발견 ({len(zero_indices)/len(vector_array)*100:.1f}%)"
             )
 
@@ -610,7 +610,7 @@ class EnhancedPatternVectorizer:
             # Step 4: 최종 품질 검증
             zero_ratio = np.sum(vector_array == 0) / len(vector_array)
 
-            logger.info(
+            logger.debug(
                 f"✅ 특성 품질 개선 완료: 0값비율={zero_ratio*100:.1f}%, 엔트로피={entropy:.3f}"
             )
 
@@ -1311,7 +1311,7 @@ class EnhancedPatternVectorizer:
         Returns:
             샘플 배열 (1123, 168) 형태
         """
-        logger.info(f"🚀 슬라이딩 윈도우 샘플 생성 시작 (윈도우 크기: {window_size})")
+        logger.debug(f"🚀 슬라이딩 윈도우 샘플 생성 시작 (윈도우 크기: {window_size})")
 
         if len(historical_data) < window_size:
             logger.warning(f"데이터 부족: {len(historical_data)} < {window_size}")
@@ -1345,7 +1345,7 @@ class EnhancedPatternVectorizer:
 
         # 결과 로깅
         expected_size = samples_array.nbytes
-        logger.info(f"✅ 슬라이딩 윈도우 샘플 생성 완료:")
+        logger.debug(f"✅ 슬라이딩 윈도우 샘플 생성 완료:")
         logger.info(f"   - 생성된 샘플 수: {len(samples)} 개")
         logger.info(f"   - 샘플 차원: {samples_array.shape[1]} 차원")
         logger.info(

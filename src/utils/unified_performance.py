@@ -35,7 +35,7 @@ class PerformanceConfig:
     enable_cpu_monitoring: bool = True
     enable_gpu_monitoring: bool = True
     time_threshold: float = 0.1
-    memory_threshold: int = 1_000_000
+    memory_threshold: int = 10_000_000
     report_threshold: float = 0.1
     save_reports: bool = True
     report_dir: str = "logs/performance"
@@ -378,7 +378,7 @@ def performance_monitor(name: str):
     except Exception as e:
         # 프로파일링 도구 중복이나 기타 오류 발생 시 무시하고 계속 진행
         if "profiling tool is already active" in str(e).lower():
-            logger.warning(f"프로파일링 도구 중복 감지 ({name}), 무시하고 계속 진행")
+            # 중복 감지 시 경고 없이 계속 진행
             yield
         else:
             # 다른 오류는 다시 발생

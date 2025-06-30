@@ -74,6 +74,13 @@ class DuplicateMessageFilter(logging.Filter):
             "벡터 청사진 정의 완료",
             "벡터 청사진 시스템 초기화 완료",
             "168차원 표준 특성 이름 생성 완료",
+            "🚀 벡터-이름 동시 생성 시스템 시작",
+            "✅ 필수 특성 22개 실제 계산 완료",
+            "🚀 슬라이딩 윈도우 샘플 생성 시작",
+            "벡터 차원 축소:",
+            "벡터 차원 확장:",
+            "0값 특성",
+            "특성 품질 개선 완료",
         ]
 
         for pattern in permanent_block_patterns:

@@ -142,6 +142,36 @@ class ClusterAnalyzer:
         if "paths" in config and "analysis_result_dir" in config["paths"]:
             self.result_path = config["paths"]["analysis_result_dir"]
 
+    def analyze(self, historical_data) -> Dict[str, Any]:
+        """
+        클러스터 분석을 수행하는 메인 메서드 (파이프라인 호환)
+
+        Args:
+            historical_data: 분석할 과거 당첨 번호 목록
+
+        Returns:
+            Dict[str, Any]: 클러스터 분석 결과
+        """
+        try:
+            # LotteryNumber 객체에서 numbers 리스트 추출
+            if hasattr(historical_data[0], "numbers"):
+                draw_history = [draw.numbers for draw in historical_data]
+            else:
+                draw_history = historical_data
+
+            # 기존 analyze_clusters 메서드 호출
+            return self.analyze_clusters(draw_history)
+
+        except Exception as e:
+            self.logger.error(f"클러스터 분석 중 오류: {e}")
+            return {
+                "clusters": [],
+                "adjacency_matrix": None,
+                "embedding": None,
+                "cluster_embedding_quality": {},
+                "cluster_groups": {},
+            }
+
     def _compute_cluster_quality(
         self, embeddings: np.ndarray, labels: np.ndarray
     ) -> Dict[str, Any]:

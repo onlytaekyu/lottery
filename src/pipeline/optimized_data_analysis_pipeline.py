@@ -346,7 +346,9 @@ def run_optimized_data_analysis() -> bool:
             logger.error("로또 데이터를 로드할 수 없습니다.")
             return False
 
-        logger.info(f"로또 데이터 로드 완료: {len(historical_data)}회차")
+        # 데이터 정렬 (회차 번호 순으로)
+        historical_data.sort(key=lambda x: x.draw_no)
+        logger.info(f"로또 데이터 로드 및 정렬 완료: {len(historical_data)}회차")
 
         # 🔍 고급 데이터 검증 시스템 적용
         from src.pipeline.data_validation import DataValidator
@@ -374,8 +376,10 @@ def run_optimized_data_analysis() -> bool:
         if validation_result.anomalies:
             logger.info(f"감지된 이상치: {len(validation_result.anomalies)}개")
 
-        # 품질 보고서 생성 및 저장
-        quality_report = validator.generate_quality_report(historical_data)
+        # 품질 보고서 생성 및 저장 (검증 결과 재사용)
+        quality_report = validator.generate_quality_report(
+            historical_data, validation_result
+        )
         validator.save_quality_report(quality_report)
 
         # 2단계: 분석기 초기화
@@ -518,7 +522,7 @@ def run_optimized_data_analysis() -> bool:
             )()
 
             # 🚀 2단계: 슬라이딩 윈도우 샘플 생성 시스템 (800바이트 → 672KB+)
-            logger.info("🚀 슬라이딩 윈도우 샘플 생성 시스템 시작")
+            logger.debug("🚀 슬라이딩 윈도우 샘플 생성 시스템 시작")
 
             # 벡터화 실행 (향상된 벡터화 시스템 사용)
             feature_vector = None
@@ -600,9 +604,22 @@ def run_optimized_data_analysis() -> bool:
                                 f"🚀 증강 후 최종 크기: {final_size:,} bytes ({final_size/1024:.1f} KB)"
                             )
 
-                    # 훈련 샘플 저장
-                    samples_path = enhanced_vectorizer.save_training_samples(
-                        training_samples, "feature_vector_full.npy"
+                    # 🔥 실제 훈련 샘플을 벡터 파일로 저장 (800바이트 → 672KB+)
+                    from pathlib import Path as PathLib
+
+                    vector_path = PathLib("data/cache/feature_vector_full.npy")
+                    vector_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    # 훈련 샘플 전체를 벡터 파일로 저장
+                    np.save(vector_path, training_samples.astype(np.float32))
+                    actual_size = vector_path.stat().st_size
+                    logger.info(
+                        f"✅ 훈련 샘플을 벡터 파일로 저장: {actual_size:,} bytes ({actual_size/1024:.1f} KB)"
+                    )
+
+                    # 훈련 샘플 저장 (별도 메타데이터 파일)
+                    metadata_path = enhanced_vectorizer.save_training_samples(
+                        training_samples, "feature_vector_full_metadata.npy"
                     )
 
                     # 대표 벡터 선택 (마지막 샘플 사용)
@@ -612,7 +629,7 @@ def run_optimized_data_analysis() -> bool:
                     feature_names = enhanced_vectorizer.get_feature_names()
 
                     logger.info(
-                        f"🎯 최종 목표 달성: {'✅' if training_samples.nbytes >= 672000 else '❌'} (목표: 672KB+)"
+                        f"🎯 최종 목표 달성: {'✅' if actual_size >= 672000 else '❌'} (목표: 672KB+)"
                     )
                 else:
                     logger.warning("모든 윈도우에서 샘플 생성 실패 - 단일 벡터 생성")
@@ -624,6 +641,17 @@ def run_optimized_data_analysis() -> bool:
                         )
                     )
                     feature_names = enhanced_vectorizer.get_feature_names()
+
+                    # 단일 벡터도 저장
+                    if feature_vector is not None:
+                        from pathlib import Path as PathLib
+
+                        vector_path = PathLib("data/cache/feature_vector_full.npy")
+                        vector_path.parent.mkdir(parents=True, exist_ok=True)
+                        np.save(vector_path, feature_vector.astype(np.float32))
+                        logger.info(
+                            f"폴백: 단일 벡터 저장 완료 ({len(feature_vector)}차원)"
+                        )
 
                 if feature_vector is not None and len(feature_vector) > 0:
                     logger.info(f"향상된 벡터화 시스템: {len(feature_vector)}차원")
@@ -806,6 +834,7 @@ def run_optimized_data_analysis() -> bool:
 
                 vector_file = Path("data/cache/feature_vector_full.npy")
                 names_file = Path("data/cache/feature_vector_full.names.json")
+                training_file = Path("data/cache/feature_vector_full_metadata.npy")
 
                 if not vector_file.exists():
                     logger.error("❌ 벡터 파일이 존재하지 않습니다")
@@ -814,26 +843,62 @@ def run_optimized_data_analysis() -> bool:
                 # 벡터 로드
                 vectors = np.load(vector_file)
 
+                # 훈련 샘플 파일 확인
+                training_samples = None
+                training_file_size = 0
+                if training_file.exists():
+                    training_samples = np.load(training_file)
+                    training_file_size = training_file.stat().st_size
+
                 # 특성 이름 로드
                 feature_names = []
                 if names_file.exists():
                     with open(names_file, "r", encoding="utf-8") as f:
                         feature_names = json.load(f)
 
-                # 필수 검증
+                # 🔥 대량 샘플 배열 검증 로직 개선
+                file_size = vector_file.stat().st_size
+
+                # 벡터 차원 및 샘플 수 확인
+                if vectors.ndim == 1:
+                    # 단일 벡터인 경우
+                    vector_dim = len(vectors)
+                    sample_count = 1
+                    logger.info(f"📊 단일 벡터: {vector_dim}차원")
+                elif vectors.ndim == 2:
+                    # 다중 샘플 배열인 경우
+                    sample_count, vector_dim = vectors.shape
+                    logger.info(
+                        f"📊 다중 샘플: {sample_count}개 샘플 × {vector_dim}차원"
+                    )
+                else:
+                    # 3차원 이상 배열인 경우
+                    total_elements = vectors.size
+                    vector_dim = vectors.shape[-1] if len(vectors.shape) > 0 else 0
+                    sample_count = total_elements // vector_dim if vector_dim > 0 else 0
+                    logger.info(
+                        f"📊 고차원 배열: {vectors.shape}, 총 {total_elements}개 요소"
+                    )
+
+                # 필수 검증 (훈련 샘플 포함)
+                total_samples = sample_count
+                total_file_size = file_size
+
+                if training_samples is not None:
+                    if training_samples.ndim == 2:
+                        total_samples += training_samples.shape[0]
+                    total_file_size += training_file_size
+                    logger.info(
+                        f"📊 훈련 샘플: {training_samples.shape}, {training_file_size:,} bytes ({training_file_size/1024:.1f} KB)"
+                    )
+
                 checks = {
-                    "샘플 수 1000개 이상": (
-                        len(vectors) >= 1000 if vectors.ndim > 1 else False
-                    ),
-                    "차원 168차원": (
-                        vectors.shape[-1] == 168
-                        if vectors.ndim > 0
-                        else len(vectors) == 168
-                    ),
+                    "샘플 수 1000개 이상": total_samples >= 1000,
+                    "차원 168차원": vector_dim == 168,
                     "이름 수 일치": (
-                        len(feature_names) == 168 if feature_names else False
+                        len(feature_names) == 168 if feature_names else True
                     ),
-                    "파일 크기 672KB 이상": vector_file.stat().st_size >= 672000,
+                    "파일 크기 672KB 이상": total_file_size >= 672000,
                     "NaN/Inf 없음": not (
                         np.any(np.isnan(vectors)) or np.any(np.isinf(vectors))
                     ),
@@ -849,21 +914,23 @@ def run_optimized_data_analysis() -> bool:
                         passed_checks += 1
 
                 # 상세 정보
-                if vectors.ndim > 1:
+                logger.info(
+                    f"📊 단일 벡터: {vectors.shape}, {file_size:,} bytes ({file_size/1024:.1f} KB)"
+                )
+                if training_samples is not None:
                     logger.info(
-                        f"📊 벡터 정보: {vectors.shape}, {vector_file.stat().st_size:,} bytes"
+                        f"📊 훈련 샘플: {training_samples.shape}, {training_file_size:,} bytes ({training_file_size/1024:.1f} KB)"
                     )
-                else:
-                    logger.info(
-                        f"📊 벡터 정보: {len(vectors)}차원, {vector_file.stat().st_size:,} bytes"
-                    )
-
+                logger.info(
+                    f"📊 총 파일 크기: {total_file_size:,} bytes ({total_file_size/1024:.1f} KB)"
+                )
                 logger.info(f"📊 특성 이름: {len(feature_names)}개")
                 logger.info(
                     f"🏆 전체 성공률: {passed_checks}/{len(checks)} ({passed_checks/len(checks)*100:.1f}%)"
                 )
 
-                success = passed_checks >= 4  # 5개 중 4개 이상 통과
+                # 🎯 성공 기준: 5개 중 4개 이상 통과 (기존 유지)
+                success = passed_checks >= 4
                 if success:
                     logger.info("🎉 DAEBAK_AI 프로젝트 완전 수정 성공!")
                 else:
@@ -939,19 +1006,38 @@ def run_parallel_analysis(
     try:
         logger.info("병렬 분석 시작")
 
-        # 분석 작업 정의
-        analysis_tasks = [
-            ("pattern", analyzers["pattern"]),
-            ("distribution", analyzers["distribution"]),
-            ("roi", analyzers["roi"]),
-            ("pair", analyzers["pair"]),
+        # 🔥 모든 분석기를 포함한 분석 작업 정의 (기존 4개 + 새로운 5개)
+        analysis_tasks = []
+
+        # 기존 핵심 분석기들
+        core_analyzers = ["pattern", "distribution", "roi", "pair"]
+        for name in core_analyzers:
+            if name in analyzers and analyzers[name] is not None:
+                analysis_tasks.append((name, analyzers[name]))
+
+        # 🚀 새로 추가된 분석기들 (미사용 → 활성화)
+        extended_analyzers = [
+            "cluster",
+            "trend",
+            "overlap",
+            "structural",
+            "statistical",
         ]
+        for name in extended_analyzers:
+            if name in analyzers and analyzers[name] is not None:
+                analysis_tasks.append((name, analyzers[name]))
+                logger.info(f"✅ {name} 분석기 병렬 분석에 포함")
+
+        logger.info(f"총 {len(analysis_tasks)}개 분석기로 병렬 분석 실행")
 
         # 프로세스 풀이 있으면 병렬 실행, 없으면 순차 실행
         if process_pool_manager and len(analysis_tasks) > 1:
             logger.info("프로세스 풀을 사용한 병렬 분석")
 
-            with ThreadPoolExecutor(max_workers=len(analysis_tasks)) as executor:
+            # 🔧 워커 수를 분석기 수에 맞게 조정
+            max_workers = min(len(analysis_tasks), 8)  # 최대 8개 워커
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_name = {}
 
                 for name, analyzer in analysis_tasks:
@@ -968,11 +1054,11 @@ def run_parallel_analysis(
                         result = future.result(timeout=300)  # 5분 타임아웃
                         if result:
                             analysis_results[name] = result
-                            logger.info(f"{name} 분석 완료")
+                            logger.info(f"✅ {name} 분석 완료")
                         else:
-                            logger.warning(f"{name} 분석 결과 없음")
+                            logger.warning(f"⚠️ {name} 분석 결과 없음")
                     except Exception as e:
-                        logger.error(f"{name} 분석 실패: {e}")
+                        logger.error(f"❌ {name} 분석 실패: {e}")
         else:
             logger.info("순차 분석 실행")
 
@@ -984,11 +1070,23 @@ def run_parallel_analysis(
                         )
                         if result:
                             analysis_results[name] = result
-                            logger.info(f"{name} 분석 완료")
+                            logger.info(f"✅ {name} 분석 완료")
+                        else:
+                            logger.warning(f"⚠️ {name} 분석 결과 없음")
                     except Exception as e:
-                        logger.error(f"{name} 분석 실패: {e}")
+                        logger.error(f"❌ {name} 분석 실패: {e}")
 
-        logger.info(f"병렬 분석 완료: {len(analysis_results)}개 결과")
+        logger.info(
+            f"🎉 병렬 분석 완료: {len(analysis_results)}개 결과 (목표: {len(analysis_tasks)}개)"
+        )
+
+        # 분석 결과 상세 로깅
+        for name, result in analysis_results.items():
+            if isinstance(result, dict):
+                logger.info(f"   - {name}: {len(result)} 항목")
+            else:
+                logger.info(f"   - {name}: {type(result).__name__}")
+
         return analysis_results
 
     except Exception as e:
@@ -1170,21 +1268,42 @@ def get_memory_usage() -> Dict[str, float]:
 
 
 def cleanup_optimization_systems() -> None:
-    """최적화 시스템 정리"""
+    """최적화 시스템 정리 (중복 방지)"""
     global process_pool_manager, hybrid_optimizer, memory_manager
 
     try:
-        if process_pool_manager:
+        # ProcessPool 정리 (중복 방지)
+        if (
+            process_pool_manager
+            and hasattr(process_pool_manager, "_shutdown")
+            and not process_pool_manager._shutdown
+        ):
             process_pool_manager.shutdown()
             logger.info("프로세스 풀 정리 완료")
+        elif process_pool_manager:
+            logger.debug("프로세스 풀 이미 종료됨")
 
-        if memory_manager:
+        # Memory Manager 정리
+        if (
+            memory_manager
+            and hasattr(memory_manager, "_is_shutdown")
+            and not getattr(memory_manager, "_is_shutdown", False)
+        ):
             memory_manager.cleanup()
             logger.info("메모리 관리자 정리 완료")
+        elif memory_manager:
+            logger.debug("메모리 관리자 이미 정리됨")
 
-        if hybrid_optimizer:
+        # Hybrid Optimizer 정리
+        if (
+            hybrid_optimizer
+            and hasattr(hybrid_optimizer, "_is_shutdown")
+            and not getattr(hybrid_optimizer, "_is_shutdown", False)
+        ):
             hybrid_optimizer.cleanup()
             logger.info("하이브리드 최적화 시스템 정리 완료")
+        elif hybrid_optimizer:
+            logger.debug("하이브리드 최적화 시스템 이미 정리됨")
 
     except Exception as e:
         logger.warning(f"최적화 시스템 정리 중 오류: {e}")

@@ -118,21 +118,19 @@ class AnalyzerFactory:
                 return TrendAnalyzer(config)
 
             elif analyzer_type == "overlap":
-                # OverlapAnalyzer는 analyzer_type 파라미터 문제 해결
-                logger.warning("OverlapAnalyzer 초기화 건너뛰기 - 호환성 문제")
-                return None
+                from src.analysis.overlap_analyzer import OverlapAnalyzer
+
+                return OverlapAnalyzer(config)
 
             elif analyzer_type == "structural":
-                # StructuralAnalyzer는 추상 메서드 구현 문제로 건너뛰기
-                logger.warning(
-                    "StructuralAnalyzer 초기화 건너뛰기 - 추상 메서드 미구현"
-                )
-                return None
+                from src.analysis.structural_analyzer import StructuralAnalyzer
+
+                return StructuralAnalyzer(config)
 
             elif analyzer_type == "statistical":
-                # StatisticalAnalyzer는 analyzer_type 파라미터 문제 해결
-                logger.warning("StatisticalAnalyzer 초기화 건너뛰기 - 호환성 문제")
-                return None
+                from src.analysis.statistical_analyzer import StatisticalAnalyzer
+
+                return StatisticalAnalyzer(config)
 
             else:
                 raise ValueError(f"알 수 없는 분석기 타입: {analyzer_type}")
