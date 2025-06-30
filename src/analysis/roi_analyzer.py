@@ -157,9 +157,7 @@ class ROIAnalyzer(BaseAnalyzer):
             results["roi_cluster_score"] = self.calculate_roi_cluster_score(
                 historical_data
             )
-            results["low_risk_bonus_flag"] = self.calculate_low_risk_bonus_flag(
-                historical_data
-            )
+            # 보너스 관련 플래그 제거됨
             results["roi_pattern_group_id"] = self.calculate_roi_pattern_group_id(
                 historical_data
             )
@@ -771,31 +769,7 @@ class ROIAnalyzer(BaseAnalyzer):
             logger.info("ROI 클러스터 점수 계산 완료")
             return total_score
 
-    def calculate_low_risk_bonus_flag(
-        self, historical_data: List[LotteryNumber]
-    ) -> bool:
-        """저위험 보너스 플래그를 계산합니다."""
-        logger.info("저위험 보너스 플래그 계산 중...")
-
-        if len(historical_data) < 30:
-            return False
-
-        # 최근 30회차의 위험도 분석
-        recent_draws = historical_data[-30:]
-        risk_scores = []
-
-        for draw in recent_draws:
-            risk_score = self._calculate_risk_score(historical_data, draw.numbers)
-            risk_scores.append(risk_score)
-
-        # 평균 위험도가 0.4 이하면 저위험 보너스
-        average_risk = np.mean(risk_scores)
-        is_low_risk = average_risk <= 0.4
-
-        logger.info(
-            f"저위험 보너스 플래그: {is_low_risk} (평균 위험도: {average_risk:.3f})"
-        )
-        return is_low_risk
+    # calculate_low_risk_bonus_flag 메서드 완전 삭제됨
 
     def calculate_roi_pattern_group_id(
         self, historical_data: List[LotteryNumber]

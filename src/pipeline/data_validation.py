@@ -162,9 +162,7 @@ class DataValidator:
             if len(set(draw.numbers)) != len(draw.numbers):
                 errors.append(f"회차 {draw.draw_no}: 중복 번호 존재")
 
-            # 보너스 번호 검증
-            if self.bonus_required and not hasattr(draw, "bonus") or draw.bonus is None:
-                warnings.append(f"회차 {draw.draw_no}: 보너스 번호 누락")
+            # 보너스 번호 검증 제거됨 - 메인 번호만 검증
 
         return errors, warnings
 
@@ -186,16 +184,7 @@ class DataValidator:
                         f"({num}, 유효 범위: {self.min_number}-{self.max_number})"
                     )
 
-            # 보너스 번호 범위 검증
-            if hasattr(draw, "bonus") and draw.bonus is not None:
-                if not isinstance(draw.bonus, int):
-                    errors.append(f"회차 {draw.draw_no}: 보너스 번호가 정수가 아님")
-                elif not (self.min_number <= draw.bonus <= self.max_number):
-                    errors.append(f"회차 {draw.draw_no}: 보너스 번호 범위 초과")
-                elif draw.bonus in draw.numbers:
-                    errors.append(
-                        f"회차 {draw.draw_no}: 보너스 번호가 메인 번호와 중복"
-                    )
+            # 보너스 번호 범위 검증 제거됨 - 메인 번호만 검증
 
         return errors, warnings
 

@@ -324,7 +324,7 @@ reporting:
     txt: false
 roi_weighting:
   enable: true
-  low_risk_bonus: 0.1
+  # low_risk_bonus: 보너스 관련 설정 제거됨
   max_pairs: 2
   min_cluster_pairs: 2
   min_pairs: 1

@@ -61,7 +61,7 @@ def test_complete_vector_system():
             "gap_statistics": {"mean": 7.5, "std": 2.3, "max": 15, "min": 2},
             "roi_features": {
                 "roi_group_score": {"1": 0, "2": 1, "3": 2},
-                "low_risk_bonus_flag": {"1": True, "2": False, "3": True},
+                # "low_risk_bonus_flag": 보너스 관련 플래그 제거됨,
             },
         }
 
