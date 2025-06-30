@@ -505,11 +505,34 @@ def run_optimized_data_analysis() -> bool:
             feature_vector = None
             feature_names = []
 
-            if vectorizer is not None:
-                try:
-                    result = vectorizer.vectorize_extended_features(unified_analysis)
-                    if isinstance(result, tuple) and len(result) == 2:
-                        feature_vector, feature_names = result
+            # 향상된 벡터화 시스템 사용 (EnhancedPatternVectorizer)
+            try:
+                from ..analysis.enhanced_pattern_vectorizer import (
+                    EnhancedPatternVectorizer,
+                )
+
+                enhanced_vectorizer = EnhancedPatternVectorizer(config)
+                feature_vector = enhanced_vectorizer.vectorize_full_analysis_enhanced(
+                    unified_analysis
+                )
+                feature_names = enhanced_vectorizer.get_feature_names()
+
+                if feature_vector is not None and len(feature_vector) > 0:
+                    logger.info(f"향상된 벡터화 시스템: {len(feature_vector)}차원")
+                else:
+                    logger.warning("향상된 벡터화 시스템 실패 - 기존 시스템 사용")
+                    # 폴백: 기존 벡터화 시스템
+                    if vectorizer is not None and hasattr(
+                        vectorizer, "vectorize_full_analysis"
+                    ):
+                        feature_vector = vectorizer.vectorize_full_analysis(
+                            unified_analysis
+                        )
+                        feature_names = (
+                            vectorizer.get_feature_names()
+                            if hasattr(vectorizer, "get_feature_names")
+                            else []
+                        )
                         if feature_vector is not None and len(feature_vector) > 0:
                             logger.info(
                                 f"기존 벡터화 시스템: {len(feature_vector)}차원"
@@ -518,13 +541,36 @@ def run_optimized_data_analysis() -> bool:
                             feature_vector = None
                             feature_names = []
                     else:
-                        logger.warning(
-                            f"벡터화 시스템에서 예상치 못한 반환 형태: {type(result)}"
-                        )
                         feature_vector = None
                         feature_names = []
-                except Exception as e:
-                    logger.warning(f"기존 벡터화 시스템 오류: {e}")
+
+            except Exception as e:
+                logger.warning(f"향상된 벡터화 시스템 오류: {e}")
+                # 폴백: 기존 벡터화 시스템
+                if vectorizer is not None and hasattr(
+                    vectorizer, "vectorize_full_analysis"
+                ):
+                    try:
+                        feature_vector = vectorizer.vectorize_full_analysis(
+                            unified_analysis
+                        )
+                        feature_names = (
+                            vectorizer.get_feature_names()
+                            if hasattr(vectorizer, "get_feature_names")
+                            else []
+                        )
+                        if feature_vector is not None and len(feature_vector) > 0:
+                            logger.info(
+                                f"기존 벡터화 시스템: {len(feature_vector)}차원"
+                            )
+                        else:
+                            feature_vector = None
+                            feature_names = []
+                    except Exception as fallback_e:
+                        logger.error(f"기존 벡터화 시스템도 실패: {fallback_e}")
+                        feature_vector = None
+                        feature_names = []
+                else:
                     feature_vector = None
                     feature_names = []
 
@@ -577,7 +623,9 @@ def run_optimized_data_analysis() -> bool:
             # 특성 벡터 저장
             if vectorizer is not None:
                 vector_path = vectorizer.save_vector_to_file(combined_vector)
-                names_path = vectorizer.save_names_to_file(combined_names)
+                names_path = vectorizer.save_names_to_file(
+                    combined_names, "feature_vector_full.names.json"
+                )
             else:
                 # vectorizer가 None인 경우 직접 저장
                 from pathlib import Path

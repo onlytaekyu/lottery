@@ -13,6 +13,7 @@ from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
 from ..utils.unified_config import ConfigProxy
 from torch.utils.data import DataLoader
+import threading
 
 # 스레드 로컬 캐시 가져오기 (memory_manager에서 가져오도록 변경)
 from .memory_manager import (
@@ -35,6 +36,10 @@ from .error_recovery import ErrorRecovery, RecoveryConfig
 from .error_handler_refactored import get_logger
 
 logger = get_logger(__name__)
+
+# GPU 메모리 풀 싱글톤 관리
+_memory_pool_initialized = False
+_memory_pool_lock = threading.RLock()
 
 
 @dataclass
@@ -657,28 +662,33 @@ def optimize_memory():
 
 
 def setup_cuda_memory_pool():
-    """GPU 메모리 풀 설정"""
-    if torch.cuda.is_available():
+    """중복 호출 방지된 GPU 메모리 풀 설정 (완전 싱글톤)"""
+    global _memory_pool_initialized
+
+    with _memory_pool_lock:
+        if _memory_pool_initialized:
+            logger.debug("GPU 메모리 풀 이미 초기화됨 - 스킵")
+            return
+
         try:
-            # GPU 메모리 사용률 제한 (80%)
-            torch.cuda.set_per_process_memory_fraction(0.8)
+            if torch.cuda.is_available():
+                # GPU 메모리 설정
+                torch.cuda.set_per_process_memory_fraction(0.8)
+                torch.cuda.empty_cache()
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
 
-            # 메모리 풀 최적화
-            torch.cuda.empty_cache()
+                logger.info("✅ GPU 메모리 풀 단일 초기화 완료")
+            else:
+                logger.info("CUDA 사용 불가 - CPU 모드")
 
-            # cuDNN 벤치마크 활성화
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.deterministic = False
+            _memory_pool_initialized = True
 
-            # TensorFloat-32 활성화 (Ampere GPU에서 성능 향상)
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-
-            logger.info("GPU 메모리 풀 설정 완료")
         except Exception as e:
-            logger.error(f"GPU 메모리 풀 설정 실패: {str(e)}")
-    else:
-        logger.warning("CUDA를 사용할 수 없어 GPU 메모리 풀을 설정하지 않습니다.")
+            logger.error(f"GPU 메모리 풀 설정 실패: {e}")
+            _memory_pool_initialized = False
 
 
 def get_cuda_memory_info() -> Dict[str, Any]:

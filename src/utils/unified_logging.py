@@ -18,6 +18,8 @@ from typing import Dict, Optional, Any, Set
 from dataclasses import dataclass
 from enum import Enum
 import atexit
+import hashlib
+import time
 
 
 class LogLevel(Enum):
@@ -45,6 +47,57 @@ class LogConfig:
     max_file_size: int = 10 * 1024 * 1024  # 10MB
     backup_count: int = 5
     encoding: str = "utf-8"
+
+
+class DuplicateMessageFilter(logging.Filter):
+    """중복 메시지 필터링 클래스"""
+
+    def __init__(self, interval: int = 10):
+        super().__init__()
+        self.interval = interval  # 중복 필터링 간격 (초)
+        self._recent_messages: Dict[str, float] = {}
+        self._message_lock = threading.RLock()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """중복 메시지 필터링"""
+        try:
+            # 성공 메시지와 완료 메시지만 필터링
+            message = record.getMessage()
+            if not ("✅" in message or "완료" in message or "성공" in message):
+                return True
+
+            with self._message_lock:
+                # 메시지 해시 생성
+                msg_hash = hashlib.md5(message.encode()).hexdigest()
+                current_time = time.time()
+
+                # 최근에 같은 메시지가 있었는지 확인
+                if msg_hash in self._recent_messages:
+                    last_time = self._recent_messages[msg_hash]
+                    if current_time - last_time < self.interval:
+                        return False  # 중복 메시지 필터링
+
+                # 메시지 시간 업데이트
+                self._recent_messages[msg_hash] = current_time
+
+                # 오래된 메시지 정리 (메모리 최적화)
+                if len(self._recent_messages) > 1000:
+                    self._cleanup_old_messages(current_time)
+
+                return True
+
+        except Exception:
+            # 필터링 실패 시 메시지 통과
+            return True
+
+    def _cleanup_old_messages(self, current_time: float):
+        """오래된 메시지 정리"""
+        cutoff_time = current_time - self.interval * 2
+        self._recent_messages = {
+            msg_hash: timestamp
+            for msg_hash, timestamp in self._recent_messages.items()
+            if timestamp > cutoff_time
+        }
 
 
 class OptimizedLoggerFactory:
@@ -196,37 +249,51 @@ class OptimizedLoggerFactory:
     def _get_or_create_console_handler(
         self, config: LogConfig
     ) -> logging.StreamHandler:
-        """콘솔 핸들러 캐시된 생성"""
+        """콘솔 핸들러 캐시된 생성 (중복 메시지 필터링 포함)"""
         handler_key = "console"
 
-        if handler_key not in self._handler_cache:
-            handler = logging.StreamHandler(sys.stdout)
-            handler.setLevel(config.console_level.value)
-            handler.setFormatter(self._create_formatter(config))
-            self._handler_cache[handler_key] = handler
-            self._handler_refs.add(handler_key)
+        if handler_key in self._handler_cache:
+            return self._handler_cache[handler_key]
 
-        return self._handler_cache[handler_key]
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(config.console_level.value)
+        handler.setFormatter(self._create_formatter(config))
+
+        # 중복 메시지 필터 추가
+        duplicate_filter = DuplicateMessageFilter(interval=10)
+        handler.addFilter(duplicate_filter)
+
+        self._handler_cache[handler_key] = handler
+        self._handler_refs.add(handler_key)
+
+        return handler
 
     def _get_or_create_file_handler(
         self, log_file: str, config: LogConfig
     ) -> logging.Handler:
-        """파일 핸들러 캐시된 생성"""
-        handler_key = f"file:{log_file}"
+        """파일 핸들러 캐시된 생성 (중복 메시지 필터링 포함)"""
+        handler_key = f"file_{log_file}"
 
-        if handler_key not in self._handler_cache:
-            handler = logging.handlers.RotatingFileHandler(
-                log_file,
-                maxBytes=config.max_file_size,
-                backupCount=config.backup_count,
-                encoding=config.encoding,
-            )
-            handler.setLevel(config.file_level.value)
-            handler.setFormatter(self._create_formatter(config))
-            self._handler_cache[handler_key] = handler
-            self._handler_refs.add(handler_key)
+        if handler_key in self._handler_cache:
+            return self._handler_cache[handler_key]
 
-        return self._handler_cache[handler_key]
+        handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=config.max_file_size,
+            backupCount=config.backup_count,
+            encoding=config.encoding,
+        )
+        handler.setLevel(config.file_level.value)
+        handler.setFormatter(self._create_formatter(config))
+
+        # 파일 로그에는 중복 필터링을 덜 엄격하게 적용
+        duplicate_filter = DuplicateMessageFilter(interval=5)
+        handler.addFilter(duplicate_filter)
+
+        self._handler_cache[handler_key] = handler
+        self._handler_refs.add(handler_key)
+
+        return handler
 
     def _create_formatter(self, config: LogConfig) -> logging.Formatter:
         """포맷터 생성"""

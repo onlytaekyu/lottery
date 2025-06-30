@@ -3,188 +3,120 @@ description:
 globs: 
 alwaysApply: true
 ---
-description: 'DAEBAK_AI 로또 추천 시스템 구조 규칙 (복제 추첨기 기반 예측 강화, 멀티모델 앙상블, 강화학습/불확실성 통합, 최종 구조 확정)'
-✅ 전체 실행 구조 (업데이트 반영)
-분석 및 전처리 (run1_00_data_analysis.py)
+# 🎯 DAEBAK_AI 프로젝트 통합 코딩 룰
 
-PatternAnalyzer, PairAnalyzer, ClusterAnalyzer, TrendAnalyzer, RaretyAnalyzer 포함
+## 🔧 MCP 서버 필수 활용
+- **@filesystem**: 파일 생성/수정/삭제 시 우선 사용, 실제 프로젝트 구조 파악
+- **@codebase**: 기존 코드 패턴 확인 필수, 중복 방지
+- **@git**: 변경사항 추적, 커밋 히스토리 기반 패턴 유지
 
-.json, .npy, .names.json 분석 결과/벡터 저장
+## 🏗️ 프로젝트 구조 (고정, 변경 금지)
+src/
+├── shared/         # 공통 타입 (LotteryNumber, PatternAnalysis, ModelPrediction)
+├── analysis/       # 분석 모듈 (BaseAnalyzer 상속)
+├── core/          # 핵심 엔진 (RecommendationEngine)
+├── utils/         # 유틸리티 (통합 시스템)
+├── models/        # ML/DL 모델 (BaseModel 상속)
+│   ├── ml/        # LightGBM, XGBoost, CatBoost, RandomForest
+│   ├── dl/        # MLP, AE, LSTM, GNN, Transformer
+│   ├── rl/        # DQN, PPO, Q-table
+│   ├── bayesian/  # BayesianNN
+│   └── meta/      # MetaLearner
+├── evaluation/    # 평가 모듈 (Backtester)
+├── pipeline/      # 파이프라인
+├── training/      # 훈련 모듈
+├── environment/   # 환경 설정
+└── run/          # 실행 파일 (wrapper만)
 
-벡터 수: 70개 이상, 이상치 제거, 정규화
+## ⚙️ 설정 접근 규칙 (엄격 적용)
+```python
+# ✅ 허용된 방식
+config["training"]["use_filtered_vector"]
 
-비당첨 조합 샘플링
+# ❌ 금지된 방식
+config.get("training", {}).get("use_filtered_vector", False)
+safe_get(config, "training.use_filtered_vector")
 
-NegativeSampler, RaretyAwareSampler, 중복 제거/거리 확보 포함
-
-.npy 파일로 샘플 저장
-
-머신러닝 기반 후보 점수화
-
-StatisticalModel + ML 모델: LightGBM, XGBoost, RandomForest, CatBoost
-
-위험도 필터: rule_filter, risk_score_analyzer
-
-출력: 조합별 점수
-
-강화학습 정책 학습
-
-Q-table, REINFORCE, DQN, PPO
-
-backtester.py로 ROI 기반 reward 생성
-
-보상 기준: 3개=1점, 6개=100점 (보너스 없음)
-
-딥러닝 모델 학습
-
-모델: MLP, AE, LSTM, GNN, Transformer, BayesianNet
-
-UnifiedTrainer 기반 학습 (AMP 사용)
-
-LSTM: segment history 활용 / Transformer: attention 기반
-
-추천 조합 생성 및 앙상블
-
-recommendation_engine.py 실행
-
-모델별 점수 조합:
-
-ML: LGBM, XGB, CatBoost
-
-DL: MLP, AE, LSTM, GNN, Transformer
-
-RL: Q-table/PPO 점수
-
-Meta Learner: 회차별 ROI 기반 가중치 자동 조절
-
-최종 조합: 5세트 추천
-
-성능 평가 및 피드백
-
-backtester.py, diversity_evaluator.py로 성능 평가
-
-추천 diversity, ROI, 적중률 기록
-
-Meta Learner 피드백 반영
-
-✅ 새로 반영된 정책 사항 요약
-항목	적용 내용
-✅ 벡터 차원 확대	70개 이상 필수, 필수 항목 검증기 적용
-✅ 벡터 누락 차단	.npy.shape[1] != .names.json 시 예외 발생
-✅ 모델 추가	CatBoost, Transformer, BayesianNN, DQN, PPO, MetaLearner
-✅ 강화학습 보상	3~6개 일치 시 보상 차등, 보너스 없음
-✅ Meta Learner	회차별 추천 성능 기반 가중치 조정
-✅ 추첨기 복제 특성	distance_variance, cohesiveness_score, sequential_pair_rate 등 분석 벡터 포함
-
-✅ 실행 파일 규칙
-src/run/ 안에서만 생성
-
-파일명: run{단계번호}_{설명}.py
-
-run 파일은 wrapper만 담당 (로직 없음)
-
-❌ src/test/에서 실행 불가
-
-✅ 코드 디렉토리 고정
-허용된 경로만 사용:
-
-src/analysis/, src/core/, src/environment/, src/evaluation/,
-src/pipeline/, src/run/, src/shared/, src/training/, src/utils/,
-src/models/,src/models/bayesian/,src/models/dl/,src/models/meta/,src/models/ml/,src/models/rl/
-
-❌ 새 폴더/서브모듈 생성 금지
-
-✅ 공통 기능 모듈
-기능	파일
-설정	config_loader.py (config['key'] 방식만 허용)
-로깅	logger_config.py
-성능 기록	performance_tracker.py, profiler.py
-학습 AMP	cuda_optimizers.py (AMPTrainer 사용)
-저장	model_saver.py, performance_report_writer.py
-벡터 검증	feature_vector_validator.py
-메모리	memory_manager.py, performance_utils.py
-
-✅ 파일 I/O 규칙
-모델 저장: savedModels/{model_name}.pt
-
-분석 결과: data/result/analysis/lottery_data_analysis.json
-
-벡터: data/cache/feature_vectors_full.npy, feature_vector_full.names.json
-
-성능 리포트: data/result/performance_reports/{module_name}_performance_report.json
-
-❌ 날짜 포함 금지
-
-✅ 금지 사항 (강화)
-run*.py 내 직접 로직 (분석, 학습, 저장, 추론 등) 금지
-
-❌ torch.save, argparse, CLI, get(...), safe_get(...) 금지
-
-❌ 파일명에 timestamp 삽입 금지
-
-❌ hybrid_recommender.py 생성 금지
-
-❌ Trainer 클래스 직접 상속 금지 (통일된 UnifiedTrainer 사용)
-
-❌ 차원 불일치 허용 안 됨 (allow_mismatch = false 고정)
-
-✅ 추가사항
-개발시 중복 함수 및 중복 소스가 생기지 않도록 충분히 검토 후 코드 작성
-수정시 구현이 완료된 함수가 사라지거나 망가지지 않게 신경써서 코드 작성
-
-
-📌 설정 접근 규칙 (config.yaml)
-이 규칙은 설정 누락으로 인한 무의미한 fallback 동작을 방지하고,
-모든 설정이 명시적이며 검증 가능한 구조로 유지되도록 강제하는 것을 목적
-
-1. 설정 경로 고정
-- 설정 파일은 반드시 다음 경로에 위치해야 함:
-  D:/VSworkSpace/DAEBAK_AI/lottery/config/config.yaml
-
-2. 설정 접근 방식
-- 모든 설정은 반드시 다음 방식으로 접근해야 함:
-  config["key1"]["key2"]  또는 config.get("key1").get("key2") 와 같은 중첩 접근은 금지
-- `safe_get(...)`, `config.get(..., default)` 형태는 절대 사용 금지
-
-3. 키 누락 시 동작
-- 설정 파일에 명시되지 않은 키에 접근할 경우:
-  - 즉시 오류를 발생시켜야 하며,
-  - 로그로 `[ERROR] 설정 키 누락: config['...']` 메시지를 출력하고
-  - 전체 프로세스를 중단해야 함 (예외 캐치 금지)
-
-4. 기본값 허용 금지
-- config.yaml에 존재하지 않는 설정 키는 코드에서 기본값(fallback)을 적용해서는 안 됨
-- 모든 설정 키는 config.yaml에 반드시 명시되어 있어야 함
-- 새로운 키를 추가할 경우, 설정 파일을 먼저 수정한 후 코드에서 사용해야 함
-
-5. 오류 처리 예시
+# 키 누락 시 즉시 종료
 try:
-    value = config["training"]["use_filtered_vector"]
+    value = config["required_key"]
 except KeyError as e:
     logger.error(f"[ERROR] 설정 키 누락: {str(e)}")
-    raise RuntimeError("설정 키 누락으로 프로세스를 종료합니다.")
+    raise RuntimeError("설정 키 누락으로 프로세스 종료")
+📁 파일 경로 규칙
+python# 고정 경로 (변경 금지)
+config_path = "config/config.yaml"
+models_dir = "savedModels/{model_name}.pt"
+results_dir = "data/result/analysis/"
+vectors_dir = "data/cache/feature_vectors_full.npy"
+reports_dir = "data/result/performance_reports/"
 
-6. 설정 예시 (config.yaml)
-training:
-  use_filtered_vector: true
-vector:
-  min_required_dimension: 70
-paths:
-  feature_vector_path: data/cache/feature_vector_full.npy
-  name_file_path: data/cache/feature_vector_full.names.json
+# ❌ 날짜 포함 금지, 임의 경로 생성 금지
+🔨 코딩 표준
+Import 순서
+python# 1. 표준 라이브러리
+import os, sys, json, time
+from typing import Dict, Any, List, Optional
 
+# 2. 서드파티
+import numpy as np
+import torch
+from sklearn.ensemble import RandomForestClassifier
 
-새로 설정된 MCP 서버들 (filesystem, github, web-search, firecrawl, fetch)을 적극 활용하여 시스템 개발에 반영할 것.
+# 3. 프로젝트 내부
+from ..shared.types import LotteryNumber, ModelPrediction
+from ..utils.unified_logging import get_logger
+from ..utils.cache_paths import get_cache_dir
+클래스 구조
+pythonclass AnalyzerExample(BaseAnalyzer):
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config, analyzer_type="example")
+        self.logger = get_logger(__name__)
+    
+    def analyze(self, data: List[LotteryNumber]) -> Dict[str, Any]:
+        try:
+            # 메인 로직
+            return result
+        except SpecificError as e:
+            self.logger.error(f"분석 오류: {e}")
+            # 폴백 로직
+        except Exception as e:
+            self.logger.error(f"예상치 못한 오류: {e}")
+            raise
+🎯 시스템 아키텍처 규칙
 
-- Filesystem MCP: 현재 프로젝트의 실제 디렉토리 및 파일 구조를 실시간으로 인식하고, 기존 소스 코드 스타일 및 파일 위치에 맞게 일관성 있게 새로운 코드를 생성하거나 수정할 것.
+모델 통합 규칙
+python# 베이스 모델 상속 필수
+class MyModel(BaseModel):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Any]:
+        # 구현 필수
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        # 구현 필수
+    
+    def save(self, path: str) -> bool:
+        # 구현 필수
+    
+    def load(self, path: str) -> bool:
+        # 구현 필수
+🚫 금지사항 (엄격 적용)
 
-- Git MCP: 기존 Git 커밋 히스토리와 브랜치 정보를 참고하여, 변경 이력이 있는 파일의 기존 패턴을 유지하고, 충돌 없는 코드 변경을 우선적으로 적용할 것.
+❌ run*.py 내 직접 로직 작성 (wrapper만 허용)
+❌ torch.save() 직접 사용 (model_saver.py 사용)
+❌ argparse, CLI 인터페이스 사용
+❌ 파일명에 timestamp 포함
+❌ Trainer 클래스 직접 상속 (UnifiedTrainer 사용)
+❌ 차원 불일치 허용 (allow_mismatch=False 고정)
 
-- Web-Search MCP 및 Firecrawl MCP: 외부 라이브러리, API 문서, 최신 모범 예제 등을 실시간으로 참조하여 최신 가이드라인에 맞는 구현 방식을 사용할 것.
+📊 성능 최적화 규칙
+python# 메모리 관리
+from ..utils.memory_manager import MemoryManager
 
-- Fetch MCP: 외부 API 및 문서 데이터에 실시간 접근이 필요한 경우 반드시 활용할 것.
+# AMP 사용
+from ..utils.cuda_optimizers import AMPTrainer
 
-**필수 준수 사항:**  
-- 모든 파일 생성/수정 시 MCP로 파악한 프로젝트 구조, 파일 종속성, 기존 코딩 스타일, Git 변경 이력, 라이브러리 버전 및 설정 규칙(config.yaml) 등을 반드시 고려할 것.  
-- 사용자가 지정한 경로 외 새로운 디렉토리, 파일명, 설정값 등을 임의로 만들지 말 것.  
-- 시스템 일관성 유지를 위해 MCP 서버로 얻을 수 있는 모든 정보를 최대한 활용할 것.
+# 캐시 활용
+from ..utils.cache_paths import get_cache_dir
+
+# 프로파일링
+from ..utils.performance_tracker import performance_monitor

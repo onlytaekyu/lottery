@@ -1056,7 +1056,7 @@ class PatternVectorizer:
             large_arrays.append(combined_vector)
 
             # 벡터 검증
-            self._validate_final_vector(combined_vector)
+            self._validate_final_vector(combined_vector, self.feature_names)
 
             # 벡터와 특성 이름 저장 (캐시 키 포함 경로 사용)
             self.save_vector_to_file(combined_vector, f"feature_vector_{cache_key}.npy")
@@ -1471,6 +1471,10 @@ class PatternVectorizer:
             np.ndarray: 개선된 벡터
         """
         try:
+            # 스칼라 배열 처리
+            if vector.ndim == 0:
+                vector = np.atleast_1d(vector)
+
             # Step 1: 0값 특성 실제 계산으로 대체
             zero_indices = np.where(vector == 0.0)[0]
             essential_features = self._get_essential_features()
@@ -1486,6 +1490,10 @@ class PatternVectorizer:
                     else:
                         # 필수 특성이 아닌 경우 랜덤 값 적용 (0.1 ~ 0.9)
                         vector[idx] = np.random.uniform(0.1, 0.9)
+
+            # 리스트인 경우 numpy 배열로 변환
+            if isinstance(vector, list):
+                vector = np.array(vector)
 
             # Step 2: 특성 정규화 및 다양성 강화
             vector = self._enhance_feature_variance(vector)
@@ -1822,3 +1830,85 @@ class PatternVectorizer:
 
             # 차원 업데이트
             vector_dim = new_dim
+
+    def _calculate_vector_entropy(self, vector: np.ndarray) -> float:
+        """벡터의 엔트로피를 계산합니다."""
+        try:
+            # 히스토그램 생성
+            hist, _ = np.histogram(vector, bins=20, range=(0, 1))
+
+            # 확률 분포 계산
+            hist = hist / np.sum(hist)
+
+            # 0이 아닌 값만 사용
+            hist = hist[hist > 0]
+
+            # 엔트로피 계산
+            if len(hist) > 0:
+                entropy = -np.sum(hist * np.log2(hist))
+                return float(entropy)
+            else:
+                return 0.0
+
+        except Exception as e:
+            self.logger.error(f"엔트로피 계산 실패: {e}")
+            return 0.0
+
+    def _validate_final_vector(
+        self, vector: np.ndarray, feature_names: List[str]
+    ) -> bool:
+        """최종 벡터 검증"""
+        try:
+            # 차원 일치성 검증
+            if len(vector) != len(feature_names):
+                self.logger.error(
+                    f"벡터 차원 불일치: {len(vector)} != {len(feature_names)}"
+                )
+                return False
+
+            # NaN/Inf 검증
+            if np.isnan(vector).any() or np.isinf(vector).any():
+                self.logger.error("벡터에 NaN 또는 Inf 값이 있습니다")
+                return False
+
+            # 0값 비율 검증
+            zero_ratio = np.sum(vector == 0) / len(vector)
+            if zero_ratio > 0.7:  # 70% 초과시 경고
+                self.logger.warning(f"0값 비율이 높습니다: {zero_ratio*100:.1f}%")
+
+            # 엔트로피 검증
+            entropy = self._calculate_vector_entropy(vector)
+            if entropy <= 0:
+                self.logger.warning(f"엔트로피가 낮습니다: {entropy:.3f}")
+
+            self.logger.info(
+                f"✅ 벡터 검증 통과: {len(vector)}차원, 0값비율={zero_ratio*100:.1f}%, 엔트로피={entropy:.3f}"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"벡터 검증 실패: {e}")
+            return False
+
+    def get_feature_names(self) -> List[str]:
+        """특성 이름 목록을 반환합니다."""
+        if hasattr(self, "feature_names") and self.feature_names:
+            return self.feature_names.copy()
+        else:
+            # 기본 특성 이름 생성
+            return [f"feature_{i}" for i in range(146)]  # 기본 146차원
+
+    def save_names_to_file(self, feature_names: List[str], filename: str) -> str:
+        """특성 이름을 JSON 파일로 저장"""
+        try:
+            names_path = Path(self.cache_dir) / filename
+
+            with open(names_path, "w", encoding="utf-8") as f:
+                json.dump(feature_names, f, ensure_ascii=False, indent=2)
+
+            self.logger.info(f"특성 이름 저장 완료: {names_path}")
+            return str(names_path)
+
+        except Exception as e:
+            self.logger.error(f"특성 이름 저장 실패: {e}")
+            raise
