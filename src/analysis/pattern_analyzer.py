@@ -158,6 +158,11 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         # ROI 분석기 초기화
         self.roi_analyzer = ROIAnalyzer(config or {})
 
+        # 🔥 캐시 관리자 초기화 (BaseAnalyzer에서 누락된 부분)
+        from ..utils.cache_manager import CacheManager
+
+        self.cache_manager = CacheManager()
+
         self.logger.info("🎉 PatternAnalyzer 성능 최적화 시스템 초기화 완료")
 
     def load_data(self, limit: Optional[int] = None) -> List[LotteryNumber]:
@@ -2146,3 +2151,87 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
 
     # 이제 advanced_pattern_utils 모듈의 함수들을 직접 사용
     # 중복 메서드들을 제거하고 외부 함수로 위임
+
+    def generate_segment_10_history(
+        self, draw_data: List[LotteryNumber]
+    ) -> List[List[int]]:
+        """
+        회차별 10구간 빈도 히스토리 생성
+
+        Args:
+            draw_data: 로또 번호 데이터
+
+        Returns:
+            List[List[int]]: 각 회차별 10구간 빈도 리스트
+        """
+        try:
+            segment_history = []
+
+            for draw in draw_data:
+                # 10구간 분할 (1-5, 6-10, ..., 41-45)
+                segment_counts = [0] * 10
+
+                for number in draw.numbers:
+                    # 번호를 구간으로 매핑 (1-45 -> 0-9)
+                    segment_idx = min((number - 1) // 5, 9)
+                    segment_counts[segment_idx] += 1
+
+                segment_history.append(segment_counts)
+
+            self.logger.debug(
+                f"10구간 히스토리 생성 완료: {len(segment_history)}개 회차"
+            )
+            return segment_history
+
+        except Exception as e:
+            self.logger.error(f"10구간 히스토리 생성 중 오류: {e}")
+            # 빈 히스토리 반환
+            return [[0] * 10 for _ in range(len(draw_data))]
+
+    def generate_segment_5_history(
+        self, draw_data: List[LotteryNumber]
+    ) -> List[List[int]]:
+        """
+        회차별 5구간 빈도 히스토리 생성
+
+        Args:
+            draw_data: 로또 번호 데이터
+
+        Returns:
+            List[List[int]]: 각 회차별 5구간 빈도 리스트
+        """
+        try:
+            segment_history = []
+
+            for draw in draw_data:
+                # 5구간 분할 (1-9, 10-18, 19-27, 28-36, 37-45)
+                segment_counts = [0] * 5
+
+                for number in draw.numbers:
+                    # 번호를 구간으로 매핑
+                    if 1 <= number <= 9:
+                        segment_idx = 0
+                    elif 10 <= number <= 18:
+                        segment_idx = 1
+                    elif 19 <= number <= 27:
+                        segment_idx = 2
+                    elif 28 <= number <= 36:
+                        segment_idx = 3
+                    elif 37 <= number <= 45:
+                        segment_idx = 4
+                    else:
+                        continue  # 유효하지 않은 번호 무시
+
+                    segment_counts[segment_idx] += 1
+
+                segment_history.append(segment_counts)
+
+            self.logger.debug(
+                f"5구간 히스토리 생성 완료: {len(segment_history)}개 회차"
+            )
+            return segment_history
+
+        except Exception as e:
+            self.logger.error(f"5구간 히스토리 생성 중 오류: {e}")
+            # 빈 히스토리 반환
+            return [[0] * 5 for _ in range(len(draw_data))]

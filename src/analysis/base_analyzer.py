@@ -153,7 +153,9 @@ class BaseAnalyzer(Generic[T], ABC):
                 return cached_result
 
             # 파일 캐시 확인
-            cache_dir = Path(self.config["paths"]["cache_dir"])
+            cache_dir = Path(
+                self.config.get("paths", {}).get("cache_dir", "data/cache")
+            )
             cache_file = cache_dir / f"{cache_key}.pkl"
             if cache_file.exists():
                 try:
@@ -171,6 +173,65 @@ class BaseAnalyzer(Generic[T], ABC):
 
         return None
 
+    def _make_serializable(self, obj: Any) -> Any:
+        """
+        객체를 pickle 직렬화 가능한 형태로 변환합니다.
+
+        Args:
+            obj: 직렬화할 객체
+
+        Returns:
+            Any: 직렬화 가능한 객체
+        """
+        import types
+        from contextlib import ContextDecorator
+
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, (list, tuple)):
+            return type(obj)(self._make_serializable(item) for item in obj)
+        elif isinstance(obj, dict):
+            return {key: self._make_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, set):
+            return {self._make_serializable(item) for item in obj}
+        elif hasattr(obj, "__dict__") and not isinstance(
+            obj, (types.FunctionType, types.MethodType, ContextDecorator)
+        ):
+            # 일반 객체는 딕셔너리로 변환
+            try:
+                return {
+                    "_class_name": obj.__class__.__name__,
+                    "_module": obj.__class__.__module__,
+                    **{
+                        k: self._make_serializable(v)
+                        for k, v in obj.__dict__.items()
+                        if not k.startswith("_") and not callable(v)
+                    },
+                }
+            except Exception:
+                return str(obj)
+        elif hasattr(obj, "to_dict") and callable(obj.to_dict):
+            # to_dict 메서드가 있는 객체
+            try:
+                return self._make_serializable(obj.to_dict())
+            except Exception:
+                return str(obj)
+        elif isinstance(obj, (types.FunctionType, types.MethodType, ContextDecorator)):
+            # 함수나 메서드, ContextDecorator는 문자열로 변환
+            return f"<{type(obj).__name__}: {getattr(obj, '__name__', str(obj))}>"
+        else:
+            # 기타 직렬화 불가능한 객체는 문자열로 변환
+            try:
+                # 간단한 직렬화 테스트
+                import pickle
+
+                pickle.dumps(obj)
+                return obj
+            except Exception:
+                return str(obj)
+
     def _save_to_cache(self, cache_key: str, result: T) -> bool:
         """
         분석 결과를 캐시에 저장합니다.
@@ -186,12 +247,18 @@ class BaseAnalyzer(Generic[T], ABC):
             # 메모리 캐시에 저장
             self._cache[cache_key] = result
 
-            # 파일 캐시에 저장
-            cache_dir = Path(self.config["paths"]["cache_dir"])
+            # 파일 캐시에 저장 (직렬화 가능한 데이터만)
+            cache_dir = Path(
+                self.config.get("paths", {}).get("cache_dir", "data/cache")
+            )
             cache_dir.mkdir(parents=True, exist_ok=True)
             cache_file = cache_dir / f"{cache_key}.pkl"
+
+            # 직렬화 가능한 데이터로 변환
+            serializable_result = self._make_serializable(result)
+
             with open(cache_file, "wb") as f:
-                pickle.dump(result, f)
+                pickle.dump(serializable_result, f)
 
             self.logger.info(f"분석 결과 캐시 저장 완료: {cache_key}")
             return True
