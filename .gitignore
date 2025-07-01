@@ -72,4 +72,4 @@ data/predictions/*.csv
 *.json
 *.npy
 *.csv
-mcp-server/node_modules/*
+mcp-server/*
