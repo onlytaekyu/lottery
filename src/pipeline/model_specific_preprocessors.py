@@ -69,7 +69,12 @@ class AutoEncoderPreprocessor(BasePreprocessor):
         self.scaler = MinMaxScaler(feature_range=(0, 1))
 
     def fit(self, X: np.ndarray, y: np.ndarray | None = None):  # noqa: D401,E501
-        X_proc = super().fit_transform(X, y)
+        # 이상치 클리핑 (IQR 방식)
+        Q1 = np.percentile(X, 25, axis=0)
+        Q3 = np.percentile(X, 75, axis=0)
+        IQR = Q3 - Q1 + 1e-8
+        X_clip = np.clip(X, Q1 - 1.5 * IQR, Q3 + 1.5 * IQR)
+        X_proc = super().fit_transform(X_clip, y)
         self.pca.fit(X_proc)
         X_pca = self.pca.transform(X_proc)
         self.scaler.fit(np.abs(X_pca))  # 대칭성 확보를 위해 절대값 기반 학습
@@ -77,7 +82,12 @@ class AutoEncoderPreprocessor(BasePreprocessor):
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:  # noqa: D401
-        X_proc = super().transform(X)
+        # 동일 클리핑 적용
+        Q1 = np.percentile(X, 25, axis=0)
+        Q3 = np.percentile(X, 75, axis=0)
+        IQR = Q3 - Q1 + 1e-8
+        X_clip = np.clip(X, Q1 - 1.5 * IQR, Q3 + 1.5 * IQR)
+        X_proc = super().transform(X_clip)
         X_pca = self.pca.transform(X_proc)
         X_scaled = self.scaler.transform(np.abs(X_pca))
         return X_scaled
@@ -86,9 +96,11 @@ class AutoEncoderPreprocessor(BasePreprocessor):
 class LightGBMPreprocessor(BasePreprocessor):
     """LightGBM 전용: PCA 금지, Target Encoding 포함"""
 
-    def __init__(self):
+    def __init__(self, top_k_features: int | None = 200):
         super().__init__()
         self.target_encoder: SafeTargetEncoder | None = None
+        self.top_k_features = top_k_features
+        self.selected_idx: list[int] | None = None
 
     def fit(self, X: np.ndarray, y: np.ndarray):  # noqa: D401,E501
         # 첫 열이 범주형이라고 가정 (예시). 실제 구현 시 config 필요
@@ -96,9 +108,15 @@ class LightGBMPreprocessor(BasePreprocessor):
         num_features = X[:, 1:]
         super().fit(num_features)
         self.target_encoder = SafeTargetEncoder()
-        enc_vals = self.target_encoder.fit_transform_with_kfold(cat_feature, y)
+        _ = self.target_encoder.fit_transform_with_kfold(cat_feature, y)
+        # 중요도 대용으로 분산 사용 → 상위 top_k_features 선택
+        if (
+            self.top_k_features is not None
+            and num_features.shape[1] > self.top_k_features
+        ):
+            variances = np.var(num_features, axis=0)
+            self.selected_idx = np.argsort(variances)[-self.top_k_features :]
         self.is_fitted = True
-        # encoded 값 저장 필요 없음 (fold 내부 계산)
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:  # noqa: D401
@@ -107,6 +125,8 @@ class LightGBMPreprocessor(BasePreprocessor):
         cat_feature = X[:, 0]
         num_features = X[:, 1:]
         num_proc = super().transform(num_features)
+        if self.selected_idx is not None:
+            num_proc = num_proc[:, self.selected_idx]
         enc_vals = self.target_encoder.transform(cat_feature)
         return np.column_stack([enc_vals, num_proc])
 
@@ -123,7 +143,7 @@ def _month_one_hot(month: int) -> np.ndarray:
 def tcn_temporal_features(
     draw_numbers: np.ndarray, window_size: int = 50
 ) -> np.ndarray:  # noqa: E501
-    """회차 기반 시계열 특화 특성 생성"""
+    """회차 기반 시계열 특화 특성 생성(이동평균, 계절성, 속도, ACF 포함)"""
     draw_numbers = np.asarray(draw_numbers, dtype=int)
     max_draw = draw_numbers.max()
     min_draw = draw_numbers.min()
@@ -133,6 +153,10 @@ def tcn_temporal_features(
     deltas = np.diff(draw_numbers, prepend=draw_numbers[0])
     avg_gap = deltas.mean() if len(deltas) else 1.0
     delta_norm = deltas / (avg_gap + 1e-8)
+
+    # 이동평균 & ACF1
+    ma = np.convolve(draw_numbers, np.ones(window_size) / window_size, mode="same")
+    acf1 = np.concatenate([[0], np.diff(draw_numbers)]) / (avg_gap + 1e-8)
 
     # seasonal features (월별 ; 여기서는 회차 번호를 월로 매핑 예시)
     months = (draw_numbers % 12) + 1
@@ -144,7 +168,7 @@ def tcn_temporal_features(
     )
     velocity = np.diff(rolling_avg, prepend=rolling_avg[0]) / (window_size + 1e-8)
 
-    features = np.column_stack([norm_draw, delta_norm, velocity])
+    features = np.column_stack([norm_draw, delta_norm, velocity, ma, acf1])
     features = np.concatenate([features, month_oh], axis=1)
     return features
 
