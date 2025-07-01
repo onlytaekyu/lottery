@@ -73,33 +73,33 @@ class AnalyzerFactory:
         """실제 분석기 인스턴스를 생성합니다."""
         try:
             if analyzer_type == "pattern":
-                from src.analysis.pattern_analyzer import PatternAnalyzer
+                from .pattern_analyzer import PatternAnalyzer
 
                 return PatternAnalyzer(config)
 
             elif analyzer_type == "distribution":
-                from src.analysis.distribution_analyzer import DistributionAnalyzer
+                from .distribution_analyzer import DistributionAnalyzer
 
                 return DistributionAnalyzer(config)
 
             elif analyzer_type == "roi":
-                from src.analysis.roi_analyzer import ROIAnalyzer
+                from .roi_analyzer import ROIAnalyzer
 
                 return ROIAnalyzer(config)
 
             elif analyzer_type == "pair":
-                from src.analysis.pair_analyzer import PairAnalyzer
+                from .pair_analyzer import PairAnalyzer
 
                 return PairAnalyzer(config)
 
             elif analyzer_type == "vectorizer":
-                from src.analysis.pattern_vectorizer import PatternVectorizer
+                from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 
-                return PatternVectorizer(config)
+                return EnhancedPatternVectorizer(config)
 
             # 🔥 새로 추가된 미사용 분석기들 (초기화 방식 수정)
             elif analyzer_type == "cluster":
-                from src.analysis.cluster_analyzer import ClusterAnalyzer
+                from .cluster_analyzer import ClusterAnalyzer
 
                 # ClusterAnalyzer는 다른 초기화 방식 사용
                 try:
@@ -113,22 +113,22 @@ class AnalyzerFactory:
                     return analyzer
 
             elif analyzer_type == "trend":
-                from src.analysis.trend_analyzer import TrendAnalyzer
+                from .trend_analyzer import TrendAnalyzer
 
                 return TrendAnalyzer(config)
 
             elif analyzer_type == "overlap":
-                from src.analysis.overlap_analyzer import OverlapAnalyzer
+                from .overlap_analyzer import OverlapAnalyzer
 
                 return OverlapAnalyzer(config)
 
             elif analyzer_type == "structural":
-                from src.analysis.structural_analyzer import StructuralAnalyzer
+                from .structural_analyzer import StructuralAnalyzer
 
                 return StructuralAnalyzer(config)
 
             elif analyzer_type == "statistical":
-                from src.analysis.statistical_analyzer import StatisticalAnalyzer
+                from .statistical_analyzer import StatisticalAnalyzer
 
                 return StatisticalAnalyzer(config)
 

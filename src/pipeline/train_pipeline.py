@@ -4,12 +4,12 @@ import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from src.models.lightgbm_model import LightGBMModel
-from src.models.xgboost_model import XGBoostModel
+from src.models.ml.lightgbm_model import LightGBMModel
+from src.models.ml.xgboost_model import XGBoostModel
 from src.utils.data_loader import load_draw_history
 from src.utils.unified_config import load_config
 from src.utils.error_handler_refactored import get_logger, log_exception_with_trace
-from src.analysis.pattern_vectorizer import PatternVectorizer
+from src.analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 
 # 로거 설정
 logger = get_logger(__name__)
@@ -88,7 +88,7 @@ def load_feature_names() -> List[str]:
 
     # 벡터라이저를 통해 특성 이름 생성 시도
     try:
-        vectorizer = PatternVectorizer(config)
+        vectorizer = EnhancedPatternVectorizer(config)
         feature_names = vectorizer.get_feature_names()
 
         if not feature_names or len(feature_names) == 0:

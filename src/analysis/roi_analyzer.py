@@ -359,7 +359,7 @@ class ROIAnalyzer(BaseAnalyzer):
         logger.info("번호별 ROI 점수 계산 중...")
 
         # 번호별 출현 통계
-        number_stats = defaultdict(
+        number_stats: Dict[int, Dict[str, Any]] = defaultdict(
             lambda: {"count": 0, "recent_count": 0, "positions": []}
         )
 

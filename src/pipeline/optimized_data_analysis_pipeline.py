@@ -48,7 +48,7 @@ from src.utils.hybrid_optimizer import get_hybrid_optimizer, optimize
 from src.utils.memory_manager import get_memory_manager
 
 from src.analysis.pattern_analyzer import PatternAnalyzer
-from src.analysis.pattern_vectorizer import PatternVectorizer
+from src.analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 from src.utils.unified_report import safe_convert, save_physical_performance_report
 from src.analysis.pair_analyzer import PairAnalyzer
 from src.analysis.distribution_analyzer import DistributionAnalyzer
@@ -232,7 +232,7 @@ def optimized_pattern_analysis(
     }
 )
 def optimized_vectorization(
-    patterns: List, vectorizer: PatternVectorizer
+    patterns: List, vectorizer: EnhancedPatternVectorizer
 ) -> Tuple[np.ndarray, List[str]]:
     """최적화된 벡터화"""
     try:
@@ -1432,10 +1432,10 @@ def create_optimized_analyzer(
 
 def create_optimized_vectorizer(memory_manager, cuda_optimizer):
     """최적화된 벡터라이저 생성"""
-    from src.analysis.pattern_vectorizer import PatternVectorizer
+    from src.analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 
     config = load_config()
-    vectorizer = PatternVectorizer(config)
+    vectorizer = EnhancedPatternVectorizer(config)
 
     # 최적화 시스템 주입
     if hasattr(vectorizer, "set_optimizers"):

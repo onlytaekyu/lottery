@@ -17,10 +17,10 @@ from typing import Dict, List, Any, Optional, Set, Tuple
 
 from src.utils.data_loader import load_draw_history
 from src.utils.unified_config import load_config
-from src.utils.error_handler_refactored import get_logger
+from src.utils.unified_logging import get_logger
 from src.utils.unified_performance import get_profiler
 from src.analysis.pattern_analyzer import PatternAnalyzer
-from src.analysis.pattern_vectorizer import PatternVectorizer
+from src.analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 
 # 로거 설정
 logger = get_logger(__name__)
@@ -90,7 +90,7 @@ def run_negative_sampling(
         # 2. 패턴 분석기 초기화
         with profiler.profile("패턴 분석기 초기화"):
             pattern_analyzer = PatternAnalyzer(config.to_dict())
-            pattern_vectorizer = PatternVectorizer(config.to_dict())
+            pattern_vectorizer = EnhancedPatternVectorizer(config.to_dict())
             logger.info("패턴 분석기 초기화 완료")
 
         # 3. 네거티브 샘플 생성

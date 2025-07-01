@@ -31,7 +31,7 @@ from datetime import datetime
 from .error_handler_refactored import get_logger
 from .memory_manager import MemoryManager
 from ..shared.types import LotteryNumber
-from ..analysis.pattern_vectorizer import PatternVectorizer
+from ..analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 
 # 타입 변수 정의
 T = TypeVar("T")
@@ -42,6 +42,7 @@ logger = get_logger(__name__)
 # 모듈 수준 캐시 변수
 _DRAW_HISTORY_CACHE: Dict[str, List[LotteryNumber]] = {}
 _VECTORIZED_DATA_CACHE: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+
 
 class DataQualityValidator:
     """데이터 품질 검증 클래스"""
@@ -164,6 +165,7 @@ class DataQualityValidator:
             for warning in result["warnings"]:
                 self.logger.warning(f"⚠️ {warning}")
 
+
 def load_draw_history(
     file_path: Optional[str] = None, validate_data: bool = True
 ) -> List[LotteryNumber]:
@@ -255,6 +257,7 @@ def load_draw_history(
         logger.error(f"데이터 로드 중 오류 발생: {str(e)}")
         raise
 
+
 def clear_draw_history_cache() -> None:
     """
     로또 당첨 번호 이력 캐시를 초기화합니다.
@@ -262,6 +265,7 @@ def clear_draw_history_cache() -> None:
     global _DRAW_HISTORY_CACHE
     _DRAW_HISTORY_CACHE = {}
     logger.info("로또 당첨 번호 이력 캐시 초기화 완료")
+
 
 def _generate_sample_data(count: int = 100) -> List[LotteryNumber]:
     """
@@ -297,6 +301,7 @@ def _generate_sample_data(count: int = 100) -> List[LotteryNumber]:
 
     logger.warning(f"{count}개의 샘플 로또 데이터 생성됨")
     return lottery_numbers
+
 
 @dataclass
 class DataConfig:
@@ -354,6 +359,7 @@ class DataConfig:
         if self.num_workers > 8:
             self.prefetch_factor = max(1, min(3, self.prefetch_factor))
 
+
 class LotteryJSONEncoder(json.JSONEncoder):
     """JSON 직렬화를 위한 사용자 정의 인코더"""
 
@@ -365,6 +371,7 @@ class LotteryJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, (np.int64, np.int32, np.float64, np.float32)):  # type: ignore
             return obj.item()
         return super().default(obj)
+
 
 class LotteryDataset(Dataset):
     """로또 번호 데이터셋"""
@@ -493,6 +500,7 @@ class LotteryDataset(Dataset):
                     torch.cuda.empty_cache()
         except Exception as e:
             logger.error(f"데이터셋 정리 중 오류 발생: {str(e)}")
+
 
 class DataManager:
     """데이터 관리자"""
@@ -1009,6 +1017,7 @@ class DataManager:
 
         return pd.DataFrame(data)
 
+
 class DataLoader:
     """로또 데이터 로더 클래스"""
 
@@ -1122,6 +1131,7 @@ class DataLoader:
         """
         return self.data
 
+
 def load_vectorized_training_data(
     config: Any, force_reload: bool = False
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -1155,7 +1165,7 @@ def load_vectorized_training_data(
             return np.zeros((0, 10), dtype=np.float32), np.zeros((0,), dtype=np.int32)
 
         # 패턴 벡터라이저 초기화
-        pattern_vectorizer = PatternVectorizer(config)
+        pattern_vectorizer = EnhancedPatternVectorizer(config)
 
         # 특성 벡터와 라벨 준비
         X = []  # 특성 행렬

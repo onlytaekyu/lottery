@@ -23,8 +23,7 @@ import psutil
 
 from ..utils.unified_logging import get_logger
 from ..utils.unified_performance import performance_monitor
-
-# MemoryTracker와 get_device_info는 통합 성능 시스템에서 제공
+from ..utils.memory_manager import MemoryManager as MemoryTracker
 from ..utils.unified_config import ConfigProxy
 from ..utils.dynamic_batch_size import DynamicBatchSizeController
 from ..shared.types import LotteryNumber
@@ -724,7 +723,11 @@ class NegativeSampleGenerator:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # 디바이스 정보 수집
-        device_info = get_device_info()
+        device_info = {
+            "cpu_count": os.cpu_count(),
+            "platform": platform.system(),
+            "memory_gb": f"{psutil.virtual_memory().total / (1024**3):.1f}GB",
+        }
 
         # 성능 보고서 데이터
         report_data = {

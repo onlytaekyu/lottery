@@ -31,7 +31,7 @@ from ..utils.normalizer import Normalizer
 from ..models.statistical_model import StatisticalModel
 from ..models.lightgbm_model import LightGBMModel
 from ..models.xgboost_model import XGBoostModel
-from ..analysis.pattern_vectorizer import PatternVectorizer
+from ..analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 from ..shared.types import LotteryNumber
 from ..shared.graph_utils import calculate_pair_frequency
 from ..utils.unified_report import save_performance_report
@@ -75,7 +75,7 @@ class MLCandidateGenerator:
         self.statistical_model = StatisticalModel(config_dict)
 
         # 벡터라이저 초기화
-        self.pattern_vectorizer = PatternVectorizer(config_dict)
+        self.pattern_vectorizer = EnhancedPatternVectorizer(config_dict)
 
         # ML 모델 초기화
         self.lightgbm_model = None
