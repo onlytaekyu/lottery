@@ -120,8 +120,7 @@ class FeatureDriftDetector:
     def detect_drift(self, X_train, X_test, threshold=0.05):
         drift_features = []
         for i in range(X_train.shape[1]):
-            result = ks_2samp(X_train[:, i], X_test[:, i])
-            p = result.pvalue
+            p = float(ks_2samp(X_train[:, i], X_test[:, i]).pvalue)
             if p < threshold:
                 drift_features.append(i)
                 logger.warning(f"Feature {i} shows significant drift (p={p:.4f})")
