@@ -186,29 +186,48 @@ class ROIAnalyzer(BaseAnalyzer):
             raise ValueError("분석할 번호 조합은 6개 번호여야 합니다.")
 
         # 내부 분석 메서드 호출
-        return self._analyze_impl(historical_data, target_numbers)
+        return self._analyze_combination_impl(historical_data, target_numbers)
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        BaseAnalyzer 인터페이스 구현 - 일반적인 ROI 분석 수행
+
+        Args:
+            historical_data: 분석할 과거 당첨 번호 목록
+            args: 추가 인자 (target_numbers가 있으면 특정 조합 분석)
+            kwargs: 추가 매개변수
+
+        Returns:
+            Dict[str, Any]: ROI 분석 결과
+        """
+        # 특정 번호 조합 분석이 요청된 경우
+        if args and len(args) > 0:
+            target_numbers = args[0]
+            if isinstance(target_numbers, list) and len(target_numbers) == 6:
+                # 특정 조합의 ROI 분석
+                roi_metrics = self._analyze_combination_impl(
+                    historical_data, target_numbers
+                )
+                return roi_metrics.to_dict()
+
+        # 일반적인 ROI 분석 (analyze 메서드와 동일)
+        return self.analyze(historical_data)
+
+    def _analyze_combination_impl(
+        self, historical_data: List[LotteryNumber], target_numbers: List[int]
     ) -> ROIMetrics:
         """
         특정 번호 조합의 ROI를 분석합니다.
 
         Args:
             historical_data: 분석할 과거 당첨 번호 목록
-            args: 첫 번째 인자는 분석할 번호 조합(6개 번호)이어야 함
-            kwargs: 추가 매개변수 (사용되지 않음)
+            target_numbers: 분석할 번호 조합(6개 번호)
 
         Returns:
             ROIMetrics: ROI 분석 결과
         """
-        # 첫 번째 인자가 없으면 예외 발생
-        if not args:
-            raise ValueError("분석할 번호 조합이 제공되지 않았습니다.")
-
-        # 첫 번째 인자를 target_numbers로 사용
-        target_numbers = args[0]
-
         # 분석 수행
         win_probability = self._calculate_win_probability(target_numbers)
         expected_value = self._calculate_expected_value(historical_data, target_numbers)

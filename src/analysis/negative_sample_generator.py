@@ -23,12 +23,13 @@ import psutil
 
 from ..utils.unified_logging import get_logger
 from ..utils.unified_performance import performance_monitor
-from ..utils.memory_manager import MemoryManager as MemoryTracker
+from ..utils.memory_manager import MemoryManager
 from ..utils.unified_config import ConfigProxy
 from ..utils.dynamic_batch_size import DynamicBatchSizeController
 from ..shared.types import LotteryNumber
 from .pattern_analyzer import PatternAnalyzer, PatternFeatures
 from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
+from .base_analyzer import BaseAnalyzer
 
 
 # 로거 설정
@@ -181,7 +182,7 @@ def generate_batch_samples(
     return batch_samples
 
 
-class NegativeSampleGenerator:
+class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
     """비당첨 샘플 생성 클래스"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -191,6 +192,7 @@ class NegativeSampleGenerator:
         Args:
             config: 설정
         """
+        super().__init__(config or {}, "negative_sample")
         self.config = config or {}
         self.pattern_analyzer = PatternAnalyzer(config)
         self.pattern_vectorizer = EnhancedPatternVectorizer(config)
@@ -217,13 +219,17 @@ class NegativeSampleGenerator:
         self.total = 0
 
         # 메모리 추적기
-        self.memory_tracker = MemoryTracker()
-
-        # 로거
-        self.logger = logger
+        self.memory_tracker = MemoryManager()
 
         # 진행 상황 추적 잠금
         self._progress_lock = threading.Lock()
+
+    def _analyze_impl(
+        self, historical_data: List[LotteryNumber], *args, **kwargs
+    ) -> Dict[str, Any]:
+        """BaseAnalyzer 인터페이스 구현"""
+        sample_size = kwargs.get("sample_size", 100000)
+        return self.generate_samples(historical_data, sample_size)
 
     # @profile("generate_negative_samples")
     def generate_samples(
@@ -240,9 +246,6 @@ class NegativeSampleGenerator:
             생성 결과 정보
         """
         self.logger.info(f"비당첨 조합 생성 시작: 목표 {sample_size:,}개")
-
-        # 메모리 추적 시작
-        self.memory_tracker.start()
 
         # 전역 시작 시간
         global_start_time = time.time()
@@ -263,20 +266,19 @@ class NegativeSampleGenerator:
         # 벡터화 수행
         vector_path = self._vectorize_samples(negative_samples, draw_data, sample_size)
 
-        # 메모리 추적 중지
-        self.memory_tracker.stop()
-        memory_log = self.memory_tracker.get_memory_log()
-
         # 전체 실행 시간 계산
         global_end_time = time.time()
         elapsed_time = global_end_time - global_start_time
+
+        # 메모리 사용량 추정
+        memory_used_mb = len(negative_samples) * 6 * 4 / (1024 * 1024)  # 대략적 계산
 
         # 성능 보고서 생성
         report_path = self._generate_performance_report(
             start_time=global_start_time,
             end_time=global_end_time,
             sample_count=len(negative_samples),
-            memory_used_mb=memory_log["memory_used_mb"],
+            memory_used_mb=memory_used_mb,
             vector_path=vector_path,
             warnings=warnings_list,
         )
@@ -284,14 +286,14 @@ class NegativeSampleGenerator:
         self.logger.info(
             f"비당첨 조합 생성 완료: {len(negative_samples):,}개 ({elapsed_time:.2f}초)"
         )
-        self.logger.info(f"메모리 사용: {memory_log['memory_used_mb']:.2f}MB")
+        self.logger.info(f"메모리 사용: {memory_used_mb:.2f}MB")
         self.logger.info(f"성능 보고서: {report_path}")
 
         return {
             "success": True,
             "elapsed_time": elapsed_time,
             "sample_count": len(negative_samples),
-            "memory_used_mb": memory_log["memory_used_mb"],
+            "memory_used_mb": memory_used_mb,
             "raw_path": self._save_raw_samples(negative_samples, sample_size),
             "vector_path": vector_path,
             "report_path": report_path,
@@ -515,15 +517,13 @@ class NegativeSampleGenerator:
         self.logger.info(f"비당첨 조합 벡터화 시작: {len(negative_samples):,}개")
         start_time = time.time()
 
-        # 메모리 추적 시작
-        self.memory_tracker.start()
-
         # 병렬 처리 설정
+        negative_sampler_config = self.config.get("negative_sampler", {})
         max_processes = min(
-            self.config["negative_sampler"]["vectorize_workers"],
+            negative_sampler_config.get("vectorize_workers", 4),
             multiprocessing.cpu_count(),
         )
-        batch_size = self.config["negative_sampler"]["vectorize_batch"]
+        batch_size = negative_sampler_config.get("vectorize_batch", 1000)
 
         self.logger.info(
             f"프로세스 풀 사용: {max_processes}개 프로세스, 배치 크기: {batch_size}"
@@ -598,7 +598,11 @@ class NegativeSampleGenerator:
                         progress_pct = (self.progress / self.total) * 100
                         elapsed = time.time() - start_time
                         speed = self.progress / elapsed if elapsed > 0 else 0
-                        mem_usage = self.memory_tracker.get_memory_usage()
+
+                        # 메모리 사용량 추정
+                        mem_usage = (
+                            self.progress * actual_num_features * 4 / (1024 * 1024)
+                        )  # MB
 
                         self.logger.info(
                             f"벡터화 진행: {self.progress:,}/{self.total:,} ({progress_pct:.1f}%) - "
@@ -622,8 +626,8 @@ class NegativeSampleGenerator:
         np.save(file_path, feature_vectors)
         np.save(latest_path, feature_vectors)
 
-        # 메모리 추적 종료
-        mem_used = self.memory_tracker.stop()
+        # 메모리 사용량 추정
+        mem_used = len(negative_samples) * actual_num_features * 4 / (1024 * 1024)  # MB
 
         elapsed_time = time.time() - start_time
         self.logger.info(
@@ -710,63 +714,46 @@ class NegativeSampleGenerator:
             start_time: 시작 시간
             end_time: 종료 시간
             sample_count: 샘플 수
-            memory_used_mb: 사용 메모리(MB)
+            memory_used_mb: 메모리 사용량 (MB)
             vector_path: 벡터 파일 경로
-            warnings: 경고 메시지 리스트
+            warnings: 경고 메시지 목록
 
         Returns:
-            보고서 파일 경로
+            성능 보고서 파일 경로
         """
-        # 로그 디렉토리 설정
-        logs_dir = self.config["paths"]["logs_dir"]
-        Path(logs_dir).mkdir(exist_ok=True, parents=True)
-
-        # 타임스탬프
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        # 디바이스 정보 수집
-        device_info = {
-            "cpu_count": os.cpu_count(),
-            "platform": platform.system(),
-            "memory_gb": f"{psutil.virtual_memory().total / (1024**3):.1f}GB",
-        }
-
         # 성능 보고서 데이터
         report_data = {
-            "stage": "negative_sampling",
-            "timestamp": timestamp,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time)),
+            "execution_time": end_time - start_time,
             "sample_count": sample_count,
-            "start_time": start_time,
-            "end_time": end_time,
-            "duration_sec": end_time - start_time,
-            "vectorization_executor": "ProcessPoolExecutor",
-            "vectorizer_module": "pattern_vectorizer.vectorize_combination",
-            "memory_mb": memory_used_mb,
+            "memory_used_mb": memory_used_mb,
             "vector_path": vector_path,
-            "cpu": f"{os.cpu_count()}-core",
-            "os": platform.system() + " " + platform.version(),
-            "ram": f"{psutil.virtual_memory().total / (1024**3):.1f}GB",
             "warnings": warnings or [],
-            "performance": {
-                "samples_per_second": (
-                    sample_count / (end_time - start_time)
-                    if (end_time - start_time) > 0
-                    else 0
-                ),
+            "config": {
+                "batch_size": self.batch_controller.get_batch_size(),
+                "cache_dir": self.cache_dir,
             },
-            "device_info": device_info,
         }
 
-        # 파일 경로
-        file_path = Path(logs_dir) / f"performance_negative_sampling_{timestamp}.json"
+        # 성능 보고서 저장
+        try:
+            # logs_dir 설정이 없으면 기본값 사용
+            logs_dir = self.config.get("paths", {}).get("logs_dir", "logs")
+            Path(logs_dir).mkdir(exist_ok=True, parents=True)
 
-        # JSON으로 저장
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(report_data, f, indent=2, ensure_ascii=False)
+            report_filename = (
+                f"negative_sample_performance_{sample_count}_{int(start_time)}.json"
+            )
+            report_path = Path(logs_dir) / report_filename
 
-        self.logger.info(f"성능 보고서 생성 완료: {file_path}")
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report_data, f, indent=2, ensure_ascii=False)
 
-        return str(file_path)
+            return str(report_path)
+
+        except Exception as e:
+            self.logger.error(f"성능 보고서 저장 실패: {e}")
+            return ""
 
 
 def generate_negative_samples(

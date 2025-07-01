@@ -125,7 +125,7 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
-    ) -> Dict[str, List[DistributionPattern]]:
+    ) -> Dict[str, Any]:
         """BaseAnalyzer 인터페이스 구현"""
         return self.analyze(historical_data)
 

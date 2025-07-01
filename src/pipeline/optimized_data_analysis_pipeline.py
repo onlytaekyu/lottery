@@ -896,10 +896,19 @@ def run_optimized_data_analysis() -> bool:
             execution_time = time.time() - start_time
 
             # 성능 보고서 데이터 수집
+            # 벡터 차원 정보 안전하게 추출
+            if combined_vector.ndim == 1:
+                vector_info = {"dimensions": len(combined_vector), "samples": 1}
+            elif combined_vector.ndim == 2:
+                samples, dims = combined_vector.shape
+                vector_info = {"dimensions": dims, "samples": samples}
+            else:
+                vector_info = {"dimensions": combined_vector.size, "samples": "unknown"}
+
             performance_data = {
                 "execution_time": execution_time,
                 "data_size": len(historical_data),
-                "vector_dimensions": len(combined_vector),
+                "vector_info": vector_info,
                 "analysis_results_count": len(analysis_results),
                 "memory_usage": get_memory_usage(),
                 "data_quality_score": validation_result.quality_score,
@@ -1259,10 +1268,10 @@ def merge_analysis_results(analysis_results: Dict[str, Any]) -> Dict[str, Any]:
 def validate_feature_vector(
     feature_vector: np.ndarray, feature_names: List[str], config: Dict[str, Any]
 ) -> bool:
-    """특성 벡터 품질 검증"""
+    """특성 벡터 품질 검증 (단일 벡터 및 다중 샘플 배열 지원)"""
     try:
         # 기본 검증
-        if feature_vector is None or len(feature_vector) == 0:
+        if feature_vector is None or feature_vector.size == 0:
             logger.error("빈 특성 벡터")
             return False
 
@@ -1270,20 +1279,34 @@ def validate_feature_vector(
             logger.error("빈 특성 이름 리스트")
             return False
 
-        # 차원 일치 검증
-        if len(feature_vector) != len(feature_names):
+        # 🔥 다중 샘플 배열 지원
+        if feature_vector.ndim == 1:
+            # 단일 벡터인 경우
+            vector_dim = len(feature_vector)
+            sample_count = 1
+            logger.info(f"단일 벡터 검증: {vector_dim}차원")
+        elif feature_vector.ndim == 2:
+            # 다중 샘플 배열인 경우
+            sample_count, vector_dim = feature_vector.shape
+            logger.info(
+                f"다중 샘플 배열 검증: {sample_count}개 샘플 × {vector_dim}차원"
+            )
+        else:
+            logger.error(f"지원되지 않는 벡터 차원: {feature_vector.ndim}차원")
+            return False
+
+        # 차원 일치 검증 (벡터의 마지막 차원과 특성 이름 수 비교)
+        if vector_dim != len(feature_names):
             logger.error(
-                f"벡터 차원 불일치: 벡터={len(feature_vector)}, 이름={len(feature_names)}"
+                f"벡터 차원 불일치: 벡터={vector_dim}, 이름={len(feature_names)}"
             )
             return False
 
         # 최소 차원 검증
         try:
             min_dimensions = config["vector"]["min_required_dimension"]
-            if len(feature_vector) < min_dimensions:
-                logger.error(
-                    f"벡터 차원 부족: {len(feature_vector)} < {min_dimensions}"
-                )
+            if vector_dim < min_dimensions:
+                logger.error(f"벡터 차원 부족: {vector_dim} < {min_dimensions}")
                 return False
         except (KeyError, TypeError):
             logger.warning("최소 차원 설정을 찾을 수 없음")
@@ -1293,7 +1316,12 @@ def validate_feature_vector(
             logger.error("벡터에 NaN 또는 Inf 값 포함")
             return False
 
-        logger.info(f"특성 벡터 검증 완료: {len(feature_vector)}차원")
+        if feature_vector.ndim == 1:
+            logger.info(f"특성 벡터 검증 완료: {vector_dim}차원")
+        else:
+            logger.info(
+                f"특성 벡터 검증 완료: {sample_count}개 샘플 × {vector_dim}차원"
+            )
         return True
 
     except Exception as e:

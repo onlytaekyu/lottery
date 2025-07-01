@@ -198,7 +198,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         optimization_level: str = "auto",
         *args,
         **kwargs,
-    ) -> PatternAnalysis:
+    ) -> Dict[str, Any]:
         """
         최적화된 패턴 분석 구현
 
@@ -248,7 +248,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
 
     def _maximum_optimization_analysis(
         self, data: List[LotteryNumber]
-    ) -> PatternAnalysis:
+    ) -> Dict[str, Any]:
         """최대 최적화: GPU + 병렬 + 메모리풀링"""
         self.logger.info("🚀 최대 최적화 분석 수행")
 
@@ -277,7 +277,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
 
     def _balanced_optimization_analysis(
         self, data: List[LotteryNumber]
-    ) -> PatternAnalysis:
+    ) -> Dict[str, Any]:
         """균형 최적화: GPU 또는 병렬 중 하나"""
         self.logger.info("⚖️ 균형 최적화 분석 수행")
 
@@ -305,9 +305,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
             self.logger.error(f"균형 최적화 분석 실패: {e}, 기본 최적화로 폴백")
             return self._basic_optimization_analysis(data)
 
-    def _basic_optimization_analysis(
-        self, data: List[LotteryNumber]
-    ) -> PatternAnalysis:
+    def _basic_optimization_analysis(self, data: List[LotteryNumber]) -> Dict[str, Any]:
         """기본 최적화: 메모리 관리만"""
         self.logger.info("🔧 기본 최적화 분석 수행")
 
@@ -315,7 +313,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         with self.memory_manager.batch_processing():
             return self._standard_analysis_with_memory_optimization(data)
 
-    def _gpu_accelerated_analysis(self, data: List[LotteryNumber]) -> PatternAnalysis:
+    def _gpu_accelerated_analysis(self, data: List[LotteryNumber]) -> Dict[str, Any]:
         """GPU 가속 분석"""
         if not self.cuda_optimizer or not self.cuda_optimizer.is_available():
             return self._standard_analysis(data)
@@ -333,7 +331,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
             self.logger.error(f"GPU 가속 분석 실패: {e}, CPU 처리로 전환")
             return self._standard_analysis(data)
 
-    def _parallel_analysis(self, data: List[LotteryNumber]) -> PatternAnalysis:
+    def _parallel_analysis(self, data: List[LotteryNumber]) -> Dict[str, Any]:
         """병렬 처리 분석"""
         if not self.process_pool_manager:
             return self._standard_analysis(data)
@@ -367,12 +365,12 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
 
     def _standard_analysis_with_memory_optimization(
         self, data: List[LotteryNumber]
-    ) -> PatternAnalysis:
+    ) -> Dict[str, Any]:
         """메모리 최적화가 적용된 표준 분석"""
         # 기존 _analyze_impl 로직을 메모리 최적화와 함께 수행
         return self._standard_analysis(data)
 
-    def _standard_analysis(self, data: List[LotteryNumber]) -> PatternAnalysis:
+    def _standard_analysis(self, data: List[LotteryNumber]) -> Dict[str, Any]:
         """표준 분석 (기존 로직 유지)"""
         # 기존 분석 로직을 여기에 구현
         # 가중치 빈도 계산
@@ -380,11 +378,6 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
 
         # 최근성 맵 계산
         recency_map = self._calculate_recency_map(data)
-
-        result = PatternAnalysis(
-            frequency_map=weighted_frequencies, recency_map=recency_map
-        )
-        result.metadata = {}
 
         # 기존 분석들 수행
         consecutive_length_distribution = self.analyze_consecutive_length_distribution(
@@ -396,23 +389,23 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         gap_patterns = analyze_gap_patterns(data, self.logger)
         segment_entropy = calculate_segment_entropy(data)
 
-        # 결과 설정
-        result.metadata.update(
-            {
+        # Dict 형태로 결과 반환
+        return {
+            "frequency_map": weighted_frequencies,
+            "recency_map": recency_map,
+            "metadata": {
                 "consecutive_length_distribution": consecutive_length_distribution,
                 "odd_even_distribution": odd_even_distribution,
                 "sum_distribution": sum_distribution,
                 "network_analysis": network_analysis,
                 "gap_patterns": gap_patterns,
                 "segment_entropy": segment_entropy,
-            }
-        )
-
-        return result
+            },
+        }
 
     def _perform_gpu_pattern_analysis(
         self, data: List[LotteryNumber]
-    ) -> PatternAnalysis:
+    ) -> Dict[str, Any]:
         """GPU에서 패턴 분석 수행"""
         try:
             # GPU에서 수행할 수 있는 분석들
@@ -432,9 +425,9 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
             chunk_result = self._standard_analysis(chunk)
 
             return {
-                "frequency_map": chunk_result.frequency_map,
-                "recency_map": chunk_result.recency_map,
-                "metadata": chunk_result.metadata,
+                "frequency_map": chunk_result.get("frequency_map", {}),
+                "recency_map": chunk_result.get("recency_map", {}),
+                "metadata": chunk_result.get("metadata", {}),
                 "chunk_size": len(chunk),
             }
 
@@ -444,7 +437,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
 
     def _merge_analysis_results(
         self, results: List[Dict[str, Any]], original_data: List[LotteryNumber]
-    ) -> PatternAnalysis:
+    ) -> Dict[str, Any]:
         """병렬 분석 결과 병합"""
         try:
             self.logger.info(f"병렬 분석 결과 병합 시작: {len(results)}개 결과")
@@ -474,13 +467,12 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
                 for num in merged_frequency:
                     merged_frequency[num] /= total_chunks
 
-            # 최종 결과 생성
-            final_result = PatternAnalysis(
-                frequency_map=merged_frequency, recency_map=merged_recency
-            )
-
-            # 전체 데이터로 추가 분석 수행
-            final_result.metadata = self._calculate_additional_metadata(original_data)
+            # 최종 결과 생성 (Dict 형태)
+            final_result = {
+                "frequency_map": merged_frequency,
+                "recency_map": merged_recency,
+                "metadata": self._calculate_additional_metadata(original_data),
+            }
 
             self.logger.info("병렬 분석 결과 병합 완료")
             return final_result
@@ -881,21 +873,25 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         if not data:
             return {num: 1.0 / 45 for num in range(1, 46)}
 
-        # 설정에서 가중치 가져오기
+        # 설정에서 가중치 가져오기 (기본값 제공)
         try:
-            long_term_weight = self.config["frequency_weights"]["long_term"]
-            mid_term_weight = self.config["frequency_weights"]["mid_term"]
-            short_term_weight = self.config["frequency_weights"]["short_term"]
+            frequency_weights = self.config.get("frequency_weights", {})
+            long_term_weight = frequency_weights.get("long_term", 0.6)
+            mid_term_weight = frequency_weights.get("mid_term", 0.25)
+            short_term_weight = frequency_weights.get("short_term", 0.15)
 
-            # 기간 비율 설정
-            mid_term_ratio = self.config["periods"][
-                "mid_term"
-            ]  # 중기 = 전체 데이터의 2.5%
-            short_term_ratio = self.config["periods"][
-                "short_term"
-            ]  # 단기 = 전체 데이터의 1.2%
-        except KeyError as e:
-            raise KeyError(f"필수 설정값이 누락되었습니다: {e}")
+            # 기간 비율 설정 (기본값 제공)
+            periods = self.config.get("periods", {})
+            mid_term_ratio = periods.get("mid_term", 0.025)  # 기본값: 2.5%
+            short_term_ratio = periods.get("short_term", 0.012)  # 기본값: 1.2%
+        except (KeyError, AttributeError) as e:
+            # 모든 기본값 사용
+            long_term_weight = 0.6
+            mid_term_weight = 0.25
+            short_term_weight = 0.15
+            mid_term_ratio = 0.025
+            short_term_ratio = 0.012
+            self.logger.warning(f"frequency_weights 설정 사용 실패, 기본값 사용: {e}")
 
         # 각 기간별 데이터 분할
         total_count = len(data)
@@ -1364,10 +1360,29 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
 
         if historical_data:
             # 패턴 분석 수행
-            pattern_analysis = self.analyze(historical_data)
+            analysis_result = self.analyze(historical_data)
+
+            # 분석 결과가 딕셔너리인 경우 PatternAnalysis 객체로 변환
+            if isinstance(analysis_result, dict):
+                pattern_analysis = PatternAnalysis(
+                    frequency_map=analysis_result.get("frequency_map", {}),
+                    recency_map=analysis_result.get("recency_map", {}),
+                    pair_frequency=analysis_result.get("pair_frequency", {}),
+                    hot_numbers=set(analysis_result.get("hot_numbers", [])),
+                    cold_numbers=set(analysis_result.get("cold_numbers", [])),
+                    sum_distribution=analysis_result.get("sum_distribution", []),
+                    gap_patterns=analysis_result.get("gap_patterns", {}),
+                    probability_matrix=analysis_result.get("probability_matrix", {}),
+                    trending_numbers=analysis_result.get("trending_numbers", []),
+                    clusters=analysis_result.get("clusters", []),
+                    roi_matrix=analysis_result.get("roi_matrix", {}),
+                    metadata=analysis_result.get("metadata", {}),
+                )
+            else:
+                pattern_analysis = analysis_result
 
             # 6. 클러스터 오버랩 비율
-            if pattern_analysis.clusters:
+            if hasattr(pattern_analysis, "clusters") and pattern_analysis.clusters:
                 overlap_count = 0
                 for cluster in pattern_analysis.clusters:
                     cluster_set = set(cluster)
@@ -1381,7 +1396,10 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
                 )
 
             # 7. 빈도 페어 점수
-            if pattern_analysis.pair_frequency:
+            if (
+                hasattr(pattern_analysis, "pair_frequency")
+                and pattern_analysis.pair_frequency
+            ):
                 pair_scores = []
                 for i in range(len(sorted_numbers)):
                     for j in range(i + 1, len(sorted_numbers)):
@@ -1397,7 +1415,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
                 )
 
             # 8. ROI 가중치 (수익성 점수)
-            if pattern_analysis.roi_matrix:
+            if hasattr(pattern_analysis, "roi_matrix") and pattern_analysis.roi_matrix:
                 roi_scores = []
                 for i in range(len(sorted_numbers)):
                     for j in range(i + 1, len(sorted_numbers)):
@@ -1796,8 +1814,24 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
                     self.scoped_analyses[scope] = cached_result
                     return cached_result
 
-                # 패턴 분석 수행
-                result = self.analyze(historical_data)
+                # 패턴 분석 수행 - 무한루프 방지를 위해 직접 _analyze_impl 호출
+                result_dict = self._analyze_impl(historical_data)
+
+                # Dict 결과를 PatternAnalysis 객체로 변환
+                if isinstance(result_dict, dict):
+                    result = PatternAnalysis(
+                        frequency_map=result_dict.get("frequency_map", {}),
+                        recency_map=result_dict.get("recency_map", {}),
+                        pair_frequency=result_dict.get("pair_frequency", {}),
+                        hot_numbers=set(result_dict.get("hot_numbers", [])),
+                        cold_numbers=set(result_dict.get("cold_numbers", [])),
+                        sum_distribution=result_dict.get("sum_distribution", {}),
+                        gap_patterns=result_dict.get("gap_patterns", {}),
+                        probability_matrix=result_dict.get("probability_matrix", {}),
+                        metadata=result_dict.get("metadata", {}),
+                    )
+                else:
+                    result = result_dict
 
                 # 결과 객체에 스코프 정보 추가
                 result.metadata["scope"] = scope

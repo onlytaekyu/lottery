@@ -104,7 +104,7 @@ class BaseAnalyzer(Generic[T], ABC):
                 # 캐시 확인
                 cached_result = self._check_cache(cache_key)
                 if cached_result:
-                    self.logger.info(f"캐시된 분석 결과 사용: {cache_key}")
+                    self.logger.debug(f"캐시된 분석 결과 사용: {cache_key}")
                     return cached_result
 
                 # 실제 분석 수행 (하위 클래스에서 구현)
