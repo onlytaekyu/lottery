@@ -19,15 +19,26 @@ class SafeTargetEncoder:
         encoded = np.zeros_like(y, dtype=float)
         kf = KFold(n_splits=n_folds, shuffle=False)
         for train_idx, val_idx in kf.split(X):
+            # 각 fold의 train 데이터로만 매핑 생성 → 미래 데이터 유출 차단
             mapping = self._build_mapping(X[train_idx], y[train_idx])
-            encoded[val_idx] = self._apply_mapping(X[val_idx], mapping)
+            default_val = np.mean(y[train_idx])  # fold-specific default
+            encoded[val_idx] = np.array(
+                [mapping.get(x, default_val) for x in X[val_idx]]
+            )
         # 전체 데이터로 global mapping 저장 (추후 test transform용)
         self.global_mapping = self._build_mapping(X, y)
         self.default_value = np.mean(y)
         return encoded
 
     def transform(self, X):
-        return self._apply_mapping(np.asarray(X), self.global_mapping)
+        """Test/Inference 시 호출. fit_transform_with_kfold 이후 사용."""
+        if self.global_mapping is None or self.default_value is None:
+            raise RuntimeError(
+                "SafeTargetEncoder: fit_transform_with_kfold를 먼저 호출해야 합니다."
+            )
+        return np.array(
+            [self.global_mapping.get(x, self.default_value) for x in np.asarray(X)]
+        )
 
     def _build_mapping(self, X, y):
         mapping = {}
@@ -36,9 +47,6 @@ class SafeTargetEncoder:
                 mapping[x_val] = []
             mapping[x_val].append(y_val)
         return {k: np.mean(v) for k, v in mapping.items()}
-
-    def _apply_mapping(self, X, mapping):
-        return np.array([mapping.get(x, self.default_value) for x in X])
 
 
 class StrictPreprocessor:
@@ -143,3 +151,46 @@ class PipelineValidator:
         if np.any(diff > 1.0):  # 임계값 예시
             logger.warning("Train/Test mean 차이가 비정상적으로 큼. 누수 가능성 의심.")
         return diff
+
+
+class StrictTrainTestSplitter:
+    """시간순 데이터 분할 (미래 데이터 유출 방지)"""
+
+    def split(self, X: np.ndarray, y: np.ndarray, train_ratio: float = 0.7) -> tuple:
+        n = len(X)
+        split_idx = int(n * train_ratio)
+        X_train, X_test = X[:split_idx], X[split_idx:]
+        y_train, y_test = y[:split_idx], y[split_idx:]
+        return X_train, X_test, y_train, y_test
+
+
+class LeakageDetector:
+    """데이터 누수 자동 검증기 (통계/시간/패턴 기반)"""
+
+    def check_leakage(
+        self,
+        X_train: np.ndarray,
+        X_test: np.ndarray,
+        y_train: np.ndarray = None,
+        y_test: np.ndarray = None,
+    ) -> dict:
+        result = {}
+        # 1. 시간순 분할 여부
+        if hasattr(X_train, "index") and hasattr(X_test, "index"):
+            if X_train.index.max() >= X_test.index.min():
+                result["time_order_violation"] = True
+        # 2. 통계적 분포 차이
+        train_mean = np.mean(X_train, axis=0)
+        test_mean = np.mean(X_test, axis=0)
+        diff = np.abs(train_mean - test_mean)
+        result["mean_diff"] = diff.tolist()
+        # 3. 중복 샘플 체크
+        if hasattr(X_train, "tolist") and hasattr(X_test, "tolist"):
+            overlap = set(map(tuple, X_train.tolist())) & set(
+                map(tuple, X_test.tolist())
+            )
+            result["overlap_count"] = len(overlap)
+        # 4. 경고
+        if np.any(diff > 1.0) or result.get("overlap_count", 0) > 0:
+            logger.warning("데이터 누수 가능성 감지!")
+        return result

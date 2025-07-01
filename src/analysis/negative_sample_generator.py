@@ -325,148 +325,96 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
         self, existing_combinations: Set[Tuple[int, ...]], sample_size: int
     ) -> List[List[int]]:
         """
-        비당첨 조합 생성
-
-        Args:
-            existing_combinations: 이미 존재하는 당첨 조합
-            sample_size: 생성할 샘플 크기
-
-        Returns:
-            비당첨 번호 조합 목록
+        비당첨 조합 생성 (균형잡힌 샘플링)
+        - random(30%), pattern-based(40%), adversarial(30%)
         """
-        # 비당첨 조합 저장 목록
+        n_random = int(sample_size * 0.3)
+        n_pattern = int(sample_size * 0.4)
+        n_adv = sample_size - n_random - n_pattern
         negative_samples = []
-
-        # 생성할 남은 조합 수
-        remaining = sample_size
-
-        # 프로세스 풀 크기 설정 (CPU 코어 수 기반)
-        cpu_count = os.cpu_count()
-        if cpu_count is not None:
-            # 하나의 코어는 메인 프로세스용으로 남겨둠
-            recommended_workers = max(1, cpu_count - 1)
-        else:
-            # CPU 수를 알 수 없는 경우 기본값 4 사용
-            recommended_workers = 4
-
-        negative_sampler_config = self.config.get("negative_sampler", {})
-        max_workers = min(
-            negative_sampler_config.get("max_workers", 4), recommended_workers
+        # 1. Random Sampling
+        negative_samples.extend(
+            self._random_negative_samples(existing_combinations, n_random)
         )
-
-        # 현재 배치 크기
-        current_batch_size = self.batch_controller.get_batch_size()
-
-        # 메모리 한계 설정 (GB)
-        memory_limit_gb = negative_sampler_config.get("memory_limit_gb", 2.0)
-        memory_limit_bytes = int(memory_limit_gb * (1024**3))  # GB -> bytes
-
-        self.logger.info(
-            f"비당첨 조합 생성 설정 - 프로세스: {max_workers}, 초기 배치 크기: {current_batch_size:,}, "
-            f"메모리 한계: {memory_limit_gb:.1f}GB"
+        # 2. Pattern-based Sampling
+        negative_samples.extend(
+            self._pattern_based_negative_samples(existing_combinations, n_pattern)
         )
-
-        # 병렬 처리로 여러 배치 생성
-        batch_start_time = time.time()
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            while remaining > 0:
-                # 현재 배치 크기 조정 (남은 양에 맞게)
-                current_batch_size = min(current_batch_size, remaining)
-
-                # 메모리 사용량 추적으로 배치 크기 동적 조정
-                if len(negative_samples) > 0:
-                    memory_usage = self._check_memory_usage(memory_limit_bytes)
-                    memory_percent = memory_usage / memory_limit_bytes
-
-                    if (
-                        memory_percent > 0.8
-                    ):  # 메모리 사용량이 80% 이상이면 배치 크기 감소
-                        current_batch_size = self.batch_controller.reduce_batch_size()
-                        self.logger.warning(
-                            f"메모리 사용량 높음 ({memory_percent:.1%}), 배치 크기 감소: {current_batch_size}"
-                        )
-                    elif (
-                        memory_percent < 0.5
-                    ):  # 메모리 사용량이 50% 미만이면 배치 크기 증가
-                        current_batch_size = self.batch_controller.increase_batch_size()
-                        self.logger.info(
-                            f"메모리 사용량 양호 ({memory_percent:.1%}), 배치 크기 증가: {current_batch_size}"
-                        )
-
-                # 병렬로 여러 배치 생성
-                batch_count = max(1, current_batch_size // 1000)  # 배치당 최대 1000개
-                sub_batch_size = current_batch_size // batch_count
-
-                futures = []
-                for _ in range(batch_count):
-                    futures.append(
-                        executor.submit(
-                            generate_batch_samples,
-                            existing_combinations,
-                            sub_batch_size,
-                        )
-                    )
-
-                # 모든 배치 결과 수집
-                new_samples = []
-                for future in futures:
-                    try:
-                        batch_samples = future.result()
-                        new_samples.extend(batch_samples)
-                    except Exception as e:
-                        self.logger.error(f"배치 생성 중 오류 발생: {str(e)}")
-
-                # 중복 제거 후 추가
-                new_unique_samples = []
-                existing_set = {tuple(sample) for sample in negative_samples}
-                for sample in new_samples:
-                    sample_tuple = tuple(sample)
-                    if sample_tuple not in existing_set:
-                        new_unique_samples.append(sample)
-                        existing_set.add(sample_tuple)
-
-                # 샘플 추가
-                negative_samples.extend(new_unique_samples)
-
-                # 진행 상황 업데이트
-                self.progress = len(negative_samples)
-
-                # 남은 수 계산
-                remaining = sample_size - len(negative_samples)
-
-                # 진행 상황 및 성능 로깅
-                current_time = time.time()
-                samples_per_second = len(new_unique_samples) / (
-                    current_time - batch_start_time
-                )
-                batch_start_time = current_time
-
-                self.logger.info(
-                    f"생성 진행: {self.progress:,}/{sample_size:,} ({self.progress/sample_size*100:.1f}%) - "
-                    f"속도: {samples_per_second:.1f}개/초, 배치 크기: {current_batch_size:,}"
-                )
-
-                # 메모리 정리
-                if self.progress % 10000 == 0:
-                    gc.collect()
-
+        # 3. Adversarial Sampling
+        negative_samples.extend(
+            self._adversarial_negative_samples(existing_combinations, n_adv)
+        )
         return negative_samples
 
-    def _generate_batch(
-        self, existing_combinations: Set[Tuple[int, ...]], batch_size: int
+    def _random_negative_samples(
+        self, existing_combinations: Set[Tuple[int, ...]], n: int
     ) -> List[List[int]]:
-        """
-        비당첨 조합 배치 생성 (클래스 내부 메서드 - 호환성 유지)
+        """단순 랜덤 비당첨 조합 생성"""
+        return generate_batch_samples(existing_combinations, n)
 
-        Args:
-            existing_combinations: 이미 존재하는 당첨 조합
-            batch_size: 생성할 배치 크기
+    def _pattern_based_negative_samples(
+        self, existing_combinations: Set[Tuple[int, ...]], n: int
+    ) -> List[List[int]]:
+        """패턴 기반(홀짝, 연속, 분포 등) 극단/정상 케이스 포함"""
+        samples = []
+        all_numbers = np.arange(1, 46)
+        # 극단: 모두 홀수
+        if n > 0:
+            odd = [i for i in all_numbers if i % 2 == 1]
+            if len(odd) >= 6:
+                samples.append(sorted(random.sample(odd, 6)))
+        # 극단: 모두 짝수
+        if n > 1:
+            even = [i for i in all_numbers if i % 2 == 0]
+            if len(even) >= 6:
+                samples.append(sorted(random.sample(even, 6)))
+        # 극단: 연속번호
+        if n > 2:
+            start = random.randint(1, 40)
+            samples.append(list(range(start, start + 6)))
+        # 정상 분포: 홀짝 3:3, 분산 높은 조합
+        while len(samples) < n:
+            combo = random.sample(list(all_numbers), 6)
+            odds = sum(1 for x in combo if x % 2 == 1)
+            evens = 6 - odds
+            if odds == 3 and evens == 3:
+                samples.append(sorted(combo))
+        # 중복/당첨 제외
+        filtered = []
+        seen = set()
+        for s in samples:
+            t = tuple(sorted(s))
+            if t not in existing_combinations and t not in seen:
+                filtered.append(list(t))
+                seen.add(t)
+            if len(filtered) >= n:
+                break
+        return filtered
 
-        Returns:
-            비당첨 번호 조합 목록
-        """
-        # 외부 함수를 호출하여 구현
-        return generate_batch_samples(existing_combinations, batch_size)
+    def _adversarial_negative_samples(
+        self, existing_combinations: Set[Tuple[int, ...]], n: int
+    ) -> List[List[int]]:
+        """패턴 분석 기반, 당첨 확률 낮은(패턴상 불리) 조합 생성"""
+        samples = []
+        all_numbers = np.arange(1, 46)
+        attempts = 0
+        while len(samples) < n and attempts < n * 10:
+            combo = random.sample(list(all_numbers), 6)
+            features = self.pattern_analyzer.extract_pattern_features(combo, None)
+            # 예: 패턴상 당첨 확률이 매우 낮은 조합(예: 동일 끝수 4개 이상, 고분산 등)
+            if features.get("same_end_digit", 0) >= 4 or features.get("spread", 0) > 35:
+                t = tuple(sorted(combo))
+                if t not in existing_combinations:
+                    samples.append(list(t))
+            attempts += 1
+        return samples[:n]
+
+    def auto_label(
+        self, samples: List[List[int]], positive: bool = False
+    ) -> List[Dict[str, Any]]:
+        """ML 학습용 레이블 자동 부여 (positive: 당첨, negative: 비당첨)"""
+        label = 1 if positive else 0
+        return [{"numbers": s, "label": label} for s in samples]
 
     def _save_raw_samples(
         self, negative_samples: List[List[int]], sample_size: int

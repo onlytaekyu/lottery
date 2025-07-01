@@ -167,37 +167,15 @@ class TCNPreprocessor(BasePreprocessor):
 
 
 class RandomForestPreprocessor(BasePreprocessor):
-    """Random Forest 최적화 전처리기"""
+    """Random Forest 전용: 전체 특성 보존, 별도 변환 없음"""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        super().__init__(config)
-
-        self.logger.info("Random Forest 전처리기 초기화 완료")
-
-    def fit(
-        self,
-        X: np.ndarray,
-        y: Optional[np.ndarray] = None,
-        feature_names: Optional[List[str]] = None,
-    ) -> "RandomForestPreprocessor":
-        """Random Forest 전처리기 학습"""
-        self.logger.info(f"Random Forest 전처리기 학습 시작: {X.shape}")
-
-        if feature_names is None:
-            feature_names = [f"feature_{i}" for i in range(X.shape[1])]
-
-        self.feature_names_in = feature_names
-
+    def fit(self, X: np.ndarray, y: np.ndarray | None = None):
         self.is_fitted = True
-        self.logger.info("Random Forest 전처리기 학습 완료")
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """Random Forest 전처리 변환"""
         if not self.is_fitted:
-            raise ValueError("전처리기가 학습되지 않았습니다.")
-
-        # Random Forest는 원본 데이터 그대로 사용
+            raise RuntimeError("Preprocessor must be fitted before transform.")
         return X
 
 
