@@ -103,7 +103,6 @@ class ROIAnalyzer(BaseAnalyzer):
             3: 5000,  # 4등 (평균 5천원)
         }
 
-    @performance_monitor
     def analyze(self, historical_data: List[LotteryNumber]) -> Dict[str, Any]:
         """
         과거 로또 당첨 번호의 ROI 관련 패턴을 분석합니다.

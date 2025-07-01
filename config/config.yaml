@@ -91,7 +91,12 @@ execution:
   verbose: true
 filtering:
   remove_low_variance_features: true
-  variance_threshold: 0.01
+  variance_threshold: 0.001  # Phase 1 개선: 0.01 → 0.001
+  correlation_threshold: 0.95  # Phase 1 신규: 상관관계 기반 중복 제거
+  enable_correlation_removal: true
+  outlier_handling:
+    method: "winsorize"  # "winsorize", "iqr", "zscore"
+    winsorize_limits: [0.01, 0.99]  # 1%, 99% 분위수
 filters:
   allow_duplicates: false
   exclude_exact_past_match: true
