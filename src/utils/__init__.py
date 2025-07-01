@@ -187,6 +187,21 @@ def get_cuda_statistics():
     return _imported_items["get_cuda_statistics"]()
 
 
+# dynamic_batch_size 통합 → cuda_optimizers
+from .cuda_optimizers import (
+    CudaConfig,
+    BaseCudaOptimizer,
+    DynamicBatchSizeController,
+    BatchSizeConfig,
+    optimize_memory,
+    get_device_info,
+    setup_cuda_memory_pool,
+    get_safe_batch_size,
+)
+
+# 하위 호환성
+DynamicBatchSize = DynamicBatchSizeController  # type: ignore
+
 # 즉시 로드하지 않고 함수로 제공
 __all__ = [
     "get_logger",

@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from ..utils.unified_config import ConfigProxy
 from torch.utils.data import DataLoader
 import threading
+import time
 
 # 스레드 로컬 캐시 가져오기 (memory_manager에서 가져오도록 변경)
 from .memory_manager import (
@@ -40,6 +41,77 @@ logger = get_logger(__name__)
 # GPU 메모리 풀 싱글톤 관리
 _memory_pool_initialized = False
 _memory_pool_lock = threading.RLock()
+
+
+# ---------------- New Stand-Alone Dynamic Batch Size (migrated) ----------------
+@dataclass
+class BatchSizeConfig:
+    """배치 크기 설정 (간소화 버전)"""
+
+    initial_batch_size: int = 1000
+    min_batch_size: int = 100
+    max_batch_size: int = 10000
+    growth_rate: float = 1.2
+    reduction_rate: float = 0.5
+
+
+class DynamicBatchSizeController:
+    """간단한 배치 크기 동적 조절기 (OOM/메모리 이벤트 대응)"""
+
+    def __init__(self, config: BatchSizeConfig | None = None):
+        self.config = config or BatchSizeConfig()
+        self._batch_size = self.config.initial_batch_size
+        self._lock = threading.Lock()
+        self._history: list[dict] = []
+
+    # ---- 기본 API ----
+    def get_current_batch_size(self) -> int:
+        with self._lock:
+            return self._batch_size
+
+    def increase_batch_size(self) -> int:
+        with self._lock:
+            new_size = int(self._batch_size * self.config.growth_rate)
+            new_size = min(new_size, self.config.max_batch_size)
+            self._set_batch_size(new_size, "increase")
+            return self._batch_size
+
+    def reduce_batch_size(self) -> int:
+        with self._lock:
+            new_size = int(self._batch_size * self.config.reduction_rate)
+            new_size = max(new_size, self.config.min_batch_size)
+            self._set_batch_size(new_size, "reduce")
+            return self._batch_size
+
+    def handle_oom(self) -> int:
+        """OOM 발생 시 호출"""
+        return self._set_batch_size(
+            max(self.config.min_batch_size, int(self._batch_size * 0.25)), "oom"
+        )
+
+    # ---- 내부 ----
+    def _set_batch_size(self, new_size: int, reason: str):
+        old = self._batch_size
+        self._batch_size = new_size
+        self._history.append(
+            {"ts": time.time(), "old": old, "new": new_size, "reason": reason}
+        )
+        return self._batch_size
+
+    # ---- 호환 API ----
+    def get_batch_size(self):
+        return self.get_current_batch_size()
+
+    def reset(self, new_initial_size: int | None = None):
+        with self._lock:
+            self._batch_size = new_initial_size or self.config.initial_batch_size
+            self._history.clear()
+
+
+# 하위 호환 별칭 유지
+DynamicBatchSize = DynamicBatchSizeController
+
+# -----------------------------------------------------------------------------
 
 
 @dataclass
@@ -775,3 +847,20 @@ def get_cuda_optimizer(config: Optional[CudaConfig] = None) -> BaseCudaOptimizer
         BaseCudaOptimizer: CUDA 최적화기 인스턴스
     """
     return BaseCudaOptimizer(config)
+
+
+def get_safe_batch_size(initial_batch_size: int = 32) -> int:  # legacy util
+    """간단 호환 함수: GPU 메모리 여유에 따라 안전 배치 크기 추정"""
+    try:
+        gb = (
+            torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if torch.cuda.is_available()
+            else 8
+        )
+    except Exception:
+        gb = 8
+    if gb < 4:
+        return max(1, initial_batch_size // 4)
+    if gb < 8:
+        return max(1, initial_batch_size // 2)
+    return initial_batch_size

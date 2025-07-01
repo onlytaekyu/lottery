@@ -25,7 +25,7 @@ from ..utils.unified_logging import get_logger
 from ..utils.unified_performance import performance_monitor
 from ..utils.memory_manager import MemoryManager
 from ..utils.unified_config import ConfigProxy
-from ..utils.dynamic_batch_size import DynamicBatchSizeController
+from ..utils.cuda_optimizers import DynamicBatchSizeController
 from ..shared.types import LotteryNumber
 from .pattern_analyzer import PatternAnalyzer, PatternFeatures
 from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
