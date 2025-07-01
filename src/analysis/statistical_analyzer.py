@@ -15,17 +15,17 @@ from ..utils.unified_logging import get_logger
 logger = get_logger(__name__)
 
 
-class StatisticalAnalyzer(BaseAnalyzer):
+class StatisticalAnalyzer(BaseAnalyzer[Dict[str, Any]]):
     """출현/위치 통계 분석기 클래스"""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         StatisticalAnalyzer 초기화
 
         Args:
             config: 분석에 사용할 설정
         """
-        super().__init__(config, name="statistical")
+        super().__init__(config or {}, name="statistical")
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs

@@ -20,14 +20,13 @@ import os  # 추가: os 모듈 임포트
 from ..utils.unified_logging import get_logger
 from ..utils.unified_performance import performance_monitor
 from ..shared.types import LotteryNumber, PatternAnalysis
-from ..analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
-from ..utils.unified_config import ConfigProxy
+from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
+from .base_analyzer import BaseAnalyzer
 
 from .roi_analyzer import ROIAnalyzer, ROIMetrics
 from .pattern_analyzer import PatternAnalyzer
-from .distribution_analyzer import DistributionAnalyzer
+from .distribution_analyzer import DistributionAnalyzer, DistributionPattern
 from ..utils.pattern_filter import PatternFilter, get_pattern_filter
-from .base_analyzer import BaseAnalyzer
 
 # 추가 분석기 임포트 (1단계: cluster, trend 활성화)
 from .cluster_analyzer import ClusterAnalyzer
@@ -49,48 +48,37 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         super().__init__(config or {}, "unified")
         self.logger = get_logger(__name__)
 
-        # 설정이 ConfigProxy 타입인지 확인
-        if not isinstance(self.config, ConfigProxy):
-            self.config = ConfigProxy(self.config)
+        # 설정을 딕셔너리로 처리
+        self.config = config or {}
 
         # 기존 분석기 초기화
         self.pattern_analyzer = PatternAnalyzer(config)  # type: ignore
-        self.roi_analyzer = ROIAnalyzer(self.config)  # type: ignore
-        self.distribution_analyzer = DistributionAnalyzer(self.config)  # type: ignore
+        self.roi_analyzer = ROIAnalyzer(config)  # type: ignore
+        self.distribution_analyzer = DistributionAnalyzer(config)  # type: ignore
 
         # 새로 활성화된 분석기들 (1단계)
         try:
-            self.cluster_analyzer = ClusterAnalyzer(self.config)  # type: ignore
+            self.cluster_analyzer = ClusterAnalyzer(config)  # type: ignore
             self.logger.info("✅ 클러스터 분석기 활성화 완료")
         except Exception as e:
             self.logger.warning(f"클러스터 분석기 초기화 실패: {e}")
             self.cluster_analyzer = None
 
         try:
-            self.trend_analyzer = TrendAnalyzer(self.config)  # type: ignore
+            self.trend_analyzer = TrendAnalyzer(config)  # type: ignore
             self.logger.info("✅ 트렌드 분석기 활성화 완료")
         except Exception as e:
             self.logger.warning(f"트렌드 분석기 초기화 실패: {e}")
             self.trend_analyzer = None
 
         # 패턴 벡터라이저 초기화
-        self.pattern_vectorizer = EnhancedPatternVectorizer(self.config)  # type: ignore
+        self.pattern_vectorizer = EnhancedPatternVectorizer(config)  # type: ignore
 
         # 패턴 필터 초기화
-        self.pattern_filter = get_pattern_filter(self.config)  # type: ignore
+        self.pattern_filter = get_pattern_filter(config)  # type: ignore
 
         # 캐시 디렉토리 설정
-        if isinstance(self.config, dict):
-            cache_dir = self.config.get("paths", {}).get("cache_dir", "data/cache")
-        else:
-            try:
-                cache_dir = self.config["paths"]["cache_dir"]
-            except KeyError:
-                logger.warning(
-                    "설정에서 'paths.cache_dir'를 찾을 수 없습니다. 기본값('data/cache')을 사용합니다."
-                )
-                cache_dir = "data/cache"
-
+        cache_dir = self.config.get("paths", {}).get("cache_dir", "data/cache")
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 

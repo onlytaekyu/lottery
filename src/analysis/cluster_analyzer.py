@@ -93,14 +93,15 @@ class ClusterAnalyzer(BaseAnalyzer[Dict[str, Any]]):
     번호들을 의미 있는 클러스터로 그룹화합니다.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         초기화
 
         Args:
             config: 설정 객체
         """
-        super().__init__(config, name="ClusterAnalyzer")
+        config = config or {}
+        super().__init__(config, name="cluster")
 
         # DBSCAN 사용 여부
         self.use_dbscan = False

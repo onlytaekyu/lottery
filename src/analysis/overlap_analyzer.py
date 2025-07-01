@@ -15,103 +15,17 @@ from ..utils.unified_logging import get_logger
 logger = get_logger(__name__)
 
 
-class OverlapAnalyzer(BaseAnalyzer):
+class OverlapAnalyzer(BaseAnalyzer[Dict[str, Any]]):
     """유사도/중복성 분석기 클래스"""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         OverlapAnalyzer 초기화
 
         Args:
             config: 분석에 사용할 설정
         """
-        super().__init__(config, name="overlap")
-
-    def analyze(self, historical_data: List[LotteryNumber]) -> Dict[str, Any]:
-        """
-        과거 로또 당첨 번호의 유사도/중복성을 분석합니다.
-
-        Args:
-            historical_data: 분석할 과거 당첨 번호 목록
-
-        Returns:
-            Dict[str, Any]: 유사도/중복성 분석 결과
-        """
-        # 캐시 키 생성
-        cache_key = self._create_cache_key("overlap_analysis", len(historical_data))
-
-        # 캐시 확인
-        cached_result = self._check_cache(cache_key)
-        if cached_result:
-            self.logger.info(f"캐시된 분석 결과 사용: {cache_key}")
-            return cached_result
-
-        # 분석 수행
-        self.logger.info(f"유사도/중복성 분석 시작: {len(historical_data)}개 데이터")
-
-        results = {}
-
-        # 중복 플래그 분석
-        results["duplicate_flag"] = self._analyze_duplicate_flag(historical_data)
-
-        # 과거 당첨 번호와의 최대 중복도
-        results["max_overlap_with_past"] = self._analyze_max_overlap_with_past(
-            historical_data
-        )
-
-        # 최근성 점수
-        results["recency_score"] = self._analyze_recency_score(historical_data)
-
-        # 중복 패턴 분석
-        results["overlap_patterns"] = self._analyze_overlap_patterns(historical_data)
-
-        # 인접 회차 유사도
-        results["adjacent_draw_similarity"] = self._analyze_adjacent_draw_similarity(
-            historical_data
-        )
-
-        # 최근 N회 중복 패턴
-        results["recent_overlap_patterns"] = self._analyze_recent_overlap_patterns(
-            historical_data
-        )
-
-        # 정확한 일치 여부 분석 (새로 추가)
-        exact_match_results = self._analyze_exact_match_in_history(historical_data)
-        results["exact_match_in_history"] = exact_match_results["exact_match_list"]
-        results["exact_match_count"] = exact_match_results["exact_match_count"]
-
-        # 과거 최대 중복 번호 수 분석 (새로 추가)
-        results["num_overlap_with_past_max"] = self._analyze_num_overlap_with_past_max(
-            historical_data
-        )
-
-        # 인기 패턴과의 중복 분석 (새로 추가)
-        results["overlap_with_hot_patterns"] = self._analyze_overlap_with_hot_patterns(
-            historical_data
-        )
-
-        # 3자리 및 4자리 중복 패턴 분석 (신규 추가)
-        results["overlap_3_4_digit_patterns"] = (
-            self._analyze_3_4_digit_overlap_patterns(historical_data)
-        )
-
-        # 중복 패턴 ROI 상관관계 분석 (신규 추가)
-        results["overlap_roi_correlation"] = self._analyze_overlap_roi_correlation(
-            historical_data
-        )
-
-        # 중복 패턴 시간적 주기성 분석 (신규 추가)
-        results["overlap_time_gaps"] = self._analyze_overlap_time_gaps(historical_data)
-
-        # ROI 특화 분석 추가 (overlap_roi_analyzer.py에서 통합)
-        results["overlap_roi_analysis"] = self._analyze_overlap_roi_patterns(
-            historical_data, results
-        )
-
-        # 결과 캐싱
-        self._save_to_cache(cache_key, results)
-
-        return results
+        super().__init__(config or {}, name="overlap")
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
@@ -156,19 +70,37 @@ class OverlapAnalyzer(BaseAnalyzer):
             historical_data
         )
 
-        # 정확한 일치 여부 분석 (새로 추가)
+        # 정확한 일치 여부 분석
         exact_match_results = self._analyze_exact_match_in_history(historical_data)
         results["exact_match_in_history"] = exact_match_results["exact_match_list"]
         results["exact_match_count"] = exact_match_results["exact_match_count"]
 
-        # 과거 최대 중복 번호 수 분석 (새로 추가)
+        # 과거 최대 중복 번호 수 분석
         results["num_overlap_with_past_max"] = self._analyze_num_overlap_with_past_max(
             historical_data
         )
 
-        # 인기 패턴과의 중복 분석 (새로 추가)
+        # 인기 패턴과의 중복 분석
         results["overlap_with_hot_patterns"] = self._analyze_overlap_with_hot_patterns(
             historical_data
+        )
+
+        # 3자리 및 4자리 중복 패턴 분석
+        results["overlap_3_4_digit_patterns"] = (
+            self._analyze_3_4_digit_overlap_patterns(historical_data)
+        )
+
+        # 중복 패턴 ROI 상관관계 분석
+        results["overlap_roi_correlation"] = self._analyze_overlap_roi_correlation(
+            historical_data
+        )
+
+        # 중복 패턴 시간적 주기성 분석
+        results["overlap_time_gaps"] = self._analyze_overlap_time_gaps(historical_data)
+
+        # ROI 특화 분석 추가
+        results["overlap_roi_analysis"] = self._analyze_overlap_roi_patterns(
+            historical_data, results
         )
 
         return results

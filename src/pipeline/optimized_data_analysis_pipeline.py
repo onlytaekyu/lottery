@@ -472,19 +472,20 @@ def run_optimized_data_analysis() -> bool:
                 # 재시도 없이 None 반환하여 중복 초기화 방지
                 return None
 
-        # 분석기들 초기화 (기존 4개 + 새로운 5개)
+        # 분석기들 초기화 (모든 11개 분석기)
         pattern_analyzer = init_analyzer("pattern")
         distribution_analyzer = init_analyzer("distribution")
         roi_analyzer = init_analyzer("roi")
         pair_analyzer = init_analyzer("pair")
         vectorizer = init_analyzer("vectorizer")
 
-        # 🔥 새로 추가된 미사용 분석기들 활성화
+        # 🔥 모든 11개 분석기 완전 활용
         cluster_analyzer = init_analyzer("cluster")
         trend_analyzer = init_analyzer("trend")
         overlap_analyzer = init_analyzer("overlap")
         structural_analyzer = init_analyzer("structural")
         statistical_analyzer = init_analyzer("statistical")
+        negative_sample_generator = init_analyzer("negative_sample")
 
         # 초기화 실패 체크
         analyzers = {
@@ -493,12 +494,13 @@ def run_optimized_data_analysis() -> bool:
             "roi": roi_analyzer,
             "pair": pair_analyzer,
             "vectorizer": vectorizer,
-            # 🔥 새로 추가된 분석기들
+            # 🔥 모든 11개 분석기 완전 활용
             "cluster": cluster_analyzer,
             "trend": trend_analyzer,
             "overlap": overlap_analyzer,
             "structural": structural_analyzer,
             "statistical": statistical_analyzer,
+            "negative_sample": negative_sample_generator,
         }
 
         failed_analyzers = [
@@ -519,20 +521,88 @@ def run_optimized_data_analysis() -> bool:
         logger.info("⚡ 3단계: 병렬 분석 실행")
         analysis_results = {}
 
-        # 메모리 관리 스코프 내에서 실행
-        if memory_manager:
-            with memory_manager.allocation_scope():
-                analysis_results = run_parallel_analysis(
-                    historical_data, analyzers, config
-                )
+        # 🔥 모든 11개 분석기를 포함한 분석 작업 정의
+        analysis_tasks = []
+
+        # 기존 핵심 분석기들
+        core_analyzers = ["pattern", "distribution", "roi", "pair"]
+        for name in core_analyzers:
+            if name in analyzers and analyzers[name] is not None:
+                analysis_tasks.append((name, analyzers[name]))
+
+        # 🚀 모든 11개 분석기 완전 활용 (확장된 분석기들)
+        extended_analyzers = [
+            "cluster",
+            "trend",
+            "overlap",
+            "structural",
+            "statistical",
+            "negative_sample",
+        ]
+        for name in extended_analyzers:
+            if name in analyzers and analyzers[name] is not None:
+                analysis_tasks.append((name, analyzers[name]))
+                logger.info(f"✅ {name} 분석기 병렬 분석에 포함")
+
+        logger.info(f"총 {len(analysis_tasks)}개 분석기로 병렬 분석 실행 (목표: 11개)")
+        logger.info(f"활성화된 분석기: {[name for name, _ in analysis_tasks]}")
+
+        # 프로세스 풀이 있으면 병렬 실행, 없으면 순차 실행
+        if process_pool_manager and len(analysis_tasks) > 1:
+            logger.info("프로세스 풀을 사용한 병렬 분석")
+
+            # 🔧 워커 수를 분석기 수에 맞게 조정
+            max_workers = min(len(analysis_tasks), 8)  # 최대 8개 워커
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_name = {}
+
+                for name, analyzer in analysis_tasks:
+                    if analyzer:
+                        future = executor.submit(
+                            safe_analysis_execution, name, analyzer, historical_data
+                        )
+                        future_to_name[future] = name
+
+                # 결과 수집
+                for future in as_completed(future_to_name):
+                    name = future_to_name[future]
+                    try:
+                        result = future.result(timeout=300)  # 5분 타임아웃
+                        if result:
+                            analysis_results[name] = result
+                            logger.info(f"✅ {name} 분석 완료")
+                        else:
+                            logger.warning(f"⚠️ {name} 분석 결과 없음")
+                    except Exception as e:
+                        logger.error(f"❌ {name} 분석 실패: {e}")
         else:
-            analysis_results = run_parallel_analysis(historical_data, analyzers, config)
+            logger.info("순차 분석 실행")
 
-        if not analysis_results:
-            logger.error("분석 실행 실패")
-            return False
+            for name, analyzer in analysis_tasks:
+                if analyzer:
+                    try:
+                        result = safe_analysis_execution(
+                            name, analyzer, historical_data
+                        )
+                        if result:
+                            analysis_results[name] = result
+                            logger.info(f"✅ {name} 분석 완료")
+                        else:
+                            logger.warning(f"⚠️ {name} 분석 결과 없음")
+                    except Exception as e:
+                        logger.error(f"❌ {name} 분석 실패: {e}")
 
-        logger.info(f"분석 완료: {len(analysis_results)}개 결과")
+        logger.info(
+            f"🎉 병렬 분석 완료: {len(analysis_results)}개 결과 (목표: {len(analysis_tasks)}개)"
+        )
+
+        # 분석 결과 상세 로깅
+        for name, result in analysis_results.items():
+            if isinstance(result, dict):
+                logger.info(f"   - {name}: {len(result)} 항목")
+            else:
+                logger.info(f"   - {name}: {type(result).__name__}")
 
         # 4단계: 고급 특성 추출 및 벡터 생성
         logger.info("🔢 4단계: 고급 특성 추출 및 벡터 생성")
@@ -1058,7 +1128,7 @@ def run_parallel_analysis(
     try:
         logger.info("병렬 분석 시작")
 
-        # 🔥 모든 분석기를 포함한 분석 작업 정의 (기존 4개 + 새로운 5개)
+        # 🔥 모든 11개 분석기를 포함한 분석 작업 정의
         analysis_tasks = []
 
         # 기존 핵심 분석기들
@@ -1067,20 +1137,22 @@ def run_parallel_analysis(
             if name in analyzers and analyzers[name] is not None:
                 analysis_tasks.append((name, analyzers[name]))
 
-        # 🚀 새로 추가된 분석기들 (미사용 → 활성화)
+        # 🚀 모든 11개 분석기 완전 활용 (확장된 분석기들)
         extended_analyzers = [
             "cluster",
             "trend",
             "overlap",
             "structural",
             "statistical",
+            "negative_sample",
         ]
         for name in extended_analyzers:
             if name in analyzers and analyzers[name] is not None:
                 analysis_tasks.append((name, analyzers[name]))
                 logger.info(f"✅ {name} 분석기 병렬 분석에 포함")
 
-        logger.info(f"총 {len(analysis_tasks)}개 분석기로 병렬 분석 실행")
+        logger.info(f"총 {len(analysis_tasks)}개 분석기로 병렬 분석 실행 (목표: 11개)")
+        logger.info(f"활성화된 분석기: {[name for name, _ in analysis_tasks]}")
 
         # 프로세스 풀이 있으면 병렬 실행, 없으면 순차 실행
         if process_pool_manager and len(analysis_tasks) > 1:

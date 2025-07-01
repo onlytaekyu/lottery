@@ -97,20 +97,11 @@ class AnalyzerFactory:
 
                 return EnhancedPatternVectorizer(config)
 
-            # 🔥 새로 추가된 미사용 분석기들 (초기화 방식 수정)
+            # 🔥 모든 11개 분석기 완전 지원
             elif analyzer_type == "cluster":
                 from .cluster_analyzer import ClusterAnalyzer
 
-                # ClusterAnalyzer는 다른 초기화 방식 사용
-                try:
-                    return ClusterAnalyzer(config)
-                except Exception as e:
-                    logger.warning(f"ClusterAnalyzer 초기화 실패, 기본 방식 시도: {e}")
-                    # 기본 인스턴스 생성 시도
-                    analyzer = ClusterAnalyzer.__new__(ClusterAnalyzer)
-                    analyzer.config = config
-                    analyzer.logger = logger
-                    return analyzer
+                return ClusterAnalyzer(config)
 
             elif analyzer_type == "trend":
                 from .trend_analyzer import TrendAnalyzer
@@ -131,6 +122,16 @@ class AnalyzerFactory:
                 from .statistical_analyzer import StatisticalAnalyzer
 
                 return StatisticalAnalyzer(config)
+
+            elif analyzer_type == "negative_sample":
+                from .negative_sample_generator import NegativeSampleGenerator
+
+                return NegativeSampleGenerator(config)
+
+            elif analyzer_type == "unified":
+                from .unified_analyzer import UnifiedAnalyzer
+
+                return UnifiedAnalyzer(config)
 
             else:
                 raise ValueError(f"알 수 없는 분석기 타입: {analyzer_type}")

@@ -191,20 +191,21 @@ class NegativeSampleGenerator:
         Args:
             config: 설정
         """
-        self.config = ConfigProxy(config or {})
+        self.config = config or {}
         self.pattern_analyzer = PatternAnalyzer(config)
         self.pattern_vectorizer = EnhancedPatternVectorizer(config)
 
         # 캐시 디렉토리 설정
         try:
-            self.cache_dir = self.config["paths"]["cache_dir"]
+            self.cache_dir = self.config.get("paths", {}).get("cache_dir", "data/cache")
         except KeyError:
             raise KeyError("설정에서 'paths.cache_dir' 키를 찾을 수 없습니다.")
         Path(self.cache_dir).mkdir(exist_ok=True, parents=True)
 
         # 배치 크기 컨트롤러
+        negative_sampler_config = self.config.get("negative_sampler", {})
         self.batch_controller = DynamicBatchSizeController(
-            initial_batch_size=self.config["negative_sampler"]["batch_size"],
+            initial_batch_size=negative_sampler_config.get("batch_size", 1000),
             min_batch_size=100,
             max_batch_size=10000,
             growth_rate=1.2,
@@ -346,15 +347,16 @@ class NegativeSampleGenerator:
             # CPU 수를 알 수 없는 경우 기본값 4 사용
             recommended_workers = 4
 
+        negative_sampler_config = self.config.get("negative_sampler", {})
         max_workers = min(
-            self.config["negative_sampler"]["max_workers"], recommended_workers
+            negative_sampler_config.get("max_workers", 4), recommended_workers
         )
 
         # 현재 배치 크기
         current_batch_size = self.batch_controller.get_batch_size()
 
         # 메모리 한계 설정 (GB)
-        memory_limit_gb = self.config["negative_sampler"]["memory_limit_gb"]
+        memory_limit_gb = negative_sampler_config.get("memory_limit_gb", 2.0)
         memory_limit_bytes = int(memory_limit_gb * (1024**3))  # GB -> bytes
 
         self.logger.info(

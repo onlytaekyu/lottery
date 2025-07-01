@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple, Any, Optional, Callable, Union
 
 from ..shared.types import LotteryNumber, PatternFeatures
 from ..utils.unified_logging import get_logger
-from ..utils.unified_config import ConfigProxy, load_config
+from ..utils.unified_config import load_config
 
 # 싱글톤 인스턴스
 _pattern_filter_instance = None
@@ -20,10 +20,11 @@ _pattern_filter_instance = None
 # 로거 설정
 logger = get_logger(__name__)
 
+
 class PatternFilter:
     """로또 번호 패턴 필터링 클래스"""
 
-    def __init__(self, config: Optional[Union[Dict[str, Any], ConfigProxy]] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         초기화
 
@@ -32,23 +33,22 @@ class PatternFilter:
         """
         # 설정이 없으면 기본 설정 로드
         if config is None:
-            config = load_config()
+            try:
+                loaded_config = load_config()
+                if hasattr(loaded_config, "to_dict"):
+                    config = loaded_config.to_dict()
+                elif isinstance(loaded_config, dict):
+                    config = loaded_config
+                else:
+                    config = {}
+            except Exception:
+                config = {}
 
-        # ConfigProxy로 변환
-        if not isinstance(config, ConfigProxy):
-            self.config = ConfigProxy(config if isinstance(config, dict) else {})
-        else:
-            self.config = config
+        # 설정을 딕셔너리로 처리
+        self.config = config if isinstance(config, dict) else {}
 
         # 기본 데이터 디렉토리 경로 설정
-        try:
-            self.data_dir = Path(self.config["data_dir"])
-        except KeyError:
-            logger.warning(
-                "설정에서 'data_dir'를 찾을 수 없습니다. 기본값 'data'를 사용합니다."
-            )
-            self.data_dir = Path("data")
-
+        self.data_dir = Path(self.config.get("data_dir", "data"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         # 실패 패턴 파일 경로
@@ -60,13 +60,7 @@ class PatternFilter:
         )
 
         # 최소 실패 횟수 (이 값 이상이면 필터링)
-        try:
-            self.min_failure_count = self.config["min_failure_count"]
-        except KeyError:
-            logger.warning(
-                "설정에서 'min_failure_count'를 찾을 수 없습니다. 기본값 3을 사용합니다."
-            )
-            self.min_failure_count = 3
+        self.min_failure_count = self.config.get("min_failure_count", 3)
 
         # 저성능 패턴 맵
         self.low_performance_patterns = self._load_low_performance_patterns()
@@ -879,8 +873,9 @@ class PatternFilter:
         # 필터 결과 및 정보 반환
         return should_filter, results
 
+
 def get_pattern_filter(
-    config: Optional[Union[Dict[str, Any], ConfigProxy]] = None,
+    config: Optional[Dict[str, Any]] = None,
 ) -> PatternFilter:
     """
     패턴 필터 인스턴스를 가져옵니다 (싱글톤 패턴).

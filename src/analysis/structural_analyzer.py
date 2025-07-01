@@ -20,17 +20,17 @@ from src.utils.unified_performance import performance_monitor
 logger = get_logger(__name__)
 
 
-class StructuralAnalyzer(BaseAnalyzer):
+class StructuralAnalyzer(BaseAnalyzer[Dict[str, Any]]):
     """구조/쌍/클러스터 분석기 클래스"""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         StructuralAnalyzer 초기화
 
         Args:
             config: 분석에 사용할 설정
         """
-        super().__init__(config, name="structural")
+        super().__init__(config or {}, name="structural")
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
@@ -45,27 +45,6 @@ class StructuralAnalyzer(BaseAnalyzer):
         Returns:
             Dict[str, Any]: 구조적 패턴 분석 결과
         """
-        return self.analyze(historical_data)
-
-    def analyze(self, historical_data: List[LotteryNumber]) -> Dict[str, Any]:
-        """
-        과거 로또 당첨 번호의 구조적 패턴을 분석합니다.
-
-        Args:
-            historical_data: 분석할 과거 당첨 번호 목록
-
-        Returns:
-            Dict[str, Any]: 구조적 패턴 분석 결과
-        """
-        # 캐시 키 생성
-        cache_key = self._create_cache_key("structural_analysis", len(historical_data))
-
-        # 캐시 확인
-        cached_result = self._check_cache(cache_key)
-        if cached_result:
-            self.logger.info(f"캐시된 분석 결과 사용: {cache_key}")
-            return cached_result
-
         # 분석 수행
         self.logger.info(f"구조/쌍/클러스터 분석 시작: {len(historical_data)}개 데이터")
 
@@ -142,9 +121,6 @@ class StructuralAnalyzer(BaseAnalyzer):
         results["range_distribution"] = self._analyze_range_distribution(
             historical_data
         )
-
-        # 결과 캐싱
-        self._save_to_cache(cache_key, results)
 
         return results
 
