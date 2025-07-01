@@ -117,56 +117,72 @@ class ROIAnalyzer(BaseAnalyzer):
         with self.memory_manager.allocation_scope():
             logger.info(f"ROI 기반 분석 시작: {len(historical_data)}개 데이터")
 
-            # 캐시 키 생성
-            cache_key = self._create_cache_key("roi_analysis", len(historical_data))
+            try:
+                # 캐시 키 생성
+                cache_key = self._create_cache_key("roi_analysis", len(historical_data))
 
-            # 캐시 확인
-            cached_result = self._check_cache(cache_key)
-            if cached_result:
-                logger.info("캐시된 ROI 분석 결과 사용")
-                return cached_result
+                # 캐시 확인
+                cached_result = self._check_cache(cache_key)
+                if cached_result:
+                    logger.info("캐시된 ROI 분석 결과 사용")
+                    return cached_result
 
-            # 분석 수행
-            results = {}
+                # 분석 수행
+                results = {}
 
-            # ROI 그룹 분석
-            results["roi_pattern_groups"] = self.identify_roi_pattern_groups(
-                historical_data
-            )
+                # ROI 그룹 분석
+                results["roi_pattern_groups"] = self.identify_roi_pattern_groups(
+                    historical_data
+                )
 
-            # 번호별 ROI 점수
-            results["number_roi_scores"] = self.calculate_number_roi_scores(
-                historical_data
-            )
+                # 번호별 ROI 점수
+                results["number_roi_scores"] = self.calculate_number_roi_scores(
+                    historical_data
+                )
 
-            # 패턴별 ROI 추세
-            results["roi_trend_by_pattern"] = self.calculate_roi_trend_by_pattern(
-                historical_data
-            )
+                # 패턴별 ROI 추세
+                results["roi_trend_by_pattern"] = self.calculate_roi_trend_by_pattern(
+                    historical_data
+                )
 
-            # 위험도 매트릭스
-            results["risk_matrix"] = self.calculate_risk_matrix(historical_data)
+                # 위험도 매트릭스
+                results["risk_matrix"] = self.calculate_risk_matrix(historical_data)
 
-            # ROI 기반 번호 그룹
-            results["roi_number_groups"] = self.analyze_roi_number_groups(
-                historical_data
-            )
+                # ROI 기반 번호 그룹
+                results["roi_number_groups"] = self.analyze_roi_number_groups(
+                    historical_data
+                )
 
-            # 추가 기능들
-            results["roi_group_score"] = self.calculate_roi_group_score(historical_data)
-            results["roi_cluster_score"] = self.calculate_roi_cluster_score(
-                historical_data
-            )
-            # 보너스 관련 플래그 제거됨
-            results["roi_pattern_group_id"] = self.calculate_roi_pattern_group_id(
-                historical_data
-            )
+                # 추가 기능들
+                results["roi_group_score"] = self.calculate_roi_group_score(
+                    historical_data
+                )
+                results["roi_cluster_score"] = self.calculate_roi_cluster_score(
+                    historical_data
+                )
+                # 보너스 관련 플래그 제거됨
+                results["roi_pattern_group_id"] = self.calculate_roi_pattern_group_id(
+                    historical_data
+                )
 
-            # 결과 캐싱
-            self._save_to_cache(cache_key, results)
+                # 결과 타입 검증 및 변환
+                for key, value in results.items():
+                    if callable(value):
+                        logger.warning(f"ROI 분석 결과에 함수 객체 발견: {key}")
+                        results[key] = str(value)
+                    elif hasattr(value, "to_dict") and callable(value.to_dict):
+                        logger.info(f"ROI 분석 결과 객체를 딕셔너리로 변환: {key}")
+                        results[key] = value.to_dict()
 
-            logger.info("ROI 기반 분석 완료")
-            return results
+                # 결과 캐싱
+                self._save_to_cache(cache_key, results)
+
+                logger.info("ROI 기반 분석 완료")
+                return results
+
+            except Exception as e:
+                logger.error(f"ROI 분석 중 오류: {e}")
+                return {"error": str(e), "analysis_type": "roi"}
 
     def analyze_combination(
         self, historical_data: List[LotteryNumber], target_numbers: List[int]

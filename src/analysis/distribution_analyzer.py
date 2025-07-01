@@ -68,9 +68,7 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
         logger.info("DistributionAnalyzer 초기화 완료")
 
     @performance_monitor
-    def analyze(
-        self, historical_data: List[LotteryNumber]
-    ) -> Dict[str, List[DistributionPattern]]:
+    def analyze(self, historical_data: List[LotteryNumber]) -> Dict[str, Any]:
         """
         다양한 분포 패턴을 분석합니다.
 
@@ -78,7 +76,7 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
             historical_data: 분석할 과거 당첨 번호 목록
 
         Returns:
-            Dict[str, List[DistributionPattern]]: 분석된 분포 패턴들
+            Dict[str, Any]: 분석된 분포 패턴들 (직렬화 가능한 형태)
         """
         with self.memory_manager.allocation_scope():
             logger.info(f"분포 패턴 분석 시작: {len(historical_data)}개 데이터")
@@ -93,35 +91,74 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
                 logger.info("캐시된 분포 분석 결과 사용")
                 return cached_result
 
-            # 분석 수행
-            even_odd_patterns = self._analyze_even_odd(historical_data)
-            low_high_patterns = self._analyze_low_high(historical_data)
-            range_patterns = self._analyze_range_distribution(historical_data)
-            sum_patterns = self._analyze_sum_distribution(historical_data)
-            gap_patterns = self._analyze_consecutive_gaps(historical_data)
+            try:
+                # 분석 수행
+                even_odd_patterns = self._analyze_even_odd(historical_data)
+                low_high_patterns = self._analyze_low_high(historical_data)
+                range_patterns = self._analyze_range_distribution(historical_data)
+                sum_patterns = self._analyze_sum_distribution(historical_data)
+                gap_patterns = self._analyze_consecutive_gaps(historical_data)
 
-            # 추가 분포 분석
-            prime_patterns = self._analyze_prime_distribution(historical_data)
-            decade_patterns = self._analyze_decade_distribution(historical_data)
-            position_patterns = self._analyze_position_distribution(historical_data)
+                # 추가 분포 분석
+                prime_patterns = self._analyze_prime_distribution(historical_data)
+                decade_patterns = self._analyze_decade_distribution(historical_data)
+                position_patterns = self._analyze_position_distribution(historical_data)
 
-            result = {
-                "even_odd": even_odd_patterns,
-                "low_high": low_high_patterns,
-                "ranges": range_patterns,
-                "sum_ranges": sum_patterns,
-                "gaps": gap_patterns,
-                "prime_distribution": prime_patterns,
-                "decade_distribution": decade_patterns,
-                "position_distribution": position_patterns,
-            }
+                # DistributionPattern 객체들을 딕셔너리로 변환
+                result = {
+                    "even_odd": [
+                        p.to_dict() if hasattr(p, "to_dict") else p
+                        for p in even_odd_patterns
+                    ],
+                    "low_high": [
+                        p.to_dict() if hasattr(p, "to_dict") else p
+                        for p in low_high_patterns
+                    ],
+                    "ranges": [
+                        p.to_dict() if hasattr(p, "to_dict") else p
+                        for p in range_patterns
+                    ],
+                    "sum_ranges": [
+                        p.to_dict() if hasattr(p, "to_dict") else p
+                        for p in sum_patterns
+                    ],
+                    "gaps": [
+                        p.to_dict() if hasattr(p, "to_dict") else p
+                        for p in gap_patterns
+                    ],
+                    "prime_distribution": [
+                        p.to_dict() if hasattr(p, "to_dict") else p
+                        for p in prime_patterns
+                    ],
+                    "decade_distribution": [
+                        p.to_dict() if hasattr(p, "to_dict") else p
+                        for p in decade_patterns
+                    ],
+                    "position_distribution": [
+                        p.to_dict() if hasattr(p, "to_dict") else p
+                        for p in position_patterns
+                    ],
+                }
 
-            # 결과 캐싱
-            if hasattr(self, "cache_manager"):
-                self.cache_manager.set(cache_key, result)
+                # 결과 검증 - 함수 객체가 없는지 확인
+                for key, patterns in result.items():
+                    if isinstance(patterns, list):
+                        for i, pattern in enumerate(patterns):
+                            if callable(pattern):
+                                logger.error(f"함수 객체 발견: {key}[{i}] = {pattern}")
+                                # 함수 객체를 문자열로 변환
+                                result[key][i] = str(pattern)
 
-            logger.info("분포 패턴 분석 완료")
-            return result
+                # 결과 캐싱
+                if hasattr(self, "cache_manager"):
+                    self.cache_manager.set(cache_key, result)
+
+                logger.info("분포 패턴 분석 완료")
+                return result
+
+            except Exception as e:
+                logger.error(f"분포 분석 중 오류: {e}")
+                return {"error": str(e), "analysis_type": "distribution"}
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
