@@ -12,7 +12,7 @@ import math
 
 from .base_analyzer import BaseAnalyzer
 from src.shared.types import LotteryNumber
-from src.utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from src.utils.unified_performance import performance_monitor
 
 logger = get_logger(__name__)

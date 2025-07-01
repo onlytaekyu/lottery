@@ -319,6 +319,43 @@ def safe_analysis_step(step_name: str, func, *args, **kwargs):
         raise RuntimeError(f"{step_name} 실행 중 오류 발생: {str(e)}")
 
 
+def clear_analysis_cache():
+    """실제 분석 실행을 위한 캐시 무효화"""
+    import os
+    from pathlib import Path
+
+    cache_files = [
+        "data/cache/pattern_analysis_1172.pkl",
+        "data/cache/trend_analysis_1172.pkl",
+        "data/cache/overlap_analysis_1172.pkl",
+        "data/cache/structural_analysis_1172.pkl",
+        "data/cache/statistical_analysis_1172.pkl",
+        "data/cache/pair_analysis_1172.pkl",
+        "data/cache/cluster_analysis_1172.pkl",
+        "data/cache/distribution_analysis_1172.pkl",
+        "data/cache/roi_analysis_1172.pkl",
+    ]
+
+    cleared_count = 0
+    for cache_file in cache_files:
+        if os.path.exists(cache_file):
+            try:
+                os.remove(cache_file)
+                logger.info(f"캐시 삭제: {cache_file}")
+                cleared_count += 1
+            except Exception as e:
+                logger.warning(f"캐시 삭제 실패 {cache_file}: {e}")
+
+    if cleared_count > 0:
+        logger.info(
+            f"✅ 총 {cleared_count}개 캐시 파일 삭제 완료 - 실제 분석 실행됩니다"
+        )
+    else:
+        logger.info("삭제할 캐시 파일이 없습니다")
+
+    return cleared_count
+
+
 @strict_error_handler("최적화된 데이터 분석 파이프라인", exit_on_error=True)
 def run_optimized_data_analysis() -> bool:
     """
@@ -710,32 +747,22 @@ def run_optimized_data_analysis() -> bool:
                     feature_vector = None
                     feature_names = []
 
-            # 두 벡터 시스템 결합
-            if feature_vector is not None and len(feature_vector) > 0:
-                if optimized_features.size > 0:
-                    # 차원이 다를 수 있으므로 안전하게 결합
-                    combined_vector = np.concatenate(
-                        [feature_vector.flatten(), optimized_features.flatten()]
-                    )
-                    combined_names = feature_names + optimized_names
-                    logger.info(f"벡터 시스템 결합 완료: {len(combined_vector)}차원")
-                else:
-                    combined_vector = feature_vector
-                    combined_names = feature_names
-            else:
-                # 기존 벡터화 실패시 새로운 특성 추출 결과 사용
-                combined_vector = (
-                    optimized_features.flatten()
-                    if optimized_features.size > 0
-                    else np.array([])
+            # 🔥 이중 벡터 시스템 통합: 훈련 샘플만 최종 벡터로 사용
+            logger.info("기존 패턴 벡터라이저 비활성화 - 훈련 샘플만 최종 벡터로 사용")
+
+            # 훈련 샘플을 최종 벡터로 사용
+            if training_samples is not None and training_samples.size > 0:
+                combined_vector = training_samples
+                combined_names = enhanced_vectorizer.get_feature_names()
+
+                logger.info(f"✅ 훈련 샘플을 최종 벡터로 설정: {combined_vector.shape}")
+                logger.info(f"✅ 특성 이름 수: {len(combined_names)}개")
+                logger.info(
+                    f"✅ 이중 저장 시스템 통합 완료 - 단일 파일에 대량 샘플 저장"
                 )
-                combined_names = optimized_names
-
-            if len(combined_vector) == 0:
-                logger.error("특성 벡터 생성 실패")
+            else:
+                logger.error("훈련 샘플이 없어서 벡터 생성 실패")
                 return False
-
-            logger.info(f"최종 특성 벡터 생성 완료: {len(combined_vector)}차원")
 
             # 벡터 품질 검증
             if not validate_feature_vector(combined_vector, combined_names, config):
@@ -880,29 +907,55 @@ def run_optimized_data_analysis() -> bool:
                         f"📊 고차원 배열: {vectors.shape}, 총 {total_elements}개 요소"
                     )
 
-                # 필수 검증 (훈련 샘플 포함)
-                total_samples = sample_count
-                total_file_size = file_size
+                # 🔥 통합된 벡터 시스템 검증 (훈련 샘플 중심)
+                if vectors.ndim == 2:
+                    # 다중 샘플 배열인 경우 (통합된 시스템)
+                    sample_count, vector_dim = vectors.shape
+                    file_size = vector_file.stat().st_size
 
-                if training_samples is not None:
-                    if training_samples.ndim == 2:
-                        total_samples += training_samples.shape[0]
-                    total_file_size += training_file_size
                     logger.info(
-                        f"📊 훈련 샘플: {training_samples.shape}, {training_file_size:,} bytes ({training_file_size/1024:.1f} KB)"
+                        f"📊 통합된 벡터 시스템: {sample_count}개 샘플 × {vector_dim}차원"
+                    )
+                    logger.info(
+                        f"📊 파일 크기: {file_size:,} bytes ({file_size/1024:.1f} KB)"
                     )
 
-                checks = {
-                    "샘플 수 1000개 이상": total_samples >= 1000,
-                    "차원 168차원": vector_dim == 168,
-                    "이름 수 일치": (
-                        len(feature_names) == 168 if feature_names else True
-                    ),
-                    "파일 크기 672KB 이상": total_file_size >= 672000,
-                    "NaN/Inf 없음": not (
-                        np.any(np.isnan(vectors)) or np.any(np.isinf(vectors))
-                    ),
-                }
+                    # 훈련 가능한 크기 검증
+                    checks = {
+                        "샘플 수 1000개 이상": sample_count >= 1000,
+                        "차원 168차원": vector_dim == 168,
+                        "이름 수 일치": (
+                            len(feature_names) == 168 if feature_names else True
+                        ),
+                        "파일 크기 672KB 이상": file_size >= 672000,
+                        "NaN/Inf 없음": not (
+                            np.any(np.isnan(vectors)) or np.any(np.isinf(vectors))
+                        ),
+                    }
+
+                    # 예상 크기 검증
+                    expected_size = sample_count * vector_dim * 4  # float32
+                    size_check = file_size >= expected_size * 0.9
+
+                    if not size_check:
+                        logger.warning(
+                            f"파일 크기 불일치: 실제={file_size}, 예상={expected_size}"
+                        )
+
+                else:
+                    # 단일 벡터인 경우 (레거시)
+                    logger.warning("단일 벡터 감지 - 훈련에 부적합")
+                    checks = {
+                        "샘플 수 1000개 이상": False,  # 단일 벡터는 훈련 불가
+                        "차원 168차원": len(vectors) == 168,
+                        "이름 수 일치": (
+                            len(feature_names) == 168 if feature_names else True
+                        ),
+                        "파일 크기 672KB 이상": False,  # 단일 벡터는 크기 부족
+                        "NaN/Inf 없음": not (
+                            np.any(np.isnan(vectors)) or np.any(np.isinf(vectors))
+                        ),
+                    }
 
                 # 검증 결과 로깅
                 logger.info("🔍 최종 검증 결과:")
@@ -914,16 +967,15 @@ def run_optimized_data_analysis() -> bool:
                         passed_checks += 1
 
                 # 상세 정보
-                logger.info(
-                    f"📊 단일 벡터: {vectors.shape}, {file_size:,} bytes ({file_size/1024:.1f} KB)"
-                )
-                if training_samples is not None:
+                if vectors.ndim == 2:
                     logger.info(
-                        f"📊 훈련 샘플: {training_samples.shape}, {training_file_size:,} bytes ({training_file_size/1024:.1f} KB)"
+                        f"📊 통합된 벡터: {vectors.shape}, {file_size:,} bytes ({file_size/1024:.1f} KB)"
                     )
-                logger.info(
-                    f"📊 총 파일 크기: {total_file_size:,} bytes ({total_file_size/1024:.1f} KB)"
-                )
+                else:
+                    logger.info(
+                        f"📊 단일 벡터: {vectors.shape}, {file_size:,} bytes ({file_size/1024:.1f} KB)"
+                    )
+
                 logger.info(f"📊 특성 이름: {len(feature_names)}개")
                 logger.info(
                     f"🏆 전체 성공률: {passed_checks}/{len(checks)} ({passed_checks/len(checks)*100:.1f}%)"

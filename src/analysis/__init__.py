@@ -14,7 +14,7 @@ from .roi_analyzer import ROIAnalyzer, ROIMetrics
 from .cluster_analyzer import ClusterAnalyzer
 
 # 패턴 및 벡터화 모듈
-from .pattern_vectorizer import PatternVectorizer
+from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 from ..utils.pattern_filter import PatternFilter, get_pattern_filter
 
 # 시퀀스 생성 모듈
@@ -42,7 +42,7 @@ __all__ = [
     "ROIMetrics",
     "ClusterAnalyzer",
     # 패턴 및 벡터화 모듈
-    "PatternVectorizer",
+    "EnhancedPatternVectorizer",
     "PatternFilter",
     "get_pattern_filter",
     # 시퀀스 생성 모듈

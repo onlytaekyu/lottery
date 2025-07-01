@@ -16,11 +16,12 @@ from datetime import datetime
 from typing import Dict, Any, List, Set, Tuple, TypedDict, Optional, Union, cast
 from collections import Counter, defaultdict
 import time
-import logging
+
+# logging 제거 - unified_logging 사용
 from pathlib import Path
 import math
 
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..shared.types import LotteryNumber, PatternAnalysis
 from ..utils.memory_manager import MemoryManager
 from ..analysis.base_analyzer import BaseAnalyzer
@@ -32,14 +33,11 @@ from ..shared.graph_utils import (
     calculate_pair_centrality,
     calculate_segment_entropy,
 )
-from .advanced_pattern_utils import (
+from .pattern_analysis_utils import (
     analyze_network,
     analyze_gap_patterns,
     analyze_odd_even_distribution,
     analyze_number_sum_distribution,
-)
-from .roi_analyzer import ROIAnalyzer
-from .analyze_utils import (
     analyze_segment_frequency_10,
     analyze_segment_frequency_5,
     analyze_gap_statistics,
@@ -54,6 +52,7 @@ from .analyze_utils import (
     calculate_gap_deviation_score,
     calculate_combination_diversity_score,
 )
+from .roi_analyzer import ROIAnalyzer
 
 
 # 로그 설정

@@ -10,23 +10,25 @@ import time
 import os
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional, Union, Set
-import logging
+
+# logging 제거 - unified_logging 사용
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.unified_performance import performance_monitor
 from ..utils.unified_config import ConfigProxy
 from ..shared.types import LotteryNumber
 from .pattern_analyzer import PatternAnalyzer
-from .pattern_vectorizer import PatternVectorizer
+from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
+from .base_feature_extractor import BaseFeatureExtractor
 
 
 # 로거 설정
 logger = get_logger(__name__)
 
 
-class SequenceFeatureBuilder:
+class SequenceFeatureBuilder(BaseFeatureExtractor):
     """시퀀스 특성 생성 클래스"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -36,9 +38,10 @@ class SequenceFeatureBuilder:
         Args:
             config: 설정
         """
+        super().__init__(config)
         self.config = ConfigProxy(config or {})
         self.pattern_analyzer = PatternAnalyzer(config)
-        self.pattern_vectorizer = PatternVectorizer(config)
+        self.pattern_vectorizer = EnhancedPatternVectorizer(config)
 
         # 캐시 디렉토리 설정
         try:
@@ -57,11 +60,30 @@ class SequenceFeatureBuilder:
         self.lstm_dir.mkdir(exist_ok=True, parents=True)
         self.gnn_dir.mkdir(exist_ok=True, parents=True)
 
-        # 메모리 추적기
-        # 통합 성능 모니터링 사용
+    def extract_features(self, data: Any, *args, **kwargs) -> Any:
+        """
+        베이스 클래스의 추상 메서드 구현
 
-        # 로거
-        self.logger = logger
+        Args:
+            data: 입력 데이터 (List[LotteryNumber])
+
+        Returns:
+            시퀀스 특성 추출 결과
+        """
+        if isinstance(data, list):
+            # 기본 매개변수 설정
+            lstm_seq_length = kwargs.get("lstm_seq_length", 5)
+            gnn_seq_length = kwargs.get("gnn_seq_length", 10)
+            build_lstm = kwargs.get("build_lstm", True)
+            build_gnn = kwargs.get("build_gnn", True)
+
+            return self.build_sequences(
+                data, lstm_seq_length, gnn_seq_length, build_lstm, build_gnn
+            )
+        else:
+            raise ValueError(
+                "SequenceFeatureBuilder는 List[LotteryNumber] 형태의 데이터를 필요로 합니다."
+            )
 
     # @profile("build_all_sequences")
     def build_sequences(

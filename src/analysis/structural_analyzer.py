@@ -13,7 +13,7 @@ from sklearn.metrics import silhouette_score
 
 from src.analysis.base_analyzer import BaseAnalyzer
 from src.shared.types import LotteryNumber
-from src.utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from src.shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality
 from src.utils.unified_performance import performance_monitor
 

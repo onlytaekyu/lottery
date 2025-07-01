@@ -3,60 +3,58 @@ description:
 globs: 
 alwaysApply: true
 ---
-# 🎯 DAEBAK_AI 프로젝트 통합 코딩 룰
+✅ MCP 서버 활용 규칙 (강제)
+@filesystem : 파일 작업 시 무조건 사용
 
-## 🔧 MCP 서버 필수 활용
-- **@filesystem**: 파일 생성/수정/삭제 시 우선 사용, 실제 프로젝트 구조 파악
-- **@codebase**: 기존 코드 패턴 확인 필수, 중복 방지
-- **@git**: 변경사항 추적, 커밋 히스토리 기반 패턴 유지
+@codebase : 기존 패턴/구조 탐색 시 항상 사용
 
-## 🏗️ 프로젝트 구조 (고정, 변경 금지)
+@git : 히스토리 기반 변경 검증 시 활용
+
+✅ 프로젝트 디렉토리 구조 (변경 금지)
+bash
+복사
+편집
 src/
-├── shared/         # 공통 타입 (LotteryNumber, PatternAnalysis, ModelPrediction)
-├── analysis/       # 분석 모듈 (BaseAnalyzer 상속)
-├── core/          # 핵심 엔진 (RecommendationEngine)
-├── utils/         # 유틸리티 (통합 시스템)
-├── models/        # ML/DL 모델 (BaseModel 상속)
-│   ├── ml/        # LightGBM, XGBoost, CatBoost, RandomForest
-│   ├── dl/        # MLP, AE, LSTM, GNN, Transformer
-│   ├── rl/        # DQN, PPO, Q-table
-│   ├── bayesian/  # BayesianNN
-│   └── meta/      # MetaLearner
-├── evaluation/    # 평가 모듈 (Backtester)
-├── pipeline/      # 파이프라인
-├── training/      # 훈련 모듈
-├── environment/   # 환경 설정
-└── run/          # 실행 파일 (wrapper만)
-
-## ⚙️ 설정 접근 규칙 (엄격 적용)
-```python
-# ✅ 허용된 방식
+├── shared/         # 타입, 공용 데이터 클래스
+├── analysis/       # BaseAnalyzer 상속 분석기
+├── core/           # RecommendationEngine 핵심
+├── utils/          # 메모리, 로깅, 캐시 경로 등
+├── models/
+│   ├── ml/         # LightGBM, XGBoost
+│   ├── dl/         # MLP, AE, TCN
+│   └── meta/       # MetaWeight 통합
+├── evaluation/     # backtester, diversity_evaluator
+├── pipeline/       # 분석/전처리/추천 파이프라인
+├── training/       # 모델 학습 모듈
+├── environment/    # config, optimization.yaml
+└── run/            # 실행 Wrapper
+✅ 설정 접근 규칙 (강제)
+python
+복사
+편집
+# ✅ 이렇게만
 config["training"]["use_filtered_vector"]
 
-# ❌ 금지된 방식
-config.get("training", {}).get("use_filtered_vector", False)
-safe_get(config, "training.use_filtered_vector")
+# ❌ 금지
+config.get(...)
+safe_get(...)
+키 누락 시 즉시 종료, try-except 필수
 
-# 키 누락 시 즉시 종료
-try:
-    value = config["required_key"]
-except KeyError as e:
-    logger.error(f"[ERROR] 설정 키 누락: {str(e)}")
-    raise RuntimeError("설정 키 누락으로 프로세스 종료")
-📁 파일 경로 규칙
-python# 고정 경로 (변경 금지)
-config_path = "config/config.yaml"
-models_dir = "savedModels/{model_name}.pt"
-results_dir = "data/result/analysis/"
-vectors_dir = "data/cache/feature_vectors_full.npy"
-reports_dir = "data/result/performance_reports/"
+✅ 파일 경로 규칙 (고정 경로만 허용)
+항목	경로
+설정	config/config.yaml
+모델 저장	savedModels/{model_name}.pt
+결과 저장	data/result/analysis/
+벡터 저장	data/cache/feature_vectors_full.npy
+리포트 저장	data/result/performance_reports/
+❌ 금지	날짜폴더, 동적경로
 
-# ❌ 날짜 포함 금지, 임의 경로 생성 금지
-🔨 코딩 표준
-Import 순서
-python# 1. 표준 라이브러리
+✅ Import 순서 규칙 (엄격)
+python
+복사
+편집
+# 1. 표준 라이브러리
 import os, sys, json, time
-from typing import Dict, Any, List, Optional
 
 # 2. 서드파티
 import numpy as np
@@ -67,56 +65,56 @@ from sklearn.ensemble import RandomForestClassifier
 from ..shared.types import LotteryNumber, ModelPrediction
 from ..utils.unified_logging import get_logger
 from ..utils.cache_paths import get_cache_dir
-클래스 구조
-pythonclass AnalyzerExample(BaseAnalyzer):
-    def __init__(self, config: Dict[str, Any]):
+✅ 클래스 설계 규칙 (분석기/모델 공통)
+Analyzer 예시
+python
+복사
+편집
+class ExampleAnalyzer(BaseAnalyzer):
+    def __init__(self, config):
         super().__init__(config, analyzer_type="example")
         self.logger = get_logger(__name__)
-    
-    def analyze(self, data: List[LotteryNumber]) -> Dict[str, Any]:
+
+    def analyze(self, data):
         try:
-            # 메인 로직
+            # 분석 로직
             return result
-        except SpecificError as e:
-            self.logger.error(f"분석 오류: {e}")
-            # 폴백 로직
         except Exception as e:
-            self.logger.error(f"예상치 못한 오류: {e}")
+            self.logger.error(f"분석 오류: {e}")
             raise
-🎯 시스템 아키텍처 규칙
-
-모델 통합 규칙
-python# 베이스 모델 상속 필수
+모델 예시
+python
+복사
+편집
 class MyModel(BaseModel):
-    def fit(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Any]:
+    def fit(self, X, y):
         # 구현 필수
-    
-    def predict(self, X: np.ndarray) -> np.ndarray:
+
+    def predict(self, X):
         # 구현 필수
-    
-    def save(self, path: str) -> bool:
+
+    def save(self, path):
         # 구현 필수
-    
-    def load(self, path: str) -> bool:
+
+    def load(self, path):
         # 구현 필수
-🚫 금지사항 (엄격 적용)
+✅ 강제 금지사항 (절대 위반 금지)
+❌ run/*.py 내 직접 로직
 
-❌ run*.py 내 직접 로직 작성 (wrapper만 허용)
-❌ torch.save() 직접 사용 (model_saver.py 사용)
-❌ argparse, CLI 인터페이스 사용
-❌ 파일명에 timestamp 포함
-❌ Trainer 클래스 직접 상속 (UnifiedTrainer 사용)
-❌ 차원 불일치 허용 (allow_mismatch=False 고정)
+❌ torch.save() 직접 호출
 
-📊 성능 최적화 규칙
-python# 메모리 관리
-from ..utils.memory_manager import MemoryManager
+❌ argparse / CLI 코드 작성
 
-# AMP 사용
-from ..utils.cuda_optimizers import AMPTrainer
+❌ 경로에 timestamp 포함
 
-# 캐시 활용
-from ..utils.cache_paths import get_cache_dir
+❌ Trainer 직접 상속
 
-# 프로파일링
-from ..utils.performance_tracker import performance_monitor
+❌ 차원 불일치 허용
+(→ allow_mismatch=False 고정)
+
+✅ 성능 최적화 규칙
+항목	내용
+메모리	MemoryManager 무조건 사용
+AMP	AMPTrainer로만
+캐시	get_cache_dir() 사용 강제
+프로파일링	performance_monitor 필수

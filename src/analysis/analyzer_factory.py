@@ -11,7 +11,7 @@ import hashlib
 import json
 import threading
 from typing import Dict, Any, Optional, Union
-from src.utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 
 logger = get_logger(__name__)
 

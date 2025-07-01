@@ -13,20 +13,21 @@ from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.seasonal import seasonal_decompose
 from pathlib import Path
 import json
-import logging
+
+# logging 제거 - unified_logging 사용
 import time
 from datetime import datetime
 
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..shared.types import LotteryNumber
 from ..utils.unified_config import ConfigProxy
-from .base_analyzer import BaseAnalyzer
+from .base_trend_analyzer import BaseTrendAnalyzer
 
 # 로거 설정
 logger = get_logger(__name__)
 
 
-class TrendAnalyzer(BaseAnalyzer[Dict[str, Any]]):
+class TrendAnalyzer(BaseTrendAnalyzer):
     """
     추세 분석기 클래스
 
@@ -41,22 +42,6 @@ class TrendAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             config: 설정 객체
         """
         super().__init__(config, "trend")
-
-        # 분석 설정
-        try:
-            self.trend_window = self.config["trend_analysis"]["window_size"]
-        except (KeyError, TypeError):
-            self.trend_window = 10  # 기본 윈도우 크기
-
-        try:
-            self.regression_window = self.config["trend_analysis"]["regression_window"]
-        except (KeyError, TypeError):
-            self.regression_window = 20  # 기본 회귀 윈도우 크기
-
-        try:
-            self.segment_window = self.config["trend_analysis"]["segment_window"]
-        except (KeyError, TypeError):
-            self.segment_window = 15  # 기본 세그먼트 윈도우 크기
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
@@ -92,21 +77,8 @@ class TrendAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         # 회차별 번호 추출
         draw_numbers = [lottery.numbers for lottery in analysis_data]
 
-        # 1. 위치별 추세 분석
-        position_trends = self._analyze_position_trends(draw_numbers)
-
-        # 2. 증감 패턴 분석
-        delta_patterns = self._analyze_delta_patterns(draw_numbers)
-
-        # 3. 세그먼트 반복 분석
-        segment_patterns = self._analyze_segment_repeat_patterns(draw_numbers)
-
-        # 분석 결과 통합
-        trend_features = {
-            **position_trends,
-            **delta_patterns,
-            **segment_patterns,
-        }
+        # 베이스 클래스의 공통 메서드 사용
+        trend_features = self._extract_trend_features(draw_numbers)
 
         # 결과 반환
         return {
@@ -116,87 +88,11 @@ class TrendAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             "timestamp": int(time.time()),
         }
 
-    def _analyze_position_trends(
-        self, draw_numbers: List[List[int]]
-    ) -> Dict[str, float]:
-        """
-        위치별 추세 분석
-
-        Args:
-            draw_numbers: 회차별 당첨 번호
-
-        Returns:
-            Dict[str, float]: 위치별 추세 분석 결과
-        """
-        # 각 위치별 숫자 추출
-        positions = [[] for _ in range(6)]
-
-        for numbers in draw_numbers:
-            sorted_numbers = sorted(numbers)
-            for i, num in enumerate(sorted_numbers):
-                positions[i].append(num)
-
-        # 각 위치별 추세선 기울기 계산
-        slopes = {}
-
-        for i, pos_numbers in enumerate(positions):
-            # 최소 3개 이상의 데이터가 필요
-            if len(pos_numbers) >= 3:
-                # 시간 축 (0, 1, 2, ...)
-                x = np.arange(len(pos_numbers))
-                # 선형 회귀로 기울기 계산
-                slope, _ = np.polyfit(x, pos_numbers, 1)
-                # 정규화: -1(하락) ~ 1(상승)
-                normalized_slope = np.clip(slope / 5.0, -1.0, 1.0)
-                slopes[f"position_trend_slope_{i+1}"] = float(normalized_slope)
-            else:
-                slopes[f"position_trend_slope_{i+1}"] = 0.0
-
-        return slopes
-
-    def _analyze_delta_patterns(
-        self, draw_numbers: List[List[int]]
-    ) -> Dict[str, float]:
-        """
-        증감 패턴 분석
-
-        Args:
-            draw_numbers: 회차별 당첨 번호
-
-        Returns:
-            Dict[str, float]: 증감 패턴 분석 결과
-        """
-        if len(draw_numbers) < 2:
-            return {"delta_mean": 0.0, "delta_std": 0.0}
-
-        # 회차간 평균 변화량 계산
-        deltas = []
-        for i in range(1, len(draw_numbers)):
-            prev_set = set(draw_numbers[i - 1])
-            curr_set = set(draw_numbers[i])
-
-            # 달라진 번호 수
-            changed = len(prev_set.symmetric_difference(curr_set)) / 2
-            deltas.append(changed)
-
-        # 평균 및 표준편차 계산
-        delta_mean = np.mean(deltas) if deltas else 0.0
-        delta_std = np.std(deltas) if len(deltas) > 1 else 0.0
-
-        # 정규화: 0 ~ 1 범위로
-        normalized_mean = delta_mean / 6.0  # 최대 6개 모두 변경 가능
-        normalized_std = min(delta_std / 3.0, 1.0)  # 표준편차 정규화
-
-        return {
-            "delta_mean": float(normalized_mean),
-            "delta_std": float(normalized_std),
-        }
-
     def _analyze_segment_repeat_patterns(
         self, draw_numbers: List[List[int]]
     ) -> Dict[str, float]:
         """
-        세그먼트 반복 패턴 분석
+        세그먼트 반복 패턴 분석 (TrendAnalyzer 특화 버전)
 
         Args:
             draw_numbers: 회차별 당첨 번호

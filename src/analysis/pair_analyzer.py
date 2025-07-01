@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional, Union, Set
 from collections import Counter, defaultdict
 
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..shared.types import LotteryNumber
 from ..analysis.base_analyzer import BaseAnalyzer
 from ..utils.unified_config import ConfigProxy

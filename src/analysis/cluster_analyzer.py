@@ -11,10 +11,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Dict, Tuple, Set, Optional, Any
 from pathlib import Path
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from sklearn.metrics import silhouette_score
 from sklearn.cluster import KMeans, DBSCAN
 import json
+from .base_analyzer import BaseAnalyzer
 
 logger = get_logger(__name__)
 
@@ -84,7 +85,7 @@ def create_default_gnn_model() -> nn.Module:
     return model
 
 
-class ClusterAnalyzer:
+class ClusterAnalyzer(BaseAnalyzer[Dict[str, Any]]):
     """
     로또 번호의 클러스터를 분석하는 클래스
 
@@ -99,7 +100,7 @@ class ClusterAnalyzer:
         Args:
             config: 설정 객체
         """
-        self.logger = get_logger(__name__)
+        super().__init__(config, name="ClusterAnalyzer")
 
         # DBSCAN 사용 여부
         self.use_dbscan = False
@@ -142,9 +143,9 @@ class ClusterAnalyzer:
         if "paths" in config and "analysis_result_dir" in config["paths"]:
             self.result_path = config["paths"]["analysis_result_dir"]
 
-    def analyze(self, historical_data) -> Dict[str, Any]:
+    def _analyze_impl(self, historical_data, *args, **kwargs) -> Dict[str, Any]:
         """
-        클러스터 분석을 수행하는 메인 메서드 (파이프라인 호환)
+        클러스터 분석을 수행하는 메인 메서드 (BaseAnalyzer 인터페이스 구현)
 
         Args:
             historical_data: 분석할 과거 당첨 번호 목록

@@ -10,16 +10,17 @@ from typing import Dict, List, Any, Optional, Tuple, Set, cast
 import numpy as np
 from pathlib import Path
 import json
-import logging
+
+# logging 제거 - unified_logging 사용
 import time
 from datetime import datetime
 import pickle
 import os  # 추가: os 모듈 임포트
 
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.unified_performance import performance_monitor
 from ..shared.types import LotteryNumber, PatternAnalysis
-from ..analysis.pattern_vectorizer import PatternVectorizer
+from ..analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 from ..utils.unified_config import ConfigProxy
 
 from .roi_analyzer import ROIAnalyzer, ROIMetrics
@@ -73,7 +74,7 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             self.trend_analyzer = None
 
         # 패턴 벡터라이저 초기화
-        self.pattern_vectorizer = PatternVectorizer(self.config)  # type: ignore
+        self.pattern_vectorizer = EnhancedPatternVectorizer(self.config)  # type: ignore
 
         # 패턴 필터 초기화
         self.pattern_filter = get_pattern_filter(self.config)  # type: ignore

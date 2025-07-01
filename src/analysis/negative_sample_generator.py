@@ -14,13 +14,14 @@ import multiprocessing
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from pathlib import Path
 from typing import List, Dict, Any, Set, Tuple, Optional, Union, cast
-import logging
+
+# logging 제거 - unified_logging 사용
 from datetime import datetime
 import json
 import platform
 import psutil
 
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.unified_performance import performance_monitor
 
 # MemoryTracker와 get_device_info는 통합 성능 시스템에서 제공
@@ -28,7 +29,7 @@ from ..utils.unified_config import ConfigProxy
 from ..utils.dynamic_batch_size import DynamicBatchSizeController
 from ..shared.types import LotteryNumber
 from .pattern_analyzer import PatternAnalyzer, PatternFeatures
-from .pattern_vectorizer import PatternVectorizer
+from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 
 
 # 로거 설정
@@ -193,7 +194,7 @@ class NegativeSampleGenerator:
         """
         self.config = ConfigProxy(config or {})
         self.pattern_analyzer = PatternAnalyzer(config)
-        self.pattern_vectorizer = PatternVectorizer(config)
+        self.pattern_vectorizer = EnhancedPatternVectorizer(config)
 
         # 캐시 디렉토리 설정
         try:

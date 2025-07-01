@@ -17,34 +17,13 @@ from sklearn.feature_selection import SelectKBest, f_classif, mutual_info_classi
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 
 from src.shared.types import LotteryNumber
-from src.utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from src.utils.unified_performance import performance_monitor
 from src.utils.memory_manager import get_memory_manager
 from src.utils.cache_manager import CacheManager
+from .base_feature_extractor import BaseFeatureExtractor
 
 logger = get_logger(__name__)
-
-
-def safe_index_access(data, index=0):
-    """
-    타입 안전한 인덱스 접근 함수
-
-    Args:
-        data: 접근할 데이터
-        index: 접근할 인덱스 (기본값: 0)
-
-    Returns:
-        인덱스에 해당하는 값 또는 기본값
-    """
-    if isinstance(data, (list, tuple, np.ndarray)) and len(data) > index:
-        return data[index]  # type: ignore
-    elif isinstance(data, (int, float, bool, complex)):
-        return data
-    else:
-        try:
-            return float(np.asarray(data).flat[0])  # type: ignore
-        except:
-            return 0.0
 
 
 @dataclass
@@ -69,7 +48,7 @@ class FeatureExtractionResult:
     quality_metrics: Dict[str, float]
 
 
-class FeatureExtractor:
+class FeatureExtractor(BaseFeatureExtractor):
     """특성 추출 엔진 클래스"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -79,21 +58,10 @@ class FeatureExtractor:
         Args:
             config: 특성 추출 설정
         """
+        super().__init__(config)
         self.config = config or {}
-        self.logger = get_logger(__name__)
-        self.memory_manager = get_memory_manager()
-        self.cache_manager = CacheManager()
 
-        # 특성 추출 설정
-        self.max_features = self.config.get("feature_extraction", {}).get(
-            "max_features", 100
-        )
-        self.feature_selection_method = self.config.get("feature_extraction", {}).get(
-            "selection_method", "mutual_info"
-        )
-        self.scaling_method = self.config.get("feature_extraction", {}).get(
-            "scaling_method", "standard"
-        )
+        # 베이스 클래스에서 이미 설정됨
 
         # 특성 그룹 정의
         self.feature_groups_config = {
@@ -137,6 +105,23 @@ class FeatureExtractor:
         }
 
         logger.info("FeatureExtractor 초기화 완료")
+
+    def extract_features(self, data: Any, *args, **kwargs) -> Any:
+        """
+        베이스 클래스의 추상 메서드 구현
+
+        Args:
+            data: 입력 데이터
+
+        Returns:
+            특성 추출 결과
+        """
+        if isinstance(data, dict):
+            return self.extract_all_features(data)
+        else:
+            raise ValueError(
+                "FeatureExtractor는 딕셔너리 형태의 analysis_results를 필요로 합니다."
+            )
 
     @performance_monitor
     def extract_all_features(

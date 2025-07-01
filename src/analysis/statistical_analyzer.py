@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 
 from src.analysis.base_analyzer import BaseAnalyzer
 from src.shared.types import LotteryNumber
-from src.utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 
 logger = get_logger(__name__)
 

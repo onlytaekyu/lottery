@@ -7,7 +7,8 @@ TrendAnalyzer에서 추출한 추세 특성을 시퀀스 형태로 변환합니�
 """
 
 import os
-import logging
+
+# logging 제거 - unified_logging 사용
 import numpy as np
 from typing import List, Dict, Any, Tuple, Optional, Union
 from pathlib import Path
@@ -15,15 +16,16 @@ import json
 from datetime import datetime
 
 from ..shared.types import LotteryNumber
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.unified_config import ConfigProxy
 from ..utils.unified_performance import performance_monitor
+from .base_trend_analyzer import BaseTrendAnalyzer
 
 # 로거 설정
 logger = get_logger(__name__)
 
 
-class TrendSequenceGenerator:
+class TrendSequenceGenerator(BaseTrendAnalyzer):
     """
     추세 시퀀스 생성기 클래스
 
@@ -39,10 +41,7 @@ class TrendSequenceGenerator:
         Args:
             config: 설정 객체
         """
-        # 설정 초기화
-        self.config = config if config is not None else {}
-        self.logger = get_logger(__name__)
-        # 통합 성능 모니터링 사용
+        super().__init__(config, "trend_sequence")
 
         # 캐시 디렉토리 설정
         try:
@@ -60,6 +59,35 @@ class TrendSequenceGenerator:
 
         # 캐시 디렉토리 생성
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _analyze_impl(
+        self, historical_data: List[LotteryNumber], *args, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        트렌드 시퀀스 생성 분석 구현
+
+        Args:
+            historical_data: 과거 당첨 번호 데이터
+            *args, **kwargs: 추가 매개변수
+
+        Returns:
+            Dict[str, Any]: 시퀀스 생성 결과
+        """
+        window_size = kwargs.get("window_size", 30)
+        normalize = kwargs.get("normalize", True)
+        save_to_cache = kwargs.get("save_to_cache", True)
+
+        sequence_tensor, mask_tensor = self.generate_trend_sequence(
+            historical_data, window_size, normalize, save_to_cache
+        )
+
+        return {
+            "sequence_tensor": sequence_tensor,
+            "mask_tensor": mask_tensor,
+            "window_size": window_size,
+            "sequence_count": len(sequence_tensor),
+            "feature_dim": sequence_tensor.shape[-1] if len(sequence_tensor) > 0 else 0,
+        }
 
     def generate_trend_sequence(
         self,
@@ -148,11 +176,7 @@ class TrendSequenceGenerator:
         Returns:
             List[np.ndarray]: 트렌드 특성 벡터 리스트
         """
-        # TrendAnalyzer 임포트
-        from ..analysis.trend_analyzer import TrendAnalyzer
-
         trend_vectors = []
-        trend_analyzer = TrendAnalyzer(self.config)
 
         self.logger.info(f"트렌드 특성 벡터 추출 시작: {len(historical_data)}개 데이터")
 
@@ -164,33 +188,15 @@ class TrendSequenceGenerator:
             current_history = historical_data[: i + 1]
 
             try:
-                # 트렌드 분석 수행
-                trend_analysis = trend_analyzer.analyze(current_history)
+                # 현재 회차까지의 번호 추출
+                draw_numbers = [lottery.numbers for lottery in current_history]
 
-                # 트렌드 특성 추출
-                if "trend_features" in trend_analysis:
-                    trend_features = trend_analysis["trend_features"]
+                # 베이스 클래스의 공통 메서드 사용
+                trend_features = self._extract_trend_features(draw_numbers)
 
-                    # 9차원 벡터 생성
-                    trend_vector = np.array(
-                        [
-                            trend_features.get("position_trend_slope_1", 0.0),
-                            trend_features.get("position_trend_slope_2", 0.0),
-                            trend_features.get("position_trend_slope_3", 0.0),
-                            trend_features.get("position_trend_slope_4", 0.0),
-                            trend_features.get("position_trend_slope_5", 0.0),
-                            trend_features.get("position_trend_slope_6", 0.0),
-                            trend_features.get("delta_mean", 0.0),
-                            trend_features.get("delta_std", 0.0),
-                            trend_features.get("segment_repeat_score", 0.5),
-                        ],
-                        dtype=np.float32,
-                    )
-
-                    trend_vectors.append(trend_vector)
-                else:
-                    # 기본 벡터 사용 (모든 특성이 0)
-                    trend_vectors.append(np.zeros(9, dtype=np.float32))
+                # 트렌드 벡터 생성
+                trend_vector = self._create_trend_vector(trend_features)
+                trend_vectors.append(trend_vector)
             except Exception as e:
                 self.logger.warning(
                     f"회차 {draw.draw_no} 트렌드 특성 추출 중 오류: {str(e)}"

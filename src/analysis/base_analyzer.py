@@ -11,14 +11,13 @@ import json
 import time
 import pickle
 import os
-import logging
 from datetime import datetime
 from abc import ABC, abstractmethod
 
 from ..utils.unified_performance import performance_monitor
 from ..utils.cache_manager import CacheManager
 from ..shared.types import LotteryNumber
-from ..utils.error_handler_refactored import get_logger, strict_error_handler
+from ..utils.unified_logging import get_logger
 from ..utils.unified_profiler import Profiler
 from ..utils.unified_performance import PerformanceTracker
 

@@ -16,7 +16,7 @@ import hashlib
 import time
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from datetime import datetime
 
 logger = get_logger(__name__)
