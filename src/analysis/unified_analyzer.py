@@ -82,6 +82,39 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
+    def _validate_cache_file(self, cache_file: Path) -> bool:
+        """
+        캐시 파일의 유효성을 검증합니다.
+
+        Args:
+            cache_file: 검증할 캐시 파일 경로
+
+        Returns:
+            bool: 파일이 유효하면 True, 아니면 False
+        """
+        try:
+            # 파일 크기 확인 (최소 크기)
+            if cache_file.stat().st_size < 10:
+                return False
+
+            # pickle 헤더 확인
+            with open(cache_file, "rb") as f:
+                # pickle 매직 넘버 확인
+                header = f.read(2)
+                if len(header) < 2:
+                    return False
+
+                # Python pickle 프로토콜 버전 확인
+                if (
+                    header[0] not in [0x80, ord("("), ord("]"), ord("}")]
+                    and header != b"\x80\x03"
+                ):
+                    return False
+
+            return True
+        except Exception:
+            return False
+
     def analyze(self, historical_data: List[LotteryNumber]) -> Dict[str, Any]:
         """
         통합 분석 수행
@@ -107,12 +140,23 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             # 캐시 확인
             if cache_file.exists():
                 try:
-                    with open(cache_file, "rb") as f:
-                        cached_result = pickle.load(f)
-                        self.logger.info(f"캐시된 분석 결과 사용: {cache_file}")
-                        # 성능 추적 종료
-                        self.performance_tracker.stop_tracking("unified_analysis")
-                        return cached_result
+                    # 캐시 파일 검증
+                    if not self._validate_cache_file(cache_file):
+                        self.logger.warning(f"손상된 캐시 파일 삭제: {cache_file}")
+                        cache_file.unlink()  # 손상된 파일 삭제
+                    else:
+                        with open(cache_file, "rb") as f:
+                            cached_result = pickle.load(f)
+                            self.logger.info(f"캐시된 분석 결과 사용: {cache_file}")
+                            # 성능 추적 종료
+                            self.performance_tracker.stop_tracking("unified_analysis")
+                            return cached_result
+                except (pickle.UnpicklingError, EOFError, OSError) as e:
+                    self.logger.warning(f"캐시 파일 손상으로 삭제: {cache_file} - {e}")
+                    try:
+                        cache_file.unlink()  # 손상된 파일 삭제
+                    except Exception:
+                        pass
                 except Exception as e:
                     self.logger.warning(f"캐시 로드 실패: {e}")
 
@@ -333,10 +377,13 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             finally:
                 self.performance_tracker.stop_tracking("vectorize_results")
 
-            # 결과 캐싱
+            # 결과 캐싱 (직렬화 가능한 데이터만)
             try:
+                # 직렬화 가능한 데이터로 변환
+                serializable_result = self._make_serializable(result)
+
                 with open(cache_file, "wb") as f:
-                    pickle.dump(result, f)
+                    pickle.dump(serializable_result, f)
                 self.logger.info(f"분석 결과 캐시 저장 완료: {cache_file}")
             except Exception as e:
                 self.logger.warning(f"분석 결과 캐시 저장 실패: {e}")
@@ -878,3 +925,62 @@ class UnifiedAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             # 오류 발생시 예외 다시 발생
             self.logger.error(f"통합 분석 중 오류 발생: {str(e)}")
             raise e
+
+    def _make_serializable(self, obj: Any) -> Any:
+        """
+        객체를 pickle 직렬화 가능한 형태로 변환합니다.
+
+        Args:
+            obj: 직렬화할 객체
+
+        Returns:
+            Any: 직렬화 가능한 객체
+        """
+        import types
+        from contextlib import ContextDecorator
+
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, (list, tuple)):
+            return type(obj)(self._make_serializable(item) for item in obj)
+        elif isinstance(obj, dict):
+            return {key: self._make_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, set):
+            return {self._make_serializable(item) for item in obj}
+        elif hasattr(obj, "__dict__") and not isinstance(
+            obj, (types.FunctionType, types.MethodType, ContextDecorator)
+        ):
+            # 일반 객체는 딕셔너리로 변환
+            try:
+                return {
+                    "_class_name": obj.__class__.__name__,
+                    "_module": obj.__class__.__module__,
+                    **{
+                        k: self._make_serializable(v)
+                        for k, v in obj.__dict__.items()
+                        if not k.startswith("_") and not callable(v)
+                    },
+                }
+            except Exception:
+                return str(obj)
+        elif hasattr(obj, "to_dict") and callable(obj.to_dict):
+            # to_dict 메서드가 있는 객체
+            try:
+                return self._make_serializable(obj.to_dict())
+            except Exception:
+                return str(obj)
+        elif isinstance(obj, (types.FunctionType, types.MethodType, ContextDecorator)):
+            # 함수나 메서드, ContextDecorator는 문자열로 변환
+            return f"<{type(obj).__name__}: {getattr(obj, '__name__', str(obj))}>"
+        else:
+            # 기타 직렬화 불가능한 객체는 문자열로 변환
+            try:
+                # 간단한 직렬화 테스트
+                import pickle
+
+                pickle.dumps(obj)
+                return obj
+            except Exception:
+                return str(obj)
