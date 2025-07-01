@@ -35,12 +35,25 @@ try:
 
     NUMPY_AVAILABLE = True
 except ImportError:
-    np = None
+    import types
+
+    _dummy = types.SimpleNamespace(
+        ndarray=object,
+        integer=int,
+        int64=int,
+        int32=int,
+        floating=float,
+        float64=float,
+        float32=float,
+        bool_=bool,
+    )
+    np = _dummy  # type: ignore
     NUMPY_AVAILABLE = False
 
 from .unified_logging import get_logger
 
 logger = get_logger(__name__)
+
 
 class UnifiedReportWriter:
     """통합 보고서 작성기"""
@@ -78,21 +91,40 @@ class UnifiedReportWriter:
 
     def _get_system_info(self) -> Dict[str, Any]:
         """시스템 정보 수집"""
+        cpu_cnt = (
+            getattr(psutil, "cpu_count", lambda: os.cpu_count())()
+            if PSUTIL_AVAILABLE
+            else os.cpu_count()
+        )
+        ram_gb = (
+            round(
+                getattr(
+                    psutil, "virtual_memory", lambda: type("vm", (), {"total": 0})()
+                )().total
+                / (1024**3),
+                2,
+            )
+            if PSUTIL_AVAILABLE
+            else 0.0
+        )
+        cuda_mod = getattr(torch, "cuda", None) if TORCH_AVAILABLE else None
+        cuda_avail = cuda_mod and cuda_mod.is_available() if cuda_mod else False
+
         info = {
             "os": platform.platform(),
             "python": platform.python_version(),
-            "cpu_count": psutil.cpu_count(),
-            "ram_gb": round(psutil.virtual_memory().total / (1024**3), 2),
-            "cuda_available": torch.cuda.is_available(),
+            "cpu_count": cpu_cnt,
+            "ram_gb": ram_gb,
+            "cuda_available": cuda_avail,
         }
 
-        if torch.cuda.is_available():
+        if cuda_avail:
             info.update(
                 {
-                    "cuda_device_count": torch.cuda.device_count(),
-                    "cuda_device_name": torch.cuda.get_device_name(),
+                    "cuda_device_count": torch.cuda.device_count(),  # type: ignore
+                    "cuda_device_name": torch.cuda.get_device_name(),  # type: ignore
                     "cuda_memory_gb": round(
-                        torch.cuda.get_device_properties(0).total_memory / (1024**3), 2
+                        torch.cuda.get_device_properties(0).total_memory / (1024**3), 2  # type: ignore
                     ),
                 }
             )
@@ -132,29 +164,36 @@ class UnifiedReportWriter:
                 return bool(obj)
             return super().default(obj)
 
+
 # 전역 인스턴스
 _report_writer = UnifiedReportWriter()
+
 
 # 편의 함수들
 def save_report(data: Dict[str, Any], name: str, category: str = "general") -> str:
     """보고서 저장 (전역 함수)"""
     return _report_writer.save_report(data, name, category)
 
+
 def save_performance_report(data: Dict[str, Any], name: str) -> str:
     """성능 보고서 저장"""
     return save_report(data, name, "performance")
+
 
 def save_analysis_report(data: Dict[str, Any], name: str) -> str:
     """분석 보고서 저장"""
     return save_report(data, name, "analysis")
 
+
 def save_training_report(data: Dict[str, Any], name: str) -> str:
     """학습 보고서 저장"""
     return save_report(data, name, "training")
 
+
 def save_evaluation_report(data: Dict[str, Any], name: str) -> str:
     """평가 보고서 저장"""
     return save_report(data, name, "evaluation")
+
 
 # 기존 호환성을 위한 함수들
 def save_analysis_performance_report(
@@ -165,37 +204,62 @@ def save_analysis_performance_report(
     data_metrics: Optional[Dict[str, Any]] = None,
 ) -> str:
     """분석 성능 보고서 저장 (기존 호환성)"""
+    cuda_mod = getattr(torch, "cuda", None) if TORCH_AVAILABLE else None
     # 기본 데이터 수집
     report_data = {
         "module_name": module_name,
         "execution_time_sec": 0.0,
         "memory_usage_mb": 0.0,
-        "cpu_usage_percent": psutil.cpu_percent(),
+        "cpu_usage_percent": (
+            getattr(psutil, "cpu_percent", lambda: 0.0)() if PSUTIL_AVAILABLE else 0.0
+        ),
         "timestamp": datetime.now().isoformat(),
         # 필수 필드들
-        "hardware": "gpu" if torch.cuda.is_available() else "cpu",
+        "hardware": (
+            "gpu" if TORCH_AVAILABLE and cuda_mod and cuda_mod.is_available() else "cpu"
+        ),
         "gpu_device": (
-            f"cuda:{torch.cuda.current_device()}"
-            if torch.cuda.is_available()
+            f"cuda:{cuda_mod.current_device()}"
+            if TORCH_AVAILABLE and cuda_mod and cuda_mod.is_available()
             else "none"
         ),
         "parallel_execution": True,
-        "max_threads": psutil.cpu_count(),
+        "max_threads": (
+            getattr(psutil, "cpu_count", lambda: os.cpu_count())()
+            if PSUTIL_AVAILABLE
+            else (os.cpu_count() or 0)
+        ),
         "batch_size": 64,
-        "memory_usage": psutil.virtual_memory().percent,
+        "memory_usage": (
+            getattr(
+                psutil, "virtual_memory", lambda: type("vm", (), {"percent": 0.0})()
+            )().percent
+            if PSUTIL_AVAILABLE
+            else 0.0
+        ),
         "cache_hit_rate": 0.0,
         "vector_processing_count": 0,
         "module_execution_times": {},
         "gpu_utilization_percent": 0.0,
-        "torch_amp_enabled": torch.cuda.is_available(),
+        "torch_amp_enabled": TORCH_AVAILABLE and cuda_mod and cuda_mod.is_available(),
         "threading_backend": "threading",
         "cache_memory_hit_count": 0,
         "cache_memory_miss_count": 0,
         "cuda_driver_version": (
-            torch.version.cuda if torch.cuda.is_available() else "none"
+            getattr(getattr(torch, "version", None), "cuda", "none")
+            if TORCH_AVAILABLE and cuda_mod and cuda_mod.is_available()
+            else "none"
         ),
         "cudnn_version": (
-            str(torch.backends.cudnn.version()) if torch.cuda.is_available() else "none"
+            str(
+                getattr(
+                    getattr(getattr(torch, "backends", None), "cudnn", None),
+                    "version",
+                    lambda: "none",
+                )()
+            )
+            if TORCH_AVAILABLE and cuda_mod and cuda_mod.is_available()
+            else "none"
         ),
     }
 
@@ -227,20 +291,24 @@ def save_analysis_performance_report(
 
     return save_performance_report(report_data, f"{module_name}_performance_report")
 
+
 # 기존 함수명 호환성
 write_performance_report = save_performance_report
 write_training_report = save_training_report
 save_physical_performance_report = save_performance_report
+
 
 # 호환성을 위한 safe_convert 함수
 def safe_convert(obj):
     """NumPy 타입을 JSON 직렬화 가능한 형태로 변환 (전역 함수)"""
     return _report_writer._safe_convert(obj)
 
+
 # 시스템 정보 함수
 def get_system_info() -> Dict[str, Any]:
     """시스템 정보 반환"""
     return _report_writer._get_system_info()
+
 
 # export할 항목들
 __all__ = [
