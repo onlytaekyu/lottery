@@ -5,7 +5,7 @@ GPU 최우선 연산 처리와 메모리 효율성에 집중한 간소화된 CUD
 
 import torch
 import torch.nn as nn
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass
 import threading
 import logging
@@ -21,14 +21,11 @@ _memory_pool_lock = threading.RLock()
 
 @dataclass
 class CudaConfig:
-    """CUDA 최적화 설정 (간소화)"""
+    """CUDA 최적화 설정"""
 
-    # 배치 크기 설정
     batch_size: int = 256
     min_batch_size: int = 16
     max_batch_size: int = 512
-
-    # 최적화 플래그
     use_amp: bool = True
     use_cudnn: bool = True
 
@@ -60,7 +57,7 @@ class CudaConfig:
 
 
 class CUDAOptimizer:
-    """CUDA 최적화기 (간소화)"""
+    """CUDA 최적화기"""
 
     _instance = None
     _lock = threading.RLock()
@@ -75,21 +72,15 @@ class CUDAOptimizer:
     def __init__(self, config: Optional[CudaConfig] = None):
         if hasattr(self, "_initialized"):
             return
-
         self.config = config or CudaConfig()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._initialized = True
-
         logger.info(f"CUDA 최적화기 초기화 완료: {self.device}")
-
-    def is_cuda_available(self) -> bool:
-        """CUDA 사용 가능 여부"""
-        return torch.cuda.is_available()
 
     @contextmanager
     def device_context(self):
         """디바이스 컨텍스트 관리자"""
-        if self.is_cuda_available():
+        if torch.cuda.is_available():
             with torch.cuda.device(self.device):
                 yield
         else:
@@ -97,7 +88,7 @@ class CUDAOptimizer:
 
     def optimize_model(self, model: nn.Module) -> nn.Module:
         """모델 최적화"""
-        if not self.is_cuda_available():
+        if not torch.cuda.is_available():
             return model
 
         try:
@@ -106,7 +97,7 @@ class CUDAOptimizer:
 
             # AMP 적용
             if self.config.use_amp:
-                model = self._apply_amp(model)
+                model = model.half()
 
             return model
 
@@ -114,18 +105,9 @@ class CUDAOptimizer:
             logger.error(f"모델 최적화 실패: {e}")
             return model
 
-    def _apply_amp(self, model: nn.Module) -> nn.Module:
-        """AMP 적용"""
-        try:
-            # 모델을 half precision으로 변환
-            return model.half()
-        except Exception as e:
-            logger.warning(f"AMP 적용 실패: {e}")
-            return model
-
     def optimize_memory(self) -> bool:
         """GPU 메모리 최적화"""
-        if not self.is_cuda_available():
+        if not torch.cuda.is_available():
             return False
 
         try:
@@ -138,7 +120,7 @@ class CUDAOptimizer:
 
     def get_memory_info(self) -> Dict[str, Any]:
         """GPU 메모리 정보"""
-        if not self.is_cuda_available():
+        if not torch.cuda.is_available():
             return {"available": False}
 
         try:
@@ -159,7 +141,7 @@ class CUDAOptimizer:
 
 
 class AMPTrainer:
-    """AMP 트레이너 (간소화)"""
+    """AMP 트레이너"""
 
     def __init__(self, config=None):
         self.config = config or {}
@@ -200,9 +182,13 @@ class AMPTrainer:
             outputs = model(**batch)
             loss = loss_fn(outputs, batch.get("labels"))
 
-        self.scaler.scale(loss).backward()
-        self.scaler.step(optimizer)
-        self.scaler.update()
+        if self.scaler is not None:
+            self.scaler.scale(loss).backward()
+            self.scaler.step(optimizer)
+            self.scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
 
         return {"loss": loss.item()}
 
@@ -232,39 +218,6 @@ def setup_cuda_memory_pool():
             logger.error(f"CUDA 메모리 풀 설정 실패: {e}")
 
 
-def get_optimal_batch_size(
-    model: nn.Module, input_shape: tuple, max_memory_fraction: float = 0.8
-) -> int:
-    """최적 배치 크기 계산"""
-
-    if not torch.cuda.is_available():
-        return 32  # CPU 기본값
-
-    try:
-        # GPU 메모리 정보
-        total_memory = torch.cuda.get_device_properties(0).total_memory
-        available_memory = total_memory * max_memory_fraction
-
-        # 모델 크기 추정
-        model_memory = sum(p.numel() * p.element_size() for p in model.parameters())
-
-        # 입력 데이터 크기 추정
-        input_memory = 1
-        for dim in input_shape:
-            input_memory *= dim
-        input_memory *= 4  # float32 기준
-
-        # 최적 배치 크기 계산
-        batch_size = int(available_memory / (model_memory + input_memory))
-
-        # 범위 제한
-        return max(16, min(batch_size, 512))
-
-    except Exception as e:
-        logger.error(f"배치 크기 계산 실패: {e}")
-        return 32
-
-
 # 편의 함수들
 def get_cuda_optimizer(config: Optional[CudaConfig] = None) -> CUDAOptimizer:
     """CUDA 최적화기 반환"""
@@ -273,11 +226,9 @@ def get_cuda_optimizer(config: Optional[CudaConfig] = None) -> CUDAOptimizer:
 
 def optimize_memory():
     """메모리 최적화 실행"""
-    optimizer = get_cuda_optimizer()
-    return optimizer.optimize_memory()
+    return get_cuda_optimizer().optimize_memory()
 
 
 def get_device_info() -> Dict[str, Any]:
     """디바이스 정보 반환"""
-    optimizer = get_cuda_optimizer()
-    return optimizer.get_memory_info()
+    return get_cuda_optimizer().get_memory_info()

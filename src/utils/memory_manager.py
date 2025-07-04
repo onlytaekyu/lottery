@@ -1,10 +1,10 @@
-"""메모리 관리 모듈 (성능 최적화 버전)
+"""메모리 관리 모듈 (GPU 우선순위 버전)
 
-GPU 메모리 최우선 관리와 핵심 기능만 제공하는 간소화된 메모리 관리 시스템
+GPU 메모리 최우선 관리와 스마트 폴백 시스템을 제공하는 고성능 메모리 관리 시스템
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union, Tuple
 import threading
 import time
 import gc
@@ -13,6 +13,7 @@ import psutil
 import platform
 from contextlib import contextmanager
 import os
+import numpy as np
 
 from .unified_logging import get_logger
 
@@ -30,34 +31,180 @@ if torch.cuda.is_available() and "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
 
 @dataclass
 class MemoryConfig:
-    """메모리 관리 설정 (간소화)"""
+    """메모리 관리 설정"""
 
-    # 메모리 사용률 제한
-    max_memory_usage: float = 0.85  # 85% 제한
-
-    # 배치 크기 설정
+    max_memory_usage: float = 0.85
     optimal_batch_size: int = 256
     min_batch_size: int = 16
     max_batch_size: int = 512
-
-    # 정리 간격
-    cleanup_interval: float = 60.0  # 1분
-
-    # GPU 메모리 풀 사전 할당
+    cleanup_interval: float = 60.0
     preallocation_fraction: float = 0.5
+    gpu_fallback_threshold: float = 0.9  # GPU 메모리 사용률 임계값
+    auto_fallback_enabled: bool = True
 
     def __post_init__(self):
-        """설정 검증"""
         self.max_memory_usage = max(0.1, min(self.max_memory_usage, 0.95))
         self.min_batch_size = max(1, min(self.min_batch_size, self.max_batch_size))
         self.max_batch_size = max(self.min_batch_size, self.max_batch_size)
         self.optimal_batch_size = max(
             self.min_batch_size, min(self.optimal_batch_size, self.max_batch_size)
         )
+        self.gpu_fallback_threshold = max(0.5, min(self.gpu_fallback_threshold, 0.99))
+
+
+class SmartMemoryAllocator:
+    """스마트 메모리 할당기 - GPU 우선순위 with 자동 폴백"""
+
+    def __init__(self, config: MemoryConfig):
+        self.config = config
+        self.logger = get_logger(__name__)
+        self.gpu_available = torch.cuda.is_available()
+        self.fallback_history = []  # 폴백 히스토리 추적
+
+        if self.gpu_available:
+            self.logger.info("GPU 메모리 할당기 초기화 완료")
+        else:
+            self.logger.info("CPU 메모리 할당기 초기화 완료")
+
+    def smart_allocate_tensor(
+        self,
+        shape: Tuple[int, ...],
+        dtype: torch.dtype = torch.float32,
+        prefer_gpu: bool = True,
+    ) -> torch.Tensor:
+        """스마트 텐서 할당 - GPU 우선순위 with 자동 폴백"""
+
+        # 메모리 사용량 추정
+        element_size = torch.tensor([], dtype=dtype).element_size()
+        estimated_memory = np.prod(shape) * element_size
+
+        # GPU 할당 시도
+        if prefer_gpu and self.gpu_available:
+            try:
+                if self._can_allocate_on_gpu(estimated_memory):
+                    tensor = torch.zeros(shape, dtype=dtype, device="cuda")
+                    self.logger.debug(
+                        f"GPU 메모리 할당 성공: {shape}, {estimated_memory/1024**2:.1f}MB"
+                    )
+                    return tensor
+                else:
+                    self.logger.warning(
+                        f"GPU 메모리 부족 - CPU로 폴백: {estimated_memory/1024**2:.1f}MB"
+                    )
+                    self._record_fallback("insufficient_memory", estimated_memory)
+            except torch.cuda.OutOfMemoryError as e:
+                self.logger.warning(f"GPU 메모리 할당 실패 - CPU로 폴백: {e}")
+                self._record_fallback("cuda_oom", estimated_memory)
+                # GPU 캐시 정리 시도
+                torch.cuda.empty_cache()
+
+        # CPU 할당 (폴백)
+        try:
+            tensor = torch.zeros(shape, dtype=dtype, device="cpu")
+            self.logger.debug(
+                f"CPU 메모리 할당 성공: {shape}, {estimated_memory/1024**2:.1f}MB"
+            )
+            return tensor
+        except Exception as e:
+            self.logger.error(f"CPU 메모리 할당 실패: {e}")
+            raise MemoryError(f"메모리 할당 실패: {estimated_memory/1024**2:.1f}MB")
+
+    def _can_allocate_on_gpu(self, estimated_memory: int) -> bool:
+        """GPU 메모리 할당 가능 여부 확인"""
+        if not self.gpu_available:
+            return False
+
+        try:
+            # 현재 GPU 메모리 사용률 확인
+            allocated = torch.cuda.memory_allocated()
+            total = torch.cuda.get_device_properties(0).total_memory
+            usage_ratio = allocated / total
+
+            # 임계값 초과 시 폴백
+            if usage_ratio > self.config.gpu_fallback_threshold:
+                return False
+
+            # 사용 가능한 메모리 확인
+            available = total - allocated
+            safety_margin = total * 0.1  # 10% 여유분
+
+            return (estimated_memory + safety_margin) < available
+
+        except Exception as e:
+            self.logger.error(f"GPU 메모리 확인 실패: {e}")
+            return False
+
+    def _record_fallback(self, reason: str, memory_size: int):
+        """폴백 히스토리 기록"""
+        fallback_info = {
+            "timestamp": time.time(),
+            "reason": reason,
+            "memory_size_mb": memory_size / (1024**2),
+            "gpu_usage": self._get_gpu_usage(),
+        }
+        self.fallback_history.append(fallback_info)
+
+        # 히스토리 크기 제한 (최근 100개만 보관)
+        if len(self.fallback_history) > 100:
+            self.fallback_history = self.fallback_history[-100:]
+
+    def _get_gpu_usage(self) -> float:
+        """GPU 사용률 반환"""
+        if not self.gpu_available:
+            return 0.0
+
+        try:
+            allocated = torch.cuda.memory_allocated()
+            total = torch.cuda.get_device_properties(0).total_memory
+            return allocated / total if total > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    def get_fallback_statistics(self) -> Dict[str, Any]:
+        """폴백 통계 반환"""
+        if not self.fallback_history:
+            return {"total_fallbacks": 0, "reasons": {}}
+
+        reasons = {}
+        for entry in self.fallback_history:
+            reason = entry["reason"]
+            reasons[reason] = reasons.get(reason, 0) + 1
+
+        return {
+            "total_fallbacks": len(self.fallback_history),
+            "reasons": reasons,
+            "recent_fallbacks": self.fallback_history[-10:],  # 최근 10개
+            "average_fallback_memory_mb": sum(
+                entry["memory_size_mb"] for entry in self.fallback_history
+            )
+            / len(self.fallback_history),
+        }
+
+    def optimize_tensor_placement(
+        self, tensor: torch.Tensor, prefer_gpu: bool = True
+    ) -> torch.Tensor:
+        """텐서 배치 최적화"""
+        if not prefer_gpu or not self.gpu_available:
+            return tensor.cpu()
+
+        # 이미 GPU에 있으면 그대로 반환
+        if tensor.is_cuda:
+            return tensor
+
+        # GPU로 이동 시도
+        try:
+            if self._can_allocate_on_gpu(tensor.numel() * tensor.element_size()):
+                return tensor.cuda()
+            else:
+                self.logger.debug("GPU 메모리 부족 - CPU에 유지")
+                return tensor
+        except Exception as e:
+            self.logger.warning(f"GPU 이동 실패: {e}")
+            return tensor
 
 
 class MemoryManager:
-    """메모리 관리자 (간소화)"""
+    """메모리 관리자 (GPU 우선순위 버전)"""
 
     _instance = None
     _lock = threading.RLock()
@@ -72,101 +219,108 @@ class MemoryManager:
     def __init__(self, config: Optional[MemoryConfig] = None):
         if hasattr(self, "_initialized"):
             return
-
         self.config = config or MemoryConfig()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._cleanup_thread = None
         self._running = False
         self._last_cleanup = time.time()
         self._initialized = True
 
-        # GPU 메모리 풀 초기화
+        # 스마트 메모리 할당기 초기화
+        self.smart_allocator = SmartMemoryAllocator(self.config)
+
         if torch.cuda.is_available():
             self._setup_gpu_memory_pool()
-
-        # 자동 정리 시작
-        self._start_cleanup_thread()
-
         logger.info(f"메모리 관리자 초기화 완료: {self.device}")
 
     def _setup_gpu_memory_pool(self):
-        """GPU 메모리 풀 설정"""
         try:
-            # GPU 메모리 사전 할당
             torch.cuda.set_per_process_memory_fraction(
                 self.config.preallocation_fraction
             )
-
-            # 메모리 풀 워밍업
             dummy_tensor = torch.zeros(1024, 1024, device=self.device)
             del dummy_tensor
             torch.cuda.empty_cache()
-
             logger.info("GPU 메모리 풀 설정 완료")
         except Exception as e:
             logger.error(f"GPU 메모리 풀 설정 실패: {e}")
 
-    def _start_cleanup_thread(self):
-        """자동 정리 스레드 시작"""
-        if self._cleanup_thread is None or not self._cleanup_thread.is_alive():
-            self._running = True
-            self._cleanup_thread = threading.Thread(
-                target=self._cleanup_loop, daemon=True
-            )
-            self._cleanup_thread.start()
+    def smart_memory_allocation(
+        self,
+        tensor_size: Union[int, Tuple[int, ...]],
+        dtype: torch.dtype = torch.float32,
+        prefer_gpu: bool = True,
+    ) -> torch.Tensor:
+        """스마트 메모리 할당 - GPU 부족 시 자동 CPU 폴백"""
+        if isinstance(tensor_size, int):
+            shape = (tensor_size,)
+        else:
+            shape = tensor_size
 
-    def _cleanup_loop(self):
-        """자동 정리 루프"""
-        while self._running:
+        return self.smart_allocator.smart_allocate_tensor(shape, dtype, prefer_gpu)
+
+    def allocate_gpu_memory(
+        self,
+        tensor_size: Union[int, Tuple[int, ...]],
+        dtype: torch.dtype = torch.float32,
+    ) -> torch.Tensor:
+        """GPU 메모리 할당 (실패 시 예외 발생)"""
+        if isinstance(tensor_size, int):
+            shape = (tensor_size,)
+        else:
+            shape = tensor_size
+
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA를 사용할 수 없습니다")
+
+        try:
+            return torch.zeros(shape, dtype=dtype, device="cuda")
+        except torch.cuda.OutOfMemoryError as e:
+            # 메모리 정리 후 재시도
+            torch.cuda.empty_cache()
             try:
-                time.sleep(self.config.cleanup_interval)
-                if self.should_cleanup():
-                    self.cleanup()
-            except Exception as e:
-                logger.error(f"자동 정리 오류: {e}")
+                return torch.zeros(shape, dtype=dtype, device="cuda")
+            except torch.cuda.OutOfMemoryError:
+                raise torch.cuda.OutOfMemoryError(f"GPU 메모리 할당 실패: {shape}")
+
+    def allocate_cpu_memory(
+        self,
+        tensor_size: Union[int, Tuple[int, ...]],
+        dtype: torch.dtype = torch.float32,
+    ) -> torch.Tensor:
+        """CPU 메모리 할당"""
+        if isinstance(tensor_size, int):
+            shape = (tensor_size,)
+        else:
+            shape = tensor_size
+
+        return torch.zeros(shape, dtype=dtype, device="cpu")
 
     def should_cleanup(self) -> bool:
-        """정리 필요 여부 확인"""
         try:
-            # GPU 메모리 사용률 확인
             if torch.cuda.is_available():
                 allocated = torch.cuda.memory_allocated()
                 total = torch.cuda.get_device_properties(0).total_memory
                 gpu_usage = allocated / total if total > 0 else 0
-
                 if gpu_usage > self.config.max_memory_usage:
                     return True
-
-            # CPU 메모리 사용률 확인
             cpu_usage = psutil.virtual_memory().percent / 100
-            if cpu_usage > self.config.max_memory_usage:
-                return True
-
-            return False
-
+            return cpu_usage > self.config.max_memory_usage
         except Exception as e:
             logger.error(f"메모리 사용률 확인 실패: {e}")
             return True
 
     def cleanup(self) -> None:
-        """메모리 정리"""
         try:
-            # GPU 메모리 정리
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-
-            # CPU 메모리 정리
             gc.collect()
-
             self._last_cleanup = time.time()
             logger.debug("메모리 정리 완료")
-
         except Exception as e:
             logger.error(f"메모리 정리 실패: {e}")
 
     def get_memory_usage(self, memory_type: str = "gpu") -> float:
-        """메모리 사용률 반환"""
         try:
             if memory_type == "gpu" and torch.cuda.is_available():
                 allocated = torch.cuda.memory_allocated()
@@ -174,64 +328,42 @@ class MemoryManager:
                 return allocated / total if total > 0 else 0
             elif memory_type == "cpu":
                 return psutil.virtual_memory().percent / 100
-            else:
-                return 0.0
+            return 0.0
         except Exception as e:
             logger.error(f"메모리 사용률 조회 실패: {e}")
             return 0.0
 
     def get_available_memory(self, memory_type: str = "gpu") -> float:
-        """사용 가능한 메모리 반환 (GB)"""
         try:
             if memory_type == "gpu" and torch.cuda.is_available():
                 allocated = torch.cuda.memory_allocated()
                 total = torch.cuda.get_device_properties(0).total_memory
-                return (total - allocated) / (1024**3)  # GB
+                return (total - allocated) / (1024**3)
             elif memory_type == "cpu":
-                return psutil.virtual_memory().available / (1024**3)  # GB
-            else:
-                return 0.0
+                return psutil.virtual_memory().available / (1024**3)
+            return 0.0
         except Exception as e:
             logger.error(f"사용 가능한 메모리 조회 실패: {e}")
             return 0.0
 
-    def check_gpu_memory(self, required_bytes: int) -> bool:
-        """GPU 메모리 충분성 확인"""
-        if not torch.cuda.is_available():
-            return False
-
-        try:
-            available_bytes = self.get_available_memory("gpu") * (1024**3)
-            return available_bytes >= required_bytes
-        except Exception as e:
-            logger.error(f"GPU 메모리 확인 실패: {e}")
-            return False
-
     def get_safe_batch_size(
         self, max_batch_size: Optional[int] = None, memory_type: str = "gpu"
     ) -> int:
-        """안전한 배치 크기 반환"""
         try:
             if max_batch_size is None:
                 max_batch_size = self.config.max_batch_size
-
-            # 메모리 사용률 기반 배치 크기 조정
             memory_usage = self.get_memory_usage(memory_type)
-
-            if memory_usage > 0.8:  # 80% 이상 사용 시
+            if memory_usage > 0.8:
                 return max(self.config.min_batch_size, max_batch_size // 4)
-            elif memory_usage > 0.6:  # 60% 이상 사용 시
+            elif memory_usage > 0.6:
                 return max(self.config.min_batch_size, max_batch_size // 2)
-            else:
-                return max_batch_size
-
+            return max_batch_size
         except Exception as e:
             logger.error(f"안전한 배치 크기 계산 실패: {e}")
             return self.config.min_batch_size
 
     @contextmanager
     def allocation_scope(self):
-        """메모리 할당 스코프"""
         try:
             yield
         finally:
@@ -240,22 +372,18 @@ class MemoryManager:
 
     @contextmanager
     def batch_processing(self):
-        """배치 처리 스코프"""
         try:
             yield
         finally:
-            # 배치 처리 후 정리
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
     def get_memory_info(self) -> Dict[str, Any]:
-        """메모리 정보 반환"""
         info = {
             "device": str(self.device),
             "cpu_usage": self.get_memory_usage("cpu"),
             "cpu_available_gb": self.get_available_memory("cpu"),
         }
-
         if torch.cuda.is_available():
             info.update(
                 {
@@ -266,35 +394,24 @@ class MemoryManager:
                 }
             )
 
+        # 스마트 할당기 통계 추가
+        if hasattr(self, "smart_allocator"):
+            info["fallback_statistics"] = self.smart_allocator.get_fallback_statistics()
+
         return info
 
     def shutdown(self):
-        """메모리 관리자 종료"""
         self._running = False
-        if self._cleanup_thread and self._cleanup_thread.is_alive():
-            self._cleanup_thread.join(timeout=1.0)
-
-        # 최종 정리
         self.cleanup()
         logger.info("메모리 관리자 종료 완료")
 
-    def __del__(self):
-        """소멸자"""
-        try:
-            self.shutdown()
-        except:
-            pass
 
-
-# 편의 함수들
 def get_memory_manager(config: Optional[MemoryConfig] = None) -> MemoryManager:
-    """메모리 관리자 반환"""
     return MemoryManager(config)
 
 
 @contextmanager
 def memory_managed_analysis():
-    """메모리 관리 분석 컨텍스트"""
     manager = get_memory_manager()
     try:
         with manager.allocation_scope():
@@ -304,6 +421,4 @@ def memory_managed_analysis():
 
 
 def cleanup_analysis():
-    """분석 후 정리"""
-    manager = get_memory_manager()
-    manager.cleanup()
+    get_memory_manager().cleanup()

@@ -9,7 +9,7 @@ import os
 import pickle
 import time
 from collections import OrderedDict
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 import numpy as np
 import torch
 import hashlib
@@ -109,14 +109,8 @@ class CacheManager:
             return value.cpu().numpy().tolist()
         elif isinstance(value, np.ndarray):
             return value.tolist()
-        elif isinstance(value, np.integer):
-            return int(value)
-        elif isinstance(value, np.floating):
-            return float(value)
-        elif isinstance(value, np.bool_):
-            return bool(value)
-        elif isinstance(value, np.str_):
-            return str(value)
+        elif isinstance(value, (np.integer, np.floating, np.bool_, np.str_)):
+            return value.item()
         elif isinstance(value, (set, frozenset)):
             return list(value)
         elif isinstance(value, dict):
@@ -278,34 +272,13 @@ class CacheManager:
             처리된 데이터
         """
         try:
-            # 데이터 타입에 따른 처리
-            if isinstance(data, dict):
-                # 딕셔너리 키 복원
-                result = {}
-                for k, v in data.items():
-                    # 튜플 키 복원
-                    if isinstance(k, str) and "_" in k:
-                        try:
-                            # 숫자로 구성된 키인지 확인
-                            parts = k.split("_")
-                            if all(part.isdigit() for part in parts):
-                                restored_key = tuple(int(part) for part in parts)
-                            else:
-                                restored_key = k
-                        except:
-                            restored_key = k
-                    else:
-                        restored_key = k
-
-                    # 재귀적으로 값 처리
-                    result[restored_key] = self._process_loaded_data(v, key)
-                return result
-            elif isinstance(data, list):
-                # 리스트 항목 재귀 처리
-                return [self._process_loaded_data(item, key) for item in data]
-            else:
-                # 기본 타입은 그대로 반환
-                return data
+            if isinstance(data, list) and len(data) > 0:
+                if all(isinstance(item, (int, float)) for item in data):
+                    return np.array(data)
+            elif isinstance(data, dict):
+                if "numbers" in data and isinstance(data["numbers"], list):
+                    return data
+            return data
         except Exception as e:
             self.logger.warning(f"데이터 처리 중 오류: 키={key}, 오류={str(e)}")
             return data
@@ -342,6 +315,12 @@ class CacheManager:
                 json_path = self._get_cache_path(normalized_key, mode="json")
                 if json_path.exists():
                     json_path.unlink()
+                    deleted = True
+
+                # 피클 캐시 파일 삭제
+                pickle_path = self._get_cache_path(normalized_key, mode="pickle")
+                if pickle_path.exists():
+                    pickle_path.unlink()
                     deleted = True
 
                 if deleted:

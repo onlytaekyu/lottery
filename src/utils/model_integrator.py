@@ -1,4 +1,4 @@
-"""모델 통합 시스템 (성능 최적화 버전)
+"""모델 통합 시스템 (메모리 최적화)
 
 핵심 앙상블 기능만 제공하는 간소화된 모델 통합 시스템
 """
@@ -15,19 +15,19 @@ logger = get_logger(__name__)
 
 @dataclass
 class IntegratorConfig:
-    """통합기 설정 (간소화)"""
+    """통합기 설정"""
 
     batch_size: int = 32
-    enable_cache: bool = True
+    enable_cache: bool = False  # 캐시 비활성화
     cache_dir: str = "cache/integrator"
-    model_timeout: float = 10.0  # 10초로 단축
+    model_timeout: float = 10.0
 
     def __post_init__(self):
         self.cache_dir = str(Path(__file__).parent.parent.parent / self.cache_dir)
 
 
 class ModelWrapper:
-    """모델 래퍼 (간소화)"""
+    """모델 래퍼 (메모리 최적화)"""
 
     def __init__(self, model, name: str, weight: float = 1.0):
         self.model = model
@@ -38,7 +38,7 @@ class ModelWrapper:
         self.success_count = 0
 
     def predict(self, inputs: Any) -> Any:
-        """예측 수행"""
+        """모델 예측"""
         try:
             # 모델이 predict 메서드를 가지고 있는지 확인
             if hasattr(self.model, "predict"):
@@ -61,16 +61,11 @@ class ModelWrapper:
 
 
 class ModelIntegrator:
-    """모델 통합 시스템 (간소화)"""
+    """모델 통합 시스템 (메모리 최적화)"""
 
     def __init__(self, config: Optional[IntegratorConfig] = None):
         self.config = config or IntegratorConfig()
         self.model_wrappers: Dict[str, ModelWrapper] = {}
-        self.prediction_cache: Dict[str, List] = {}
-
-        # 캐시 디렉토리 생성
-        Path(self.config.cache_dir).mkdir(parents=True, exist_ok=True)
-
         logger.info("모델 통합기 초기화 완료")
 
     def register_model(self, model_id: str, model, weight: float = 1.0) -> None:
@@ -130,7 +125,7 @@ class ModelIntegrator:
     def _combine_predictions(
         self, all_predictions: Dict[str, List], count: int
     ) -> List:
-        """예측 결과 통합 (가중 평균)"""
+        """예측 결과 통합 (메모리 효율적)"""
         if not all_predictions:
             return []
 
@@ -149,18 +144,20 @@ class ModelIntegrator:
                     pred = predictions[0]
                     if hasattr(pred, "numbers") and hasattr(pred, "confidence"):
                         for number in pred.numbers:
-                            if number not in number_scores:
-                                number_scores[number] = 0.0
-                            number_scores[number] += pred.confidence * weight
+                            number_scores[number] = (
+                                number_scores.get(number, 0.0)
+                                + pred.confidence * weight
+                            )
                     elif (
                         isinstance(pred, dict)
                         and "numbers" in pred
                         and "confidence" in pred
                     ):
                         for number in pred["numbers"]:
-                            if number not in number_scores:
-                                number_scores[number] = 0.0
-                            number_scores[number] += pred["confidence"] * weight
+                            number_scores[number] = (
+                                number_scores.get(number, 0.0)
+                                + pred["confidence"] * weight
+                            )
 
             # 정규화
             if total_weight > 0:
@@ -217,28 +214,20 @@ class ModelIntegrator:
 
     def get_model_stats(self) -> Dict[str, Any]:
         """모델 통계 반환"""
-        stats = {}
-
-        for model_id, wrapper in self.model_wrappers.items():
-            stats[model_id] = {
+        return {
+            model_id: {
                 "weight": wrapper.weight,
                 "success_rate": wrapper.get_success_rate(),
                 "error_count": wrapper.error_count,
                 "success_count": wrapper.success_count,
                 "is_active": wrapper.is_active,
             }
-
-        return stats
-
-    def clear_cache(self):
-        """캐시 정리"""
-        self.prediction_cache.clear()
-        logger.debug("예측 캐시 정리 완료")
+            for model_id, wrapper in self.model_wrappers.items()
+        }
 
     def cleanup(self):
         """리소스 정리"""
         try:
-            self.clear_cache()
             self.model_wrappers.clear()
             logger.info("모델 통합기 정리 완료")
         except Exception as e:

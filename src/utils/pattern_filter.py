@@ -63,10 +63,12 @@ class PatternFilter:
         self.min_failure_count = self.config.get("min_failure_count", 3)
 
         # 저성능 패턴 맵
-        self.low_performance_patterns = self._load_low_performance_patterns()
+        self.low_performance_patterns = self._load_patterns(
+            self.low_performance_patterns_file
+        )
 
         # 실패 패턴 맵
-        self.failed_patterns = self._load_failed_patterns()
+        self.failed_patterns = self._load_patterns(self.failed_patterns_file)
 
         # 패턴 변경 여부 플래그
         self.failed_patterns_changed = False
@@ -78,7 +80,6 @@ class PatternFilter:
             "sum_range": self.filter_sum_range,
             "consecutive_numbers": self.filter_consecutive_numbers,
             "number_gaps": self.filter_number_gaps,
-            "historical_match": self.filter_historical_match,
             "failed_pattern": self.filter_failed_pattern,
         }
 
@@ -87,31 +88,15 @@ class PatternFilter:
             f"실패 패턴: {len(self.failed_patterns)}개)"
         )
 
-    def _get_max_consecutive_length(self, numbers: List[int]) -> int:
-        """
-        최대 연속 번호 길이 계산
-
-        Args:
-            numbers: 번호 목록 (정렬됨)
-
-        Returns:
-            최대 연속 번호 길이
-        """
-        if not numbers:
-            return 0
-
-        sorted_numbers = sorted(numbers)
-        max_consecutive = 1
-        current_consecutive = 1
-
-        for i in range(1, len(sorted_numbers)):
-            if sorted_numbers[i] == sorted_numbers[i - 1] + 1:
-                current_consecutive += 1
-                max_consecutive = max(max_consecutive, current_consecutive)
-            else:
-                current_consecutive = 1
-
-        return max_consecutive
+    def _load_patterns(self, file_path: Path) -> Dict[str, int]:
+        """패턴 파일 로드"""
+        try:
+            if file_path.exists():
+                with open(file_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.error(f"패턴 파일 로드 실패 {file_path}: {e}")
+        return {}
 
     def get_pattern_features(self, numbers: List[int]) -> PatternFeatures:
         """
@@ -231,131 +216,31 @@ class PatternFilter:
                 "metadata": {"pattern_hash": "unknown"},
             }
 
-    def _load_low_performance_patterns(self) -> Dict[str, int]:
+    def _get_max_consecutive_length(self, numbers: List[int]) -> int:
         """
-        저성능 패턴 로드
-
-        Returns:
-            패턴 해시 -> 실패 횟수 매핑
-        """
-        if not self.low_performance_patterns_file.exists():
-            logger.info(
-                f"저성능 패턴 파일이 존재하지 않습니다: {self.low_performance_patterns_file}"
-            )
-            return {}
-
-        try:
-            with open(self.low_performance_patterns_file, "r", encoding="utf-8") as f:
-                patterns = json.load(f)
-
-            if not isinstance(patterns, dict):
-                logger.warning("저성능 패턴 파일 형식이 올바르지 않습니다.")
-                return {}
-
-            # 문자열 키와 정수 값인지 확인
-            validated_patterns = {}
-            for key, value in patterns.items():
-                if isinstance(key, str) and isinstance(value, (int, float)):
-                    validated_patterns[key] = int(value)
-
-            logger.info(f"저성능 패턴 {len(validated_patterns)}개 로드 완료")
-            return validated_patterns
-
-        except Exception as e:
-            logger.error(f"저성능 패턴 로드 중 오류: {str(e)}")
-            return {}
-
-    def _load_failed_patterns(self) -> Dict[str, int]:
-        """
-        실패 패턴 로드
-
-        Returns:
-            패턴 해시 -> 실패 횟수 매핑
-        """
-        if not self.failed_patterns_file.exists():
-            logger.info(
-                f"실패 패턴 파일이 존재하지 않습니다: {self.failed_patterns_file}"
-            )
-            return {}
-
-        try:
-            with open(self.failed_patterns_file, "r", encoding="utf-8") as f:
-                patterns = json.load(f)
-
-            if not isinstance(patterns, dict):
-                logger.warning("실패 패턴 파일 형식이 올바르지 않습니다.")
-                return {}
-
-            # 문자열 키와 정수 값인지 확인
-            validated_patterns = {}
-            for key, value in patterns.items():
-                if isinstance(key, str) and isinstance(value, (int, float)):
-                    validated_patterns[key] = int(value)
-
-            logger.info(f"실패 패턴 {len(validated_patterns)}개 로드 완료")
-            return validated_patterns
-
-        except Exception as e:
-            logger.error(f"실패 패턴 로드 중 오류: {str(e)}")
-            return {}
-
-    def save_failed_pattern(self, pattern_hash: str, failure_count: int = 1) -> None:
-        """
-        실패 패턴 저장
+        최대 연속 번호 길이 계산
 
         Args:
-            pattern_hash: 패턴 해시
-            failure_count: 실패 횟수 (기본값: 1)
-        """
-        try:
-            # 기존 패턴 업데이트 또는 추가
-            if pattern_hash in self.failed_patterns:
-                # 기존 실패 횟수에 추가
-                old_count = self.failed_patterns[pattern_hash]
-                self.failed_patterns[pattern_hash] += failure_count
+            numbers: 번호 목록 (정렬됨)
 
-                # 값이 변경된 경우에만 플래그 설정
-                if old_count != self.failed_patterns[pattern_hash]:
-                    self.failed_patterns_changed = True
+        Returns:
+            최대 연속 번호 길이
+        """
+        if not numbers:
+            return 0
+
+        sorted_numbers = sorted(numbers)
+        max_consecutive = 1
+        current_consecutive = 1
+
+        for i in range(1, len(sorted_numbers)):
+            if sorted_numbers[i] == sorted_numbers[i - 1] + 1:
+                current_consecutive += 1
+                max_consecutive = max(max_consecutive, current_consecutive)
             else:
-                # 새 패턴 추가
-                self.failed_patterns[pattern_hash] = failure_count
-                self.failed_patterns_changed = True
+                current_consecutive = 1
 
-            # 실패 횟수가 임계값 이상이면 로그 기록
-            if self.failed_patterns[pattern_hash] >= self.min_failure_count:
-                logger.info(
-                    f"실패 패턴 감지: {pattern_hash} (실패 횟수: {self.failed_patterns[pattern_hash]})"
-                )
-
-            # 변경된 경우에만 파일에 저장
-            if self.failed_patterns_changed:
-                self._save_failed_patterns_to_file()
-
-        except Exception as e:
-            logger.error(f"실패 패턴 저장 중 오류: {str(e)}")
-
-    def _save_failed_patterns_to_file(self) -> None:
-        """실패 패턴을 파일에 저장"""
-        try:
-            with open(self.failed_patterns_file, "w", encoding="utf-8") as f:
-                json.dump(self.failed_patterns, f, indent=2)
-            self.failed_patterns_changed = False
-            logger.debug(f"실패 패턴 {len(self.failed_patterns)}개 저장 완료")
-        except Exception as e:
-            logger.error(f"실패 패턴 파일 저장 중 오류: {str(e)}")
-
-    def get_pattern_hash(self, numbers: List[int]) -> str:
-        """
-        번호 조합의 패턴 해시 생성
-
-        Args:
-            numbers: 번호 리스트
-
-        Returns:
-            패턴 해시 문자열
-        """
-        return self.generate_pattern_hash(numbers)
+        return max_consecutive
 
     def generate_pattern_hash(self, numbers: List[int]) -> str:
         """
@@ -413,33 +298,51 @@ class PatternFilter:
         high_count = len(numbers) - low_count
         return (low_count, high_count)
 
-    def is_low_performance_pattern(self, pattern_hash: str) -> bool:
+    def save_failed_pattern(self, pattern_hash: str, failure_count: int = 1) -> None:
         """
-        저성능 패턴 여부 확인
+        실패 패턴 저장
 
         Args:
             pattern_hash: 패턴 해시
-
-        Returns:
-            저성능 패턴 여부
+            failure_count: 실패 횟수 (기본값: 1)
         """
-        # 패턴의 실패 횟수가 임계값 이상이면 저성능으로 판단
-        return (
-            self.low_performance_patterns.get(pattern_hash, 0) >= self.min_failure_count
-        )
+        try:
+            # 기존 패턴 업데이트 또는 추가
+            if pattern_hash in self.failed_patterns:
+                # 기존 실패 횟수에 추가
+                old_count = self.failed_patterns[pattern_hash]
+                self.failed_patterns[pattern_hash] += failure_count
 
-    def is_failed_pattern(self, pattern_hash: str) -> bool:
-        """
-        실패 패턴 여부 확인
+                # 값이 변경된 경우에만 플래그 설정
+                if old_count != self.failed_patterns[pattern_hash]:
+                    self.failed_patterns_changed = True
+            else:
+                # 새 패턴 추가
+                self.failed_patterns[pattern_hash] = failure_count
+                self.failed_patterns_changed = True
 
-        Args:
-            pattern_hash: 패턴 해시
+            # 실패 횟수가 임계값 이상이면 로그 기록
+            if self.failed_patterns[pattern_hash] >= self.min_failure_count:
+                logger.info(
+                    f"실패 패턴 감지: {pattern_hash} (실패 횟수: {self.failed_patterns[pattern_hash]})"
+                )
 
-        Returns:
-            실패 패턴 여부
-        """
-        # 패턴의 실패 횟수가 임계값 이상이면 실패 패턴으로 판단
-        return self.failed_patterns.get(pattern_hash, 0) >= self.min_failure_count
+            # 변경된 경우에만 파일에 저장
+            if self.failed_patterns_changed:
+                self._save_patterns_to_file()
+
+        except Exception as e:
+            logger.error(f"실패 패턴 저장 중 오류: {str(e)}")
+
+    def _save_patterns_to_file(self) -> None:
+        """실패 패턴을 파일에 저장"""
+        try:
+            with open(self.failed_patterns_file, "w", encoding="utf-8") as f:
+                json.dump(self.failed_patterns, f, indent=2)
+            self.failed_patterns_changed = False
+            logger.debug(f"실패 패턴 {len(self.failed_patterns)}개 저장 완료")
+        except Exception as e:
+            logger.error(f"실패 패턴 파일 저장 중 오류: {str(e)}")
 
     def should_filter(self, numbers: List[int]) -> bool:
         """
@@ -478,7 +381,7 @@ class PatternFilter:
                 continue
 
             # 패턴 해시 생성
-            pattern_hash = self.get_pattern_hash(numbers)
+            pattern_hash = self.generate_pattern_hash(numbers)
 
             # 저성능 패턴 및 실패 패턴 필터링
             if not self.is_low_performance_pattern(
@@ -498,14 +401,16 @@ class PatternFilter:
         Args:
             numbers: 실패한 번호 조합
         """
-        pattern_hash = self.get_pattern_hash(numbers)
+        pattern_hash = self.generate_pattern_hash(numbers)
         self.save_failed_pattern(pattern_hash)
         logger.debug(f"실패 패턴 추가: {pattern_hash}")
 
     def reload_patterns(self) -> None:
         """패턴 데이터 다시 로드"""
-        self.low_performance_patterns = self._load_low_performance_patterns()
-        self.failed_patterns = self._load_failed_patterns()
+        self.low_performance_patterns = self._load_patterns(
+            self.low_performance_patterns_file
+        )
+        self.failed_patterns = self._load_patterns(self.failed_patterns_file)
         self.failed_patterns_changed = False
         logger.info(
             f"패턴 재로드 완료 (저성능 패턴: {len(self.low_performance_patterns)}개, "
@@ -758,55 +663,6 @@ class PatternFilter:
             "is_acceptable": is_acceptable,
         }
 
-    def filter_historical_match(
-        self, numbers: List[int], historical_data: Optional[List[LotteryNumber]] = None
-    ) -> Tuple[bool, Dict[str, Any]]:
-        """
-        과거 당첨 번호와의 일치 필터
-
-        Args:
-            numbers: 필터링할 번호 목록
-            historical_data: 과거 당첨 번호 데이터
-
-        Returns:
-            (필터링 여부, 필터링 정보)
-        """
-        if not historical_data:
-            return False, {"error": "과거 데이터가 없습니다"}
-
-        # 번호 집합으로 변환
-        number_set = set(numbers)
-
-        # 과거 당첨 번호와 완전히 일치하는지 확인
-        exact_matches = []
-
-        for draw in historical_data:
-            if set(draw.numbers) == number_set:
-                exact_matches.append(draw.draw_no)
-
-        # 설정에서 완전 일치 제외 여부 가져오기
-        try:
-            exclude_exact_match = self.config["filters"]["exclude_exact_past_match"]
-        except KeyError:
-            logger.warning(
-                "설정에서 'filters.exclude_exact_past_match'를 찾을 수 없습니다. 기본값 True를 사용합니다."
-            )
-            exclude_exact_match = True
-
-        # 완전 일치하는 경우 필터링
-        has_exact_match = len(exact_matches) > 0
-        should_filter = has_exact_match and exclude_exact_match
-
-        # 필터링 정보
-        info = {
-            "exact_matches": exact_matches,
-            "has_exact_match": has_exact_match,
-            "exclude_policy": exclude_exact_match,
-        }
-
-        # 필터링 결과 반환
-        return should_filter, info
-
     def filter_failed_pattern(
         self, numbers: List[int], historical_data: Optional[List[LotteryNumber]] = None
     ) -> Tuple[bool, Dict[str, Any]]:
@@ -872,6 +728,34 @@ class PatternFilter:
 
         # 필터 결과 및 정보 반환
         return should_filter, results
+
+    def is_low_performance_pattern(self, pattern_hash: str) -> bool:
+        """
+        저성능 패턴 여부 확인
+
+        Args:
+            pattern_hash: 패턴 해시
+
+        Returns:
+            저성능 패턴 여부
+        """
+        # 패턴의 실패 횟수가 임계값 이상이면 저성능으로 판단
+        return (
+            self.low_performance_patterns.get(pattern_hash, 0) >= self.min_failure_count
+        )
+
+    def is_failed_pattern(self, pattern_hash: str) -> bool:
+        """
+        실패 패턴 여부 확인
+
+        Args:
+            pattern_hash: 패턴 해시
+
+        Returns:
+            실패 패턴 여부
+        """
+        # 패턴의 실패 횟수가 임계값 이상이면 실패 패턴으로 판단
+        return self.failed_patterns.get(pattern_hash, 0) >= self.min_failure_count
 
 
 def get_pattern_filter(

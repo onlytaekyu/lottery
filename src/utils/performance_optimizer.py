@@ -18,6 +18,7 @@ from functools import wraps
 import logging
 from pathlib import Path
 import json
+import numpy as np
 
 # GPU 관련 import (선택적)
 try:
@@ -606,4 +607,268 @@ def get_system_performance_report() -> Dict[str, Any]:
         "memory": memory_info,
         "gpu": gpu_info,
         "performance_summary": performance_summary,
+    }
+
+
+@dataclass
+class ComputationStrategy:
+    """연산 전략 정의"""
+
+    strategy_type: str  # "gpu", "multithread", "cpu"
+    device: Optional[str] = None
+    workers: Optional[int] = None
+    memory_efficient: bool = True
+    use_amp: bool = False
+
+    def __post_init__(self):
+        if (
+            self.strategy_type == "gpu"
+            and TORCH_AVAILABLE
+            and torch.cuda.is_available()
+        ):
+            self.device = "cuda"
+            self.use_amp = True
+        elif self.strategy_type == "multithread":
+            self.workers = self.workers or min(multiprocessing.cpu_count(), 8)
+        elif self.strategy_type == "cpu":
+            self.workers = 1
+
+
+class SmartComputationEngine:
+    """스마트 연산 엔진 - GPU > 멀티쓰레드 > CPU 순 처리"""
+
+    def __init__(self, gpu_memory_threshold: float = 0.8):
+        self.gpu_memory_threshold = gpu_memory_threshold
+        self.logger = logging.getLogger(__name__)
+        self._initialize_strategies()
+
+    def _initialize_strategies(self):
+        """사용 가능한 연산 전략 초기화"""
+        self.strategies = []
+
+        # 1. GPU 전략 (최우선)
+        if TORCH_AVAILABLE and torch.cuda.is_available():
+            self.strategies.append(ComputationStrategy("gpu"))
+            self.logger.info("GPU 연산 전략 활성화")
+
+        # 2. 멀티쓰레드 전략
+        if multiprocessing.cpu_count() > 1:
+            self.strategies.append(ComputationStrategy("multithread"))
+            self.logger.info(
+                f"멀티쓰레드 연산 전략 활성화 ({multiprocessing.cpu_count()}개 코어)"
+            )
+
+        # 3. CPU 전략 (기본)
+        self.strategies.append(ComputationStrategy("cpu"))
+        self.logger.info("CPU 연산 전략 활성화")
+
+    def select_optimal_strategy(
+        self, data_size: int, operation_type: str = "general"
+    ) -> ComputationStrategy:
+        """최적 연산 전략 선택"""
+
+        # GPU 전략 우선 검토
+        for strategy in self.strategies:
+            if strategy.strategy_type == "gpu":
+                if self._is_gpu_available_for_computation(data_size):
+                    self.logger.info(f"GPU 전략 선택 (데이터 크기: {data_size})")
+                    return strategy
+                else:
+                    self.logger.warning("GPU 메모리 부족 - 다른 전략 선택")
+
+        # 멀티쓰레드 전략 검토
+        for strategy in self.strategies:
+            if strategy.strategy_type == "multithread":
+                if data_size > 1000:  # 큰 데이터에 대해서만 멀티쓰레드 활용
+                    self.logger.info(f"멀티쓰레드 전략 선택 (데이터 크기: {data_size})")
+                    return strategy
+
+        # CPU 전략 (기본)
+        cpu_strategy = next(s for s in self.strategies if s.strategy_type == "cpu")
+        self.logger.info(f"CPU 전략 선택 (데이터 크기: {data_size})")
+        return cpu_strategy
+
+    def _is_gpu_available_for_computation(self, data_size: int) -> bool:
+        """GPU 연산 가능 여부 확인"""
+        if not TORCH_AVAILABLE or not torch.cuda.is_available():
+            return False
+
+        try:
+            # GPU 메모리 사용률 확인
+            memory_allocated = torch.cuda.memory_allocated()
+            memory_total = torch.cuda.get_device_properties(0).total_memory
+            memory_usage_ratio = memory_allocated / memory_total
+
+            # 예상 메모리 사용량 계산 (대략적)
+            estimated_memory_needed = data_size * 4 * 8  # float32 * 8 (여유분)
+            available_memory = memory_total - memory_allocated
+
+            return (
+                memory_usage_ratio < self.gpu_memory_threshold
+                and estimated_memory_needed < available_memory
+            )
+        except Exception as e:
+            self.logger.error(f"GPU 메모리 확인 실패: {e}")
+            return False
+
+    def execute_computation(self, func: Callable, data: Any, **kwargs) -> Any:
+        """최적 전략으로 연산 실행"""
+
+        # 데이터 크기 추정
+        data_size = self._estimate_data_size(data)
+
+        # 최적 전략 선택
+        strategy = self.select_optimal_strategy(
+            data_size, kwargs.get("operation_type", "general")
+        )
+
+        # 전략별 실행
+        if strategy.strategy_type == "gpu":
+            return self._execute_gpu_computation(func, data, strategy, **kwargs)
+        elif strategy.strategy_type == "multithread":
+            return self._execute_multithread_computation(func, data, strategy, **kwargs)
+        else:
+            return self._execute_cpu_computation(func, data, strategy, **kwargs)
+
+    def _estimate_data_size(self, data: Any) -> int:
+        """데이터 크기 추정"""
+        if hasattr(data, "__len__"):
+            return len(data)
+        elif isinstance(data, np.ndarray):
+            return data.size
+        elif TORCH_AVAILABLE and isinstance(data, torch.Tensor):
+            return data.numel()
+        else:
+            return 1
+
+    def _execute_gpu_computation(
+        self, func: Callable, data: Any, strategy: ComputationStrategy, **kwargs
+    ) -> Any:
+        """GPU 연산 실행"""
+        try:
+            device = torch.device(strategy.device)
+
+            # 데이터를 GPU로 이동
+            if isinstance(data, (list, tuple)):
+                # 리스트/튜플 데이터 처리
+                if all(isinstance(item, (int, float)) for item in data):
+                    gpu_data = torch.tensor(data, device=device)
+                else:
+                    gpu_data = data  # 복합 데이터는 함수 내에서 처리
+            elif isinstance(data, np.ndarray):
+                gpu_data = torch.from_numpy(data).to(device)
+            elif TORCH_AVAILABLE and isinstance(data, torch.Tensor):
+                gpu_data = data.to(device)
+            else:
+                gpu_data = data
+
+            # AMP 컨텍스트 사용
+            if strategy.use_amp:
+                with torch.cuda.amp.autocast():
+                    result = func(gpu_data, **kwargs)
+            else:
+                result = func(gpu_data, **kwargs)
+
+            # 결과를 CPU로 이동 (필요시)
+            if TORCH_AVAILABLE and isinstance(result, torch.Tensor) and result.is_cuda:
+                result = result.cpu()
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"GPU 연산 실패: {e}")
+            # GPU 실패 시 멀티쓰레드로 폴백
+            fallback_strategy = ComputationStrategy("multithread")
+            return self._execute_multithread_computation(
+                func, data, fallback_strategy, **kwargs
+            )
+
+    def _execute_multithread_computation(
+        self, func: Callable, data: Any, strategy: ComputationStrategy, **kwargs
+    ) -> Any:
+        """멀티쓰레드 연산 실행"""
+        try:
+            workers = strategy.workers or 1
+            if hasattr(data, "__len__") and len(data) > workers:
+                # 데이터를 청크로 분할
+                chunk_size = len(data) // workers
+                chunks = [
+                    data[i : i + chunk_size] for i in range(0, len(data), chunk_size)
+                ]
+
+                # 멀티쓰레드 실행
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = [
+                        executor.submit(func, chunk, **kwargs) for chunk in chunks
+                    ]
+                    results = [future.result() for future in as_completed(futures)]
+
+                # 결과 병합
+                if isinstance(results[0], (list, tuple)):
+                    merged_result = []
+                    for result in results:
+                        merged_result.extend(result)
+                    return merged_result
+                elif isinstance(results[0], np.ndarray):
+                    return np.concatenate(results)
+                else:
+                    return results
+            else:
+                # 작은 데이터는 단일 스레드로 처리
+                return func(data, **kwargs)
+
+        except Exception as e:
+            self.logger.error(f"멀티쓰레드 연산 실패: {e}")
+            # 멀티쓰레드 실패 시 CPU로 폴백
+            fallback_strategy = ComputationStrategy("cpu")
+            return self._execute_cpu_computation(
+                func, data, fallback_strategy, **kwargs
+            )
+
+    def _execute_cpu_computation(
+        self, func: Callable, data: Any, strategy: ComputationStrategy, **kwargs
+    ) -> Any:
+        """CPU 연산 실행"""
+        try:
+            return func(data, **kwargs)
+        except Exception as e:
+            self.logger.error(f"CPU 연산 실패: {e}")
+            raise
+
+
+# 전역 스마트 연산 엔진 인스턴스
+_smart_computation_engine = None
+
+
+def get_smart_computation_engine() -> SmartComputationEngine:
+    """스마트 연산 엔진 인스턴스 반환"""
+    global _smart_computation_engine
+    if _smart_computation_engine is None:
+        _smart_computation_engine = SmartComputationEngine()
+    return _smart_computation_engine
+
+
+def smart_compute(func: Callable, data: Any, **kwargs) -> Any:
+    """스마트 연산 실행 (GPU > 멀티쓰레드 > CPU 순)"""
+    engine = get_smart_computation_engine()
+    return engine.execute_computation(func, data, **kwargs)
+
+
+def optimize_computation(
+    data: Any, use_gpu: bool = True, use_multithread: bool = True
+) -> Dict[str, Any]:
+    """연산 최적화 정보 반환"""
+    engine = get_smart_computation_engine()
+    data_size = engine._estimate_data_size(data)
+    strategy = engine.select_optimal_strategy(data_size)
+
+    return {
+        "data_size": data_size,
+        "selected_strategy": strategy.strategy_type,
+        "device": strategy.device,
+        "workers": strategy.workers,
+        "gpu_available": TORCH_AVAILABLE and torch.cuda.is_available(),
+        "cpu_count": multiprocessing.cpu_count(),
+        "memory_efficient": strategy.memory_efficient,
+        "use_amp": strategy.use_amp,
     }
