@@ -118,3 +118,7 @@ class MyModel(BaseModel):
 AMP	AMPTrainer로만
 캐시	get_cache_dir() 사용 강제
 프로파일링	performance_monitor 필수
+
+커맨드 사용시 파우셀 기준으로 작성해줘
+
+요청사항을 명확하게 숙지하고 요청사항대로 빠짐없이 작성해줘

@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 from contextlib import contextmanager
 
-from .unified_logging import get_logger, log_exception_with_trace
+from .unified_logging import get_logger, log_exception
 
 logger = get_logger(__name__)
 
@@ -60,6 +60,14 @@ class ProcessPoolManager:
             "total_time": 0.0,
             "avg_task_time": 0.0,
         }
+
+        # 메모리 모니터링 최적화를 위한 캐싱
+        self._memory_cache = {
+            "last_check": 0,
+            "memory_ok": True,
+            "check_interval": 5.0,  # 5초마다 체크
+        }
+
         self._initialize_pool()
 
     def _initialize_pool(self):
@@ -85,19 +93,39 @@ class ProcessPoolManager:
             raise
 
     def _check_memory_usage(self) -> bool:
-        """메모리 사용량 확인"""
+        """메모리 사용량 확인 (캐싱 최적화)"""
         try:
+            current_time = time.time()
+
+            # 캐시된 결과가 유효한지 확인
+            if (current_time - self._memory_cache["last_check"]) < self._memory_cache[
+                "check_interval"
+            ]:
+                return self._memory_cache["memory_ok"]
+
+            # 실제 메모리 사용량 확인
             memory_info = psutil.virtual_memory()
             memory_usage_mb = (memory_info.total - memory_info.available) / (
                 1024 * 1024
             )
 
-            if memory_usage_mb > self.config.memory_limit_mb:
+            memory_ok = memory_usage_mb <= self.config.memory_limit_mb
+
+            # 캐시 업데이트
+            self._memory_cache.update(
+                {
+                    "last_check": current_time,
+                    "memory_ok": memory_ok,
+                }
+            )
+
+            if not memory_ok:
                 logger.warning(
                     f"메모리 사용량 초과: {memory_usage_mb:.1f}MB > {self.config.memory_limit_mb}MB"
                 )
-                return False
-            return True
+
+            return memory_ok
+
         except Exception as e:
             logger.error(f"메모리 확인 실패: {e}")
             return True  # 확인 실패 시 계속 진행

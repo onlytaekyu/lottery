@@ -197,8 +197,8 @@ class StateVectorBuilder:
             if cached_vector is not None:
                 self.logger.debug(f"상태 벡터 캐시 히트: 키 {cache_key[:10]}...")
 
-                # 특성 이름도 로드
-                from ..utils.feature_name_tracker import load_feature_names
+                # 특성 이름도 로드 (지연 로딩 사용)
+                from ..utils import load_feature_names
 
                 cache_dir = Path(self.config.safe_get("paths.cache_dir", "data/cache"))
 
@@ -280,8 +280,8 @@ class StateVectorBuilder:
                 # 중앙 집중식 캐시에 저장
                 self._state_vector_cache[cache_key] = state_vector
 
-                # 특성 이름도 저장
-                from ..utils.feature_name_tracker import save_feature_names
+                # 특성 이름도 저장 (지연 로딩 사용)
+                from ..utils import save_feature_names
 
                 cache_dir = Path(self.config.safe_get("paths.cache_dir", "data/cache"))
                 cache_dir.mkdir(parents=True, exist_ok=True)
@@ -290,9 +290,9 @@ class StateVectorBuilder:
                 feature_names_file = cache_dir / "state_vector.names.json"
                 save_feature_names(self.feature_names, str(feature_names_file))
 
-                # 기존 네이밍 규칙으로도 저장 (호환성 유지)
-                legacy_file = cache_dir / "state_vector_feature_names.json"
-                save_feature_names(self.feature_names, str(legacy_file))
+                # 이전 네이밍 규칙 파일 삭제 (선택적)
+                old_feature_names_file = cache_dir / "state_vector_feature_names.json"
+                old_feature_names_file.unlink(missing_ok=True)
 
                 self.logger.debug(
                     f"상태 벡터 특성 이름 {len(self.feature_names)}개 저장 완료"

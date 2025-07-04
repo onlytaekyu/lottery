@@ -1,21 +1,21 @@
 """
-캐시 관리 모듈
+DAEBAK_AI 로또 예측 시스템 - 캐시 관리 모듈
 
-메모리 및 디스크 캐시를 관리하는 클래스를 제공합니다.
+이 모듈은 메모리 및 디스크 캐시를 관리하고 최적화하는 기능을 제공합니다.
 """
 
+import json
 import os
 import pickle
 import time
 from collections import OrderedDict
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Union
 import numpy as np
 import torch
-import json
 import hashlib
 from pathlib import Path
+from threading import RLock
 from .unified_logging import get_logger
-from .memory_manager import ThreadLocalCache
 
 
 class CacheManager:
@@ -53,6 +53,7 @@ class CacheManager:
         self.disk_cache = {}
         self.pattern_analyzer = pattern_analyzer  # 하위 호환성을 위해 유지
         self.logger = get_logger(__name__)
+        self.lock = RLock()  # 스레드 안전성을 위한 RLock 추가
         os.makedirs(cache_dir, exist_ok=True)
 
     def _normalize_key(self, key: Any) -> str:
@@ -151,148 +152,123 @@ class CacheManager:
 
     def set(self, key: Any, value: Any, mode: str = "json") -> bool:
         """
-        캐시에 값을 저장합니다.
-
-        Args:
-            key: 저장할 키
-            value: 저장할 값
-            mode: 저장 방식 ('json' 또는 'pickle')
-
-        Returns:
-            bool: 저장 성공 여부
+        캐시에 값을 저장합니다. (스레드 안전)
         """
-        try:
-            # 키 정규화
-            normalized_key = self._normalize_key(key)
-            self.logger.debug(f"캐시 저장: {normalized_key} (모드: {mode})")
+        with self.lock:  # RLock으로 임계 영역 보호
+            try:
+                # 키 정규화
+                normalized_key = self._normalize_key(key)
+                self.logger.debug(f"캐시 저장: {normalized_key} (모드: {mode})")
 
-            # None 값은 저장하지 않음
-            if value is None:
-                self.logger.debug(f"None 값은 캐시에 저장하지 않음: {normalized_key}")
+                # None 값은 저장하지 않음
+                if value is None:
+                    self.logger.debug(
+                        f"None 값은 캐시에 저장하지 않음: {normalized_key}"
+                    )
+                    return False
+
+                if mode == "json":
+                    # JSON 직렬화
+                    serialized_value = self._safe_serialize(value)
+                    cache_path = self._get_cache_path(normalized_key, mode="json")
+
+                    # 임시 파일에 쓰고 성공하면 이름 변경 (atomic write)
+                    temp_path = cache_path.with_suffix(".tmp")
+                    with open(temp_path, "w", encoding="utf-8") as f:
+                        json.dump(serialized_value, f, ensure_ascii=False, indent=2)
+
+                    # 성공적으로 쓰였으면 정상 파일명으로 변경
+                    temp_path.replace(cache_path)
+                    self.logger.debug(f"JSON 캐시 파일 저장 완료: {cache_path}")
+                else:
+                    # 피클 직렬화
+                    if isinstance(value, torch.Tensor):
+                        data = pickle.dumps(value.cpu().numpy())
+                    elif isinstance(value, np.ndarray):
+                        data = pickle.dumps(value)
+                    else:
+                        data = pickle.dumps(value)
+
+                    # 메모리 또는 디스크에 저장
+                    if len(data) < self.max_memory_size:
+                        self.memory_cache[normalized_key] = (time.time(), data)
+                        self.logger.debug(f"메모리 캐시에 저장 완료: {normalized_key}")
+                    else:
+                        cache_path = self._get_cache_path(normalized_key, mode="pickle")
+                        with open(cache_path, "wb") as f:
+                            f.write(data)
+                        self.disk_cache[normalized_key] = cache_path
+                        self.logger.debug(f"디스크 캐시에 저장 완료: {cache_path}")
+
+                return True
+            except Exception as e:
+                self.logger.error(f"캐시 저장 중 오류 발생: 키={key}, 오류={str(e)}")
+                # 임시 파일 제거
+                try:
+                    if "temp_path" in locals() and temp_path.exists():
+                        temp_path.unlink()
+                except:
+                    pass
                 return False
 
-            if mode == "json":
-                # JSON 직렬화
-                serialized_value = self._safe_serialize(value)
-                cache_path = self._get_cache_path(normalized_key, mode="json")
-
-                # 임시 파일에 쓰고 성공하면 이름 변경 (atomic write)
-                temp_path = cache_path.with_suffix(".tmp")
-                with open(temp_path, "w", encoding="utf-8") as f:
-                    json.dump(serialized_value, f, ensure_ascii=False, indent=2)
-
-                # 성공적으로 쓰였으면 정상 파일명으로 변경
-                temp_path.replace(cache_path)
-                self.logger.debug(f"JSON 캐시 파일 저장 완료: {cache_path}")
-            else:
-                # 피클 직렬화
-                if isinstance(value, torch.Tensor):
-                    data = pickle.dumps(value.cpu().numpy())
-                elif isinstance(value, np.ndarray):
-                    data = pickle.dumps(value)
-                else:
-                    data = pickle.dumps(value)
-
-                # 메모리 또는 디스크에 저장
-                if len(data) < self.max_memory_size:
-                    self.memory_cache[normalized_key] = (time.time(), data)
-                    self.logger.debug(f"메모리 캐시에 저장 완료: {normalized_key}")
-                else:
-                    cache_path = self._get_cache_path(normalized_key, mode="pickle")
-                    with open(cache_path, "wb") as f:
-                        f.write(data)
-                    self.disk_cache[normalized_key] = cache_path
-                    self.logger.debug(f"디스크 캐시에 저장 완료: {cache_path}")
-
-            return True
-        except Exception as e:
-            self.logger.error(f"캐시 저장 중 오류 발생: 키={key}, 오류={str(e)}")
-            # 임시 파일 제거
+    def get(self, key: Any, default: Any = None, mode: str = "json") -> Any:
+        """
+        캐시에서 값을 가져옵니다. (스레드 안전)
+        """
+        with self.lock:  # RLock으로 임계 영역 보호
             try:
-                if "temp_path" in locals() and temp_path.exists():
-                    temp_path.unlink()
-            except:
-                pass
-            return False
+                # 키 정규화
+                normalized_key = self._normalize_key(key)
+                self.logger.debug(f"캐시 조회: {normalized_key} (모드: {mode})")
 
-    def get(self, key: Any, default: Any = None) -> Any:
-        """
-        캐시에서 값을 조회합니다.
-
-        Args:
-            key: 조회할 키
-            default: 기본값 (키가 없을 경우 반환)
-
-        Returns:
-            캐시된 값 또는 기본값
-        """
-        try:
-            normalized_key = self._normalize_key(key)
-            self.logger.debug(f"캐시 조회: {normalized_key}")
-
-            # 메모리 캐시에서 먼저 조회
-            if normalized_key in self.memory_cache:
-                timestamp, data = self.memory_cache[normalized_key]
-                # 캐시 만료 확인
-                if time.time() - timestamp <= self.default_ttl:
-                    self.logger.debug(f"메모리 캐시 히트: {normalized_key}")
-                    return pickle.loads(data)
+                if mode == "json":
+                    # JSON 파일에서 로드
+                    cache_path = self._get_cache_path(normalized_key, mode="json")
+                    if cache_path.exists():
+                        with open(cache_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        self.logger.debug(f"JSON 캐시 파일에서 로드 완료: {cache_path}")
+                        return self._process_loaded_data(data, normalized_key)
                 else:
-                    # 만료된 경우 제거
-                    del self.memory_cache[normalized_key]
-                    self.logger.debug(f"만료된 메모리 캐시 삭제: {normalized_key}")
+                    # 메모리 캐시에서 확인
+                    if normalized_key in self.memory_cache:
+                        timestamp, data = self.memory_cache[normalized_key]
+                        # TTL 확인
+                        if time.time() - timestamp < self.default_ttl:
+                            loaded_data = pickle.loads(data)
+                            self.logger.debug(
+                                f"메모리 캐시에서 로드 완료: {normalized_key}"
+                            )
+                            return loaded_data
+                        else:
+                            # 만료된 캐시 제거
+                            del self.memory_cache[normalized_key]
+                            self.logger.debug(
+                                f"만료된 메모리 캐시 제거: {normalized_key}"
+                            )
 
-            # JSON 파일 조회
-            json_path = self._get_cache_path(normalized_key, mode="json")
-            if json_path.exists():
-                # 파일이 비어있는지 확인
-                if json_path.stat().st_size == 0:
-                    self.logger.warning(
-                        f"빈 JSON 캐시 파일 발견: {normalized_key}, 삭제합니다."
-                    )
-                    json_path.unlink()
-                    return default
+                    # 디스크 캐시에서 확인
+                    if normalized_key in self.disk_cache:
+                        cache_path = self.disk_cache[normalized_key]
+                        if cache_path.exists():
+                            with open(cache_path, "rb") as f:
+                                data = pickle.load(f)
+                            self.logger.debug(
+                                f"디스크 캐시에서 로드 완료: {cache_path}"
+                            )
+                            return data
 
-                # 파일 내용 로드
-                try:
-                    with open(json_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
+                # 캐시에 없는 경우 기본값 반환
+                self.logger.debug(f"캐시에 없음: {normalized_key}")
+                return default
 
-                    self.logger.debug(f"JSON 캐시 파일 히트: {normalized_key}")
-                    return self._process_loaded_data(data, normalized_key)
-                except json.JSONDecodeError as json_error:
-                    self.logger.warning(
-                        f"손상된 JSON 캐시 파일: {normalized_key}, 삭제합니다. 오류: {str(json_error)}"
-                    )
-                    json_path.unlink()
-                    return default
-
-            # 피클 파일 조회
-            pickle_path = self._get_cache_path(normalized_key, mode="pickle")
-            if pickle_path.exists():
-                try:
-                    with open(pickle_path, "rb") as f:
-                        data = pickle.load(f)
-                    self.logger.debug(f"피클 캐시 파일 히트: {normalized_key}")
-                    return data
-                except Exception as e:
-                    self.logger.warning(
-                        f"손상된 피클 캐시 파일: {normalized_key}, 삭제합니다. 오류: {str(e)}"
-                    )
-                    pickle_path.unlink()
-                    return default
-
-            self.logger.debug(f"캐시 미스: {normalized_key}")
-            return default
-
-        except Exception as e:
-            self.logger.error(f"캐시 조회 중 오류 발생: 키={key}, 오류={str(e)}")
-            return default
+            except Exception as e:
+                self.logger.error(f"캐시 조회 중 오류 발생: 키={key}, 오류={str(e)}")
+                return default
 
     def _process_loaded_data(self, data: Any, key: str) -> Any:
         """
-        로드된 데이터를 처리합니다.
-        특정 데이터 형식에 대한 객체 변환을 수행합니다.
+        로드된 데이터를 처리하여 원래 형태로 복원합니다.
 
         Args:
             data: 로드된 데이터
@@ -301,238 +277,199 @@ class CacheManager:
         Returns:
             처리된 데이터
         """
-        # PatternAnalysis 객체 변환
-        if key.startswith("pattern_analysis_") and isinstance(data, dict):
-            try:
-                from ..shared.types import PatternAnalysis
-
-                return PatternAnalysis.from_dict(data)
-            except Exception as e:
-                self.logger.warning(f"PatternAnalysis 변환 실패: {key}, 오류: {str(e)}")
-
-        # DistributionPattern 객체 변환
-        if (
-            key.startswith("pattern_analysis_")
-            and isinstance(data, dict)
-            and "even_odd" in data
-        ):
-            try:
-                from ..analysis.distribution_analyzer import DistributionPattern
-
-                # 각 패턴 카테고리에 대한 객체 변환
+        try:
+            # 데이터 타입에 따른 처리
+            if isinstance(data, dict):
+                # 딕셔너리 키 복원
                 result = {}
-                for category in ["even_odd", "low_high", "ranges"]:
-                    if category in data and isinstance(data[category], list):
-                        result[category] = [
-                            (
-                                DistributionPattern.from_dict(pattern)
-                                if isinstance(pattern, dict)
-                                else pattern
-                            )
-                            for pattern in data[category]
-                        ]
+                for k, v in data.items():
+                    # 튜플 키 복원
+                    if isinstance(k, str) and "_" in k:
+                        try:
+                            # 숫자로 구성된 키인지 확인
+                            parts = k.split("_")
+                            if all(part.isdigit() for part in parts):
+                                restored_key = tuple(int(part) for part in parts)
+                            else:
+                                restored_key = k
+                        except:
+                            restored_key = k
+                    else:
+                        restored_key = k
 
-                if result:
-                    return result
-            except Exception as e:
-                self.logger.warning(f"패턴 필터 변환 실패: {key}, 오류: {str(e)}")
-
-        return data
+                    # 재귀적으로 값 처리
+                    result[restored_key] = self._process_loaded_data(v, key)
+                return result
+            elif isinstance(data, list):
+                # 리스트 항목 재귀 처리
+                return [self._process_loaded_data(item, key) for item in data]
+            else:
+                # 기본 타입은 그대로 반환
+                return data
+        except Exception as e:
+            self.logger.warning(f"데이터 처리 중 오류: 키={key}, 오류={str(e)}")
+            return data
 
     def delete(self, key: Any) -> bool:
         """
-        캐시에서 항목 삭제
+        캐시에서 특정 키를 삭제합니다.
 
         Args:
-            key: 삭제할 항목의 키
+            key: 삭제할 키
 
         Returns:
-            bool: 삭제 성공 여부
+            삭제 성공 여부
         """
-        try:
-            # 키 정규화
-            normalized_key = self._normalize_key(key)
-            self.logger.debug(f"캐시 삭제: {normalized_key}")
+        with self.lock:
+            try:
+                normalized_key = self._normalize_key(key)
+                deleted = False
 
-            # 메모리 캐시에서 삭제
-            if normalized_key in self.memory_cache:
-                del self.memory_cache[normalized_key]
+                # 메모리 캐시에서 삭제
+                if normalized_key in self.memory_cache:
+                    del self.memory_cache[normalized_key]
+                    deleted = True
 
-            # JSON 캐시 파일 삭제
-            json_file = self._get_cache_path(normalized_key, mode="json")
-            if json_file.exists():
-                json_file.unlink()
+                # 디스크 캐시에서 삭제
+                if normalized_key in self.disk_cache:
+                    cache_path = self.disk_cache[normalized_key]
+                    if cache_path.exists():
+                        cache_path.unlink()
+                    del self.disk_cache[normalized_key]
+                    deleted = True
 
-            # 피클 캐시 파일 삭제
-            pickle_file = self._get_cache_path(normalized_key, mode="pickle")
-            if pickle_file.exists():
-                pickle_file.unlink()
+                # JSON 캐시 파일 삭제
+                json_path = self._get_cache_path(normalized_key, mode="json")
+                if json_path.exists():
+                    json_path.unlink()
+                    deleted = True
 
-            return True
-        except Exception as e:
-            self.logger.error(f"캐시 항목 삭제 실패: {key}, 오류: {str(e)}")
-            return False
+                if deleted:
+                    self.logger.debug(f"캐시 삭제 완료: {normalized_key}")
+                return deleted
+            except Exception as e:
+                self.logger.error(f"캐시 삭제 중 오류 발생: 키={key}, 오류={str(e)}")
+                return False
 
     def clear(self, key: Optional[Any] = None) -> bool:
         """
-        캐시를 지웁니다. 특정 키 또는 모든 캐시를 지울 수 있습니다.
+        캐시를 정리합니다.
 
         Args:
-            key: 지울 특정 키 (None인 경우 모든 캐시)
+            key: 특정 키만 정리할 경우 지정 (None이면 전체 정리)
 
         Returns:
-            bool: 지우기 성공 여부
+            정리 성공 여부
         """
-        try:
-            if key:
-                # 특정 키만 삭제
-                return self.delete(key)
-            else:
-                # 모든 캐시 삭제
-                # 메모리 캐시 초기화
-                self.memory_cache.clear()
-                self.disk_cache.clear()
+        with self.lock:
+            try:
+                if key is not None:
+                    # 특정 키만 삭제
+                    return self.delete(key)
+                else:
+                    # 전체 캐시 정리
+                    self.memory_cache.clear()
+                    self.disk_cache.clear()
 
-                # 모든 캐시 파일 삭제
-                for cache_file in self.cache_dir.glob("*.json"):
-                    cache_file.unlink()
-                for cache_file in self.cache_dir.glob("*.pkl"):
-                    cache_file.unlink()
+                    # 캐시 디렉토리의 모든 파일 삭제
+                    for file_path in self.cache_dir.glob("*"):
+                        if file_path.is_file():
+                            file_path.unlink()
 
-                self.logger.info("모든 캐시가 삭제되었습니다.")
-                return True
-        except Exception as e:
-            self.logger.error(f"캐시 지우기 실패: {str(e)}")
-            return False
+                    self.logger.info("전체 캐시 정리 완료")
+                    return True
+            except Exception as e:
+                self.logger.error(f"캐시 정리 중 오류 발생: {str(e)}")
+                return False
 
     def clear_old_cache(self, max_age_days: int = 7) -> int:
         """
-        지정된 일수보다 오래된 캐시 파일을 지웁니다.
+        오래된 캐시를 정리합니다.
 
         Args:
             max_age_days: 최대 보관 일수
 
         Returns:
-            int: 삭제된 파일 수
+            삭제된 파일 수
         """
-        try:
-            current_time = time.time()
-            max_age_seconds = max_age_days * 24 * 60 * 60
-            removed_count = 0
+        with self.lock:
+            try:
+                current_time = time.time()
+                max_age_seconds = max_age_days * 24 * 3600
+                deleted_count = 0
 
-            # JSON 캐시 파일 정리
-            for cache_file in self.cache_dir.glob("*.json"):
-                file_age = current_time - cache_file.stat().st_mtime
-                if file_age > max_age_seconds:
-                    cache_file.unlink()
-                    removed_count += 1
+                # 디스크 캐시 파일 확인
+                for file_path in self.cache_dir.glob("*"):
+                    if file_path.is_file():
+                        file_age = current_time - file_path.stat().st_mtime
+                        if file_age > max_age_seconds:
+                            file_path.unlink()
+                            deleted_count += 1
 
-            # 피클 캐시 파일 정리
-            for cache_file in self.cache_dir.glob("*.pkl"):
-                file_age = current_time - cache_file.stat().st_mtime
-                if file_age > max_age_seconds:
-                    cache_file.unlink()
-                    removed_count += 1
+                # 메모리 캐시에서 오래된 항목 제거
+                expired_keys = []
+                for key, (timestamp, _) in self.memory_cache.items():
+                    if current_time - timestamp > max_age_seconds:
+                        expired_keys.append(key)
 
-            self.logger.info(f"{removed_count}개의 오래된 캐시 파일이 삭제되었습니다.")
-            return removed_count
-        except Exception as e:
-            self.logger.error(f"오래된 캐시 정리 중 오류 발생: {str(e)}")
-            return 0
+                for key in expired_keys:
+                    del self.memory_cache[key]
+                    deleted_count += 1
+
+                self.logger.info(f"오래된 캐시 정리 완료: {deleted_count}개 항목 삭제")
+                return deleted_count
+            except Exception as e:
+                self.logger.error(f"오래된 캐시 정리 중 오류 발생: {str(e)}")
+                return 0
 
     def cleanup_expired(self) -> int:
         """
         만료된 캐시 항목을 정리합니다.
 
         Returns:
-            int: 정리된 항목 수
+            정리된 항목 수
         """
-        try:
-            current_time = time.time()
-            cleaned_count = 0
+        with self.lock:
+            try:
+                current_time = time.time()
+                expired_keys = []
 
-            # 메모리 캐시 정리
-            expired_keys = [
-                key
-                for key, (timestamp, _) in self.memory_cache.items()
-                if current_time - timestamp > self.default_ttl
-            ]
-            for key in expired_keys:
-                del self.memory_cache[key]
-                cleaned_count += 1
-                self.logger.debug(f"만료된 메모리 캐시 항목 제거: {key}")
+                # 메모리 캐시에서 만료된 항목 찾기
+                for key, (timestamp, _) in self.memory_cache.items():
+                    if current_time - timestamp > self.default_ttl:
+                        expired_keys.append(key)
 
-            # 디스크 캐시 정리 (JSON 파일)
-            for cache_file in self.cache_dir.glob("*.json"):
-                file_age = current_time - cache_file.stat().st_mtime
-                if file_age > self.default_ttl:
-                    cache_file.unlink()
-                    cleaned_count += 1
-                    self.logger.debug(f"만료된 JSON 캐시 파일 제거: {cache_file}")
+                # 만료된 항목 제거
+                for key in expired_keys:
+                    del self.memory_cache[key]
 
-            # 디스크 캐시 정리 (피클 파일)
-            for cache_file in self.cache_dir.glob("*.pkl"):
-                file_age = current_time - cache_file.stat().st_mtime
-                if file_age > self.default_ttl:
-                    cache_file.unlink()
-                    cleaned_count += 1
-                    self.logger.debug(f"만료된 피클 캐시 파일 제거: {cache_file}")
-
-            # 캐시 크기 제한 확인 (메모리)
-            if len(self.memory_cache) > self.max_memory_size:
-                # 가장 오래된 항목부터 제거
-                items_to_remove = len(self.memory_cache) - self.max_memory_size
-                for _ in range(items_to_remove):
-                    self.memory_cache.popitem(last=False)
-                    cleaned_count += 1
-                self.logger.debug(
-                    f"메모리 캐시 크기 제한으로 {items_to_remove}개 항목 제거"
-                )
-
-            return cleaned_count
-        except Exception as e:
-            self.logger.error(f"캐시 정리 중 오류 발생: {str(e)}")
-            return 0
-
-    # 하위 호환성을 위한 별칭 메서드
-    def put(self, key: Any, value: Any) -> bool:
-        """
-        캐시에 값을 저장합니다 (set의 별칭).
-        하위 호환성을 위해 유지됩니다.
-
-        Args:
-            key: 저장할 키
-            value: 저장할 값
-
-        Returns:
-            bool: 저장 성공 여부
-        """
-        return self.set(key, value, mode="pickle")
+                self.logger.debug(f"만료된 캐시 정리 완료: {len(expired_keys)}개 항목")
+                return len(expired_keys)
+            except Exception as e:
+                self.logger.error(f"만료된 캐시 정리 중 오류 발생: {str(e)}")
+                return 0
 
     # 하위 호환성을 위한 메서드들
-    def _get_cached_result(self, key):
-        """
-        캐싱된 결과를 가져옵니다. (하위 호환성 유지용)
-        """
-        if not self.pattern_analyzer:
-            return self.get(key)
+    def put(self, key: Any, value: Any) -> bool:
+        """하위 호환성을 위한 메서드"""
+        return self.set(key, value)
 
-        result = self.get(key)
-        if result is None and hasattr(self.pattern_analyzer, "tensor_cache"):
-            result = self.pattern_analyzer.tensor_cache.get(key)
-        if result is None and hasattr(self.pattern_analyzer, "thread_local_cache"):
-            result = self.pattern_analyzer.thread_local_cache.get(key)
-        return result
+    def _get_cached_result(self, key):
+        """하위 호환성을 위한 메서드"""
+        return self.get(key)
 
     def _cache_result(self, key, result):
-        """
-        결과를 캐시에 저장합니다. (하위 호환성 유지용)
-        """
-        if (
-            self.pattern_analyzer
-            and isinstance(result, torch.Tensor)
-            and hasattr(self.pattern_analyzer, "tensor_cache")
-        ):
-            self.pattern_analyzer.tensor_cache.put(key, result)
-        else:
-            self.put(key, result)
+        """하위 호환성을 위한 메서드"""
+        return self.set(key, result)
+
+
+# 전역 캐시 매니저 인스턴스
+_cache_manager = None
+
+
+def get_cache_manager() -> CacheManager:
+    """전역 캐시 매니저 인스턴스를 반환합니다."""
+    global _cache_manager
+    if _cache_manager is None:
+        _cache_manager = CacheManager()
+    return _cache_manager

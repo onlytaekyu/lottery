@@ -1,101 +1,49 @@
-"""CUDA 최적화 모듈
+"""CUDA 최적화 모듈 (성능 최적화 버전)
 
-이 모듈은 CUDA를 활용한 최적화 클래스들을 제공합니다.
-자동 배치 크기 조정, 메모리 효율적인 연산, 연산 스케줄링 등의 기능을 포함합니다.
+GPU 최우선 연산 처리와 메모리 효율성에 집중한 간소화된 CUDA 최적화 시스템
 """
 
 import torch
 import torch.nn as nn
-from typing import Dict, List, Any, Optional, Callable, Union
+from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass
-from threading import Lock, Thread
-from queue import Queue
-from concurrent.futures import ThreadPoolExecutor
-from ..utils.unified_config import ConfigProxy
-from torch.utils.data import DataLoader
 import threading
-import time
-import psutil
-from enum import Enum
-from functools import wraps
-from .process_pool_manager import ProcessPoolManager, ProcessPoolConfig
-
-# 스레드 로컬 캐시 가져오기 (memory_manager에서 가져오도록 변경)
-from .memory_manager import (
-    MemoryManager,
-    MemoryConfig,
-    ThreadLocalCache,
-    ThreadLocalConfig,
-)
-
-# 비동기 IO 관련 임포트
-from .async_io import AsyncIOManager, AsyncIOConfig
-
-# 성능 추적 관련 임포트
-from .unified_performance import Profiler
-
-# 오류 복구 관련 임포트
-from .error_recovery import ErrorRecovery, RecoveryConfig
+import logging
+from contextlib import contextmanager
 
 # 로거 설정
-from .unified_logging import get_logger
+logger = logging.getLogger(__name__)
 
-logger = get_logger(__name__)
-
-# GPU 메모리 풀 싱글톤 관리
+# GPU 메모리 풀 초기화 상태
 _memory_pool_initialized = False
 _memory_pool_lock = threading.RLock()
 
 
 @dataclass
 class CudaConfig:
-    """CUDA 최적화 설정"""
+    """CUDA 최적화 설정 (간소화)"""
 
-    # 배치 크기 관련 설정
-    batch_size: int = 32
-    min_batch_size: int = 1
-    max_batch_size: int = 256
-    optimal_batch_size: Optional[int] = None
+    # 배치 크기 설정
+    batch_size: int = 256
+    min_batch_size: int = 16
+    max_batch_size: int = 512
 
-    # AMP (자동 혼합 정밀도) 관련 설정
-    use_amp: bool = True  # 자동 혼합 정밀도 사용 여부
-
-    # cuDNN 관련 설정
-    use_cudnn: bool = True  # cuDNN 사용 여부
-
-    # CUDA 그래프 관련 설정
-    use_graphs: bool = False  # CUDA 그래프 사용 여부
-
-    # 추가 설정들은 필요한 경우 추가할 수 있습니다.
+    # 최적화 플래그
+    use_amp: bool = True
+    use_cudnn: bool = True
 
     def __post_init__(self):
-        """설정 검증 및 최적화"""
+        """CUDA 설정 초기화"""
         if not torch.cuda.is_available():
-            logger.warning("CUDA를 사용할 수 없습니다. CPU 모드로 설정됩니다.")
+            logger.warning("CUDA 비활성화 - CPU 모드")
             self.use_amp = False
             self.use_cudnn = False
-            self.use_graphs = False
         else:
-            # CUDA 최적화 설정 적용
-            self._setup_cuda_optimizations()
+            self._setup_cuda()
 
-        # optimal_batch_size가 설정되지 않은 경우 batch_size 값 사용
-        if self.optimal_batch_size is None:
-            self.optimal_batch_size = self.batch_size
-
-        # 배치 크기 검증
-        if self.min_batch_size > self.max_batch_size:
-            logger.warning(
-                "min_batch_size가 max_batch_size보다 큽니다. 값을 조정합니다."
-            )
-            self.min_batch_size = min(self.min_batch_size, self.max_batch_size)
-
-    def _setup_cuda_optimizations(self):
+    def _setup_cuda(self):
         """CUDA 최적화 설정"""
         try:
-            # GPU 메모리 풀 설정
-            setup_cuda_memory_pool()
-
             # cuDNN 최적화
             if self.use_cudnn:
                 torch.backends.cudnn.benchmark = True
@@ -103,486 +51,128 @@ class CudaConfig:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
 
-            logger.debug("CUDA 최적화 설정 완료 (내부)")
+            # GPU 메모리 풀 설정
+            setup_cuda_memory_pool()
+
+            logger.info("CUDA 최적화 설정 완료")
         except Exception as e:
-            logger.error(f"CUDA 최적화 설정 실패: {str(e)}")
+            logger.error(f"CUDA 설정 실패: {e}")
 
 
-class BaseCudaOptimizer:
-    """CUDA 최적화 클래스"""
+class CUDAOptimizer:
+    """CUDA 최적화기 (간소화)"""
+
+    _instance = None
+    _lock = threading.RLock()
+
+    def __new__(cls, config: Optional[CudaConfig] = None):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(self, config: Optional[CudaConfig] = None):
+        if hasattr(self, "_initialized"):
+            return
+
         self.config = config or CudaConfig()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._lock = Lock()
-        self._current_model: Optional[nn.Module] = None
+        self._initialized = True
 
-        # 메모리 관리자 초기화 - 기본 MemoryConfig 사용
-        self._memory_manager = MemoryManager(MemoryConfig())
+        logger.info(f"CUDA 최적화기 초기화 완료: {self.device}")
 
-        # 스레드 로컬 캐시 초기화
-        self._thread_cache = ThreadLocalCache(
-            ThreadLocalConfig(
-                max_size=1000,
-                max_memory=1 << 30,  # 1GB
-                ttl=3600.0,  # 1시간
-            )
-        )
-
-        # 비동기 IO 관리자 초기화
-        self._async_io = AsyncIOManager(
-            AsyncIOConfig(
-                chunk_size=1 << 20,  # 1MB
-                max_concurrent_ops=4,
-                compression_level=6,
-                compression_threshold=1 << 20,  # 1MB
-            )
-        )
-
-        # 프로파일러 초기화
-        self._profiler = Profiler()
-
-        # 에러 복구 메커니즘 초기화
-        self._error_recovery = ErrorRecovery(RecoveryConfig())  # 기본 매개변수 사용
-
-        # 기본 설정값
-        num_workers = 2
-        prefetch_factor = 2
-
-        self._inference_queue: Queue = Queue(maxsize=num_workers * prefetch_factor)
-        self._result_queue: Queue = Queue(maxsize=num_workers * prefetch_factor)
-        self._worker_threads: List[Any] = []  # type: ignore
-        self._inference_streams: List[Any] = []  # type: ignore
-        self._executor = ThreadPoolExecutor(max_workers=num_workers)
-        self._cuda_events: List[Any] = []  # type: ignore
-        self._cuda_graphs: List[Any] = []  # type: ignore
-        self._custom_kernels: Dict[str, Any] = {}  # type: ignore
-        self._batch_processor = None  # 누락된 속성 추가
-
-        # 초기화 상태 플래그
-        self._initialized = False
-        self._cleanup_called = False
-
-        try:
-            self._initialize_cuda()
-            self._initialized = True
-        except Exception as e:
-            logger.error(f"CUDA 최적화기 초기화 실패: {e}")
-            self._initialized = False
-
-    def _initialize_cuda(self):
-        """초기화"""
-        try:
-            with self._profiler.profile("initialize"):
-                # CUDA 최적화 기본 설정
-                if torch.cuda.is_available():
-                    # CUDA 최적화 설정
-                    torch.backends.cudnn.benchmark = True
-                    torch.backends.cudnn.deterministic = False
-                    torch.backends.cuda.matmul.allow_tf32 = True
-                    torch.backends.cudnn.allow_tf32 = True
-
-                    # CUDA 스트림 초기화
-                    for _ in range(2):  # 기본 스트림 수 2개로 설정
-                        stream = torch.cuda.Stream()
-                        self._inference_streams.append(stream)
-
-                    # CUDA 이벤트 초기화
-                    for _ in range(4):  # 기본 이벤트 수 4개로 설정
-                        event = torch.cuda.Event(enable_timing=True)
-                        self._cuda_events.append(event)
-
-                    # CUDA 그래프 초기화
-                    if self.config.use_graphs:
-                        self._initialize_cuda_graphs()
-
-            logger.debug("CUDA 최적화기 초기화 완료 (내부)")
-        except Exception as e:
-            logger.error(f"CUDA 최적화기 초기화 실패: {str(e)}")
-
-    def is_available(self) -> bool:
-        """CUDA 사용 가능 여부 확인"""
+    def is_cuda_available(self) -> bool:
+        """CUDA 사용 가능 여부"""
         return torch.cuda.is_available()
 
-    def get_gpu_utilization(self) -> float:
-        """GPU 사용률 반환 (0.0 ~ 100.0)"""
-        try:
-            if not torch.cuda.is_available():
-                return 0.0
-
-            # GPU 메모리 사용률을 기반으로 사용률 추정
-            allocated = torch.cuda.memory_allocated()
-            total = torch.cuda.get_device_properties(0).total_memory
-            return (allocated / total) * 100.0
-        except Exception as e:
-            logger.error(f"GPU 사용률 조회 실패: {e}")
-            return 0.0
-
+    @contextmanager
     def device_context(self):
-        """디바이스 컨텍스트 매니저"""
-        from contextlib import contextmanager
-
-        @contextmanager
-        def _device_context():
-            try:
-                if torch.cuda.is_available():
-                    with torch.cuda.device(0):
-                        yield
-                else:
-                    yield
-            except Exception as e:
-                logger.error(f"디바이스 컨텍스트 오류: {e}")
+        """디바이스 컨텍스트 관리자"""
+        if self.is_cuda_available():
+            with torch.cuda.device(self.device):
                 yield
-
-        return _device_context()
-
-    def _initialize_custom_kernels(self):
-        """커스텀 CUDA 커널 초기화"""
-        try:
-            # 예시: 행렬 곱셈 커널
-            if "matmul" not in self._custom_kernels:
-                self._custom_kernels["matmul"] = self._create_matmul_kernel()
-
-            # 예시: 텐서 연산 커널
-            if "tensor_ops" not in self._custom_kernels:
-                self._custom_kernels["tensor_ops"] = self._create_tensor_ops_kernel()
-
-        except Exception as e:
-            logger.error(f"커스텀 CUDA 커널 초기화 실패: {str(e)}")
-
-    def _create_matmul_kernel(self) -> Any:  # type: ignore
-        """행렬 곱셈 커널 생성"""
-        try:
-            # CUDA 커널 코드
-            kernel_code = """
-            __global__ void matmul_kernel(
-                const float* A,
-                const float* B,
-                float* C,
-                const int M,
-                const int N,
-                const int K
-            ) {
-                const int row = blockIdx.y * blockDim.y + threadIdx.y;
-                const int col = blockIdx.x * blockDim.x + threadIdx.x;
-                
-                if (row < M && col < N) {
-                    float sum = 0.0f;
-                    for (int k = 0; k < K; ++k) {
-                        sum += A[row * K + k] * B[k * N + col];
-                    }
-                    C[row * N + col] = sum;
-                }
-            }
-            """
-            return self._compile_kernel(kernel_code, "matmul_kernel")
-        except Exception as e:
-            logger.error(f"행렬 곱셈 커널 생성 실패: {str(e)}")
-            return None
-
-    def _create_tensor_ops_kernel(self) -> Any:  # type: ignore
-        """텐서 연산 커널 생성"""
-        try:
-            # CUDA 커널 코드
-            kernel_code = """
-            __global__ void tensor_ops_kernel(
-                const float* input,
-                float* output,
-                const int size,
-                const float scale
-            ) {
-                const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-                if (idx < size) {
-                    output[idx] = input[idx] * scale;
-                }
-            }
-            """
-            return self._compile_kernel(kernel_code, "tensor_ops_kernel")
-        except Exception as e:
-            logger.error(f"텐서 연산 커널 생성 실패: {str(e)}")
-            return None
-
-    def _compile_kernel(self, kernel_code: str, kernel_name: str) -> Any:  # type: ignore
-        """커널 컴파일"""
-        try:
-            # CUDA 커널 컴파일
-            from numba import cuda
-
-            return cuda.jit(kernel_code)
-        except Exception as e:
-            logger.error(f"커널 컴파일 실패: {str(e)}")
-            return None
-
-    def _initialize_cuda_graphs(self):
-        """CUDA 그래프 초기화"""
-        try:
-            if not self.config.use_graphs or not torch.cuda.is_available():
-                return
-
-            # CUDA 그래프 초기화
-            for _ in range(2):  # 기본 그래프 수 2개로 설정
-                graph = torch.cuda.CUDAGraph()
-                self._cuda_graphs.append(graph)
-
-            logger.info("CUDA 그래프 초기화 완료")
-        except Exception as e:
-            logger.error(f"CUDA 그래프 초기화 실패: {str(e)}")
+        else:
+            yield
 
     def optimize_model(self, model: nn.Module) -> nn.Module:
         """모델 최적화"""
+        if not self.is_cuda_available():
+            return model
+
         try:
-            with self._lock:
-                with self._profiler.profile("optimize_model"):
-                    # 메모리 사용량 확인
-                    memory_usage = self._memory_manager.get_memory_usage()
+            # GPU로 이동
+            model = model.to(self.device)
 
-                    # AMP 적용 (자동 혼합 정밀도)
-                    if self.config.use_amp:
-                        model = self._apply_amp(model)
+            # AMP 적용
+            if self.config.use_amp:
+                model = self._apply_amp(model)
 
-                    # cuDNN 최적화 적용
-                    if self.config.use_cudnn:
-                        # cuDNN 벤치마크 및 설정
-                        torch.backends.cudnn.benchmark = True
-                        torch.backends.cudnn.deterministic = False
-                        torch.backends.cuda.matmul.allow_tf32 = True
-                        torch.backends.cudnn.allow_tf32 = True
+            return model
 
-                    # CUDA 그래프 적용
-                    if self.config.use_graphs and torch.cuda.is_available():
-                        # 고급 메모리 최적화 적용 (메모리 여유가 있는 경우)
-                        if memory_usage < 0.7:  # 메모리 사용률이 70% 미만인 경우
-                            try:
-                                # 텐서 메모리 관리 최적화
-                                self._optimize_tensor_memory(model)
-                            except Exception as e:
-                                logger.warning(f"텐서 메모리 최적화 실패: {str(e)}")
-
-                    self._current_model = model
-                    return model
         except Exception as e:
-            logger.error(f"모델 최적화 실패: {str(e)}")
+            logger.error(f"모델 최적화 실패: {e}")
             return model
 
     def _apply_amp(self, model: nn.Module) -> nn.Module:
-        """AMP(자동 혼합 정밀도) 적용"""
+        """AMP 적용"""
         try:
-            if self.config.use_amp:
-                model = model.half()  # FP16으로 변환
-            return model
+            # 모델을 half precision으로 변환
+            return model.half()
         except Exception as e:
-            logger.error(f"AMP 적용 실패: {str(e)}")
-            return model
-
-    def _optimize_tensor_memory(self, model: nn.Module) -> nn.Module:
-        """텐서 메모리 최적화"""
-        try:
-            # 연속적인 메모리 접근을 위한 텐서 재배치
-            for param in model.parameters():
-                if param.is_cuda:
-                    param.data = param.data.contiguous()
-
-            # 메모리 포맷 최적화 (채널 우선 포맷)
-            for name, module in model.named_modules():
-                if isinstance(module, nn.Conv2d):
-                    module.weight.data = module.weight.data.to(
-                        device="cuda", memory_format=torch.channels_last
-                    )
-                    if module.bias is not None:
-                        module.bias.data = module.bias.data.to(
-                            device="cuda", memory_format=torch.channels_last
-                        )
-
-            return model
-        except Exception as e:
-            logger.error(f"텐서 메모리 최적화 실패: {str(e)}")
+            logger.warning(f"AMP 적용 실패: {e}")
             return model
 
-    def optimize_inference(
-        self, model: nn.Module, input_data: torch.Tensor
-    ) -> Optional[torch.Tensor]:
-        """추론 최적화"""
+    def optimize_memory(self) -> bool:
+        """GPU 메모리 최적화"""
+        if not self.is_cuda_available():
+            return False
+
         try:
-            with self._profiler.profile("optimize_inference"):
-                # 입력 데이터 전송
-                input_tensor = input_data.to(self.device)
-
-                # AMP 활성화 설정
-                with torch.cuda.amp.autocast(enabled=self.config.use_amp):
-                    with torch.no_grad():
-                        output = self._run_sync_inference(input_tensor)
-
-                return output
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            return True
         except Exception as e:
-            logger.error(f"추론 최적화 실패: {str(e)}")
-            return None
+            logger.error(f"메모리 최적화 실패: {e}")
+            return False
 
-    def _run_sync_inference(self, input_tensor: torch.Tensor) -> Optional[torch.Tensor]:
-        """동기 추론 실행"""
+    def get_memory_info(self) -> Dict[str, Any]:
+        """GPU 메모리 정보"""
+        if not self.is_cuda_available():
+            return {"available": False}
+
         try:
-            if self._current_model is None:
-                return None
+            allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+            reserved = torch.cuda.memory_reserved() / 1024**3  # GB
+            total = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
 
-            with torch.cuda.amp.autocast(enabled=self.config.use_amp):
-                with torch.no_grad():
-                    output = self._current_model(input_tensor)
-
-            return output
+            return {
+                "available": True,
+                "allocated_gb": allocated,
+                "reserved_gb": reserved,
+                "total_gb": total,
+                "utilization": allocated / total if total > 0 else 0,
+            }
         except Exception as e:
-            logger.error(f"동기 추론 실행 실패: {str(e)}")
-            return None
-
-    def _start_worker_threads(self):
-        """워커 스레드 시작"""
-        try:
-            for i in range(2):
-                worker = Thread(target=self._worker_loop, args=(i,), daemon=True)
-                worker.start()
-                self._worker_threads.append(worker)
-
-        except Exception as e:
-            logger.error(f"워커 스레드 시작 실패: {str(e)}")
-
-    def _worker_loop(self, worker_id: int):
-        """워커 루프"""
-        try:
-            while True:
-                # 입력 데이터 가져오기
-                input_tensor = self._inference_queue.get()
-                if input_tensor is None:
-                    break
-
-                # 추론 실행
-                with torch.cuda.stream(self._inference_streams[worker_id]):
-                    output = self._run_sync_inference(input_tensor)
-
-                # 결과 저장
-                if output is not None:
-                    self._result_queue.put(output)
-
-        except Exception as e:
-            logger.error(f"워커 루프 실행 실패: {str(e)}")
-
-    def cleanup(self):
-        """리소스 정리 - Python 종료 시 안전한 정리"""
-        if self._cleanup_called:
-            return
-
-        self._cleanup_called = True
-
-        try:
-            # Python 종료 상태 확인
-            import sys
-
-            if sys is None or getattr(sys, "meta_path", None) is None:
-                # Python이 종료 중이면 중요한 정리만 수행
-                self._emergency_cleanup()
-                return
-
-            # 정상적인 정리 수행
-            self._perform_cleanup()
-
-        except Exception as e:
-            # Python 종료 시에는 로깅도 실패할 수 있음
-            try:
-                logger.error(f"CUDA 정리 실패: {e}")
-            except:
-                pass
-
-    def _emergency_cleanup(self):
-        """긴급 정리 (Python 종료 시)"""
-        try:
-            if hasattr(self, "_executor") and self._executor:
-                self._executor.shutdown(wait=False)
-        except:
-            pass
-
-    def _perform_cleanup(self):
-        """정상적인 리소스 정리"""
-        try:
-            # 프로파일러 정리
-            if hasattr(self, "_profiler") and self._profiler:
-                try:
-                    self._profiler.cleanup()
-                except:
-                    pass
-
-            # 추론 큐 정리
-            if hasattr(self, "_inference_queue") and self._inference_queue:
-                try:
-                    self._inference_queue.clear()
-                except:
-                    pass
-
-            # 배치 프로세서 정리
-            if hasattr(self, "_batch_processor") and self._batch_processor:
-                try:
-                    self._batch_processor.cleanup()
-                except:
-                    pass
-
-            # 실행자 정리
-            if hasattr(self, "_executor") and self._executor:
-                try:
-                    self._executor.shutdown(wait=True, timeout=1.0)
-                except:
-                    pass
-
-            # CUDA 스트림 정리
-            if hasattr(self, "stream") and self.stream:
-                try:
-                    self.stream.synchronize()
-                except:
-                    pass
-
-            # 메모리 풀 정리
-            if hasattr(self, "_memory_pool") and self._memory_pool:
-                try:
-                    self._memory_pool.empty_cache()
-                except:
-                    pass
-
-            logger.info("리소스 정리 완료")
-
-        except Exception as e:
-            logger.error(f"리소스 정리 실패: {e}")
-
-    def __del__(self):
-        """소멸자 - Python 종료 시 안전한 정리"""
-        try:
-            # Python 종료 상태 확인
-            import sys
-
-            if sys is None or getattr(sys, "meta_path", None) is None:
-                # Python이 종료 중이면 정리 작업을 건너뜀
-                return
-
-            self.cleanup()
-        except Exception:
-            # Python 종료 시에는 로깅도 실패할 수 있으므로 조용히 무시
-            pass
-
-
-"""
-CUDA 최적화 및 AMP(Automatic Mixed Precision) 유틸리티
-"""
+            logger.error(f"메모리 정보 조회 실패: {e}")
+            return {"available": False}
 
 
 class AMPTrainer:
-    """AMP(Automatic Mixed Precision) 트레이너"""
+    """AMP 트레이너 (간소화)"""
 
-    def __init__(self, config: ConfigProxy):
-        self.config = config
+    def __init__(self, config=None):
+        self.config = config or {}
+        self.scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.scaler = torch.cuda.amp.GradScaler() if self.use_amp else None
 
     @property
     def use_amp(self) -> bool:
         """AMP 사용 여부"""
         return (
-            self.config["training"]["use_amp"]
-            and torch.cuda.is_available()
-            and torch.cuda.is_bf16_supported()
+            torch.cuda.is_available()
+            and self.config.get("use_amp", True)
+            and self.scaler is not None
         )
 
     def train_step(
@@ -592,353 +182,102 @@ class AMPTrainer:
         loss_fn: Callable,
         batch: Dict[str, torch.Tensor],
     ) -> Dict[str, float]:
-        """AMP를 사용한 학습 스텝"""
-        model.train()
-        optimizer.zero_grad()
+        """AMP를 사용한 훈련 스텝"""
 
-        try:
-            if self.use_amp and self.scaler is not None:
-                with torch.cuda.amp.autocast():
-                    output = model(batch)
-                    loss = loss_fn(output, batch["target"])
-
-                self.scaler.scale(loss).backward()
-                self.scaler.step(optimizer)
-                self.scaler.update()
-            else:
-                output = model(batch)
-                loss = loss_fn(output, batch["target"])
-                loss.backward()
-                optimizer.step()
-
+        if not self.use_amp:
+            # 일반 훈련
+            optimizer.zero_grad()
+            outputs = model(**batch)
+            loss = loss_fn(outputs, batch.get("labels"))
+            loss.backward()
+            optimizer.step()
             return {"loss": loss.item()}
 
-        except Exception as e:
-            logger.error(f"학습 스텝 중 오류 발생: {str(e)}")
-            return {"loss": float("inf")}
+        # AMP 훈련
+        optimizer.zero_grad()
 
-    def evaluate(
-        self, model: torch.nn.Module, loss_fn: Callable, dataloader: DataLoader
-    ) -> Dict[str, float]:
-        """AMP를 사용한 평가"""
-        model.eval()
-        total_loss = 0.0
-        count = 0
+        with torch.cuda.amp.autocast():
+            outputs = model(**batch)
+            loss = loss_fn(outputs, batch.get("labels"))
 
-        with torch.no_grad():
-            for batch in dataloader:
-                try:
-                    if self.use_amp:
-                        with torch.cuda.amp.autocast():
-                            output = model(batch)
-                            loss = loss_fn(output, batch["target"])
-                    else:
-                        output = model(batch)
-                        loss = loss_fn(output, batch["target"])
+        self.scaler.scale(loss).backward()
+        self.scaler.step(optimizer)
+        self.scaler.update()
 
-                    total_loss += loss.item()
-                    count += 1
-
-                except Exception as e:
-                    logger.error(f"평가 중 오류 발생: {str(e)}")
-                    continue
-
-        return {"loss": total_loss / count if count > 0 else float("inf")}
-
-    def get_device_info(self) -> Dict[str, Any]:
-        """디바이스 정보를 반환합니다."""
-        device_info = {
-            "device": str(self.device),
-            "cuda_available": torch.cuda.is_available(),
-            "cuda_device_count": (
-                torch.cuda.device_count() if torch.cuda.is_available() else 0
-            ),
-            "device_name": (
-                torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-            ),
-        }
-
-        # CUDA 정보 추가
-        if torch.cuda.is_available():
-            props = torch.cuda.get_device_properties(0)
-            device_info["cuda_version"] = f"{props.major}.{props.minor}"
-            device_info["total_memory"] = props.total_memory
-        else:
-            device_info["cuda_version"] = "N/A"
-
-        return device_info
+        return {"loss": loss.item()}
 
     def get_device(self) -> torch.device:
-        """현재 사용 중인 장치를 반환합니다."""
+        """디바이스 반환"""
         return self.device
-
-    def optimize_memory(self) -> None:
-        """메모리를 최적화합니다."""
-        import gc
-
-        # 가비지 컬렉션 실행
-        gc.collect()
-
-        # GPU 메모리 정리 (CUDA 사용 가능한 경우)
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-
-def get_device_info() -> Dict[str, Any]:
-    """현재 디바이스 정보를 반환"""
-    info = {
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "amp_enabled": torch.cuda.is_available(),
-    }
-
-    if torch.cuda.is_available():
-        info.update(
-            {
-                "gpu_name": torch.cuda.get_device_name(0),
-                "gpu_memory": torch.cuda.get_device_properties(0).total_memory,
-                "gpu_memory_allocated": torch.cuda.memory_allocated(0),
-                "gpu_memory_reserved": torch.cuda.memory_reserved(0),
-            }
-        )
-
-    return info
-
-
-def optimize_memory():
-    """CUDA 메모리 최적화"""
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
 
 
 def setup_cuda_memory_pool():
-    """중복 호출 방지된 GPU 메모리 풀 설정 (완전 싱글톤)"""
+    """CUDA 메모리 풀 설정"""
     global _memory_pool_initialized
+
+    if _memory_pool_initialized or not torch.cuda.is_available():
+        return
 
     with _memory_pool_lock:
         if _memory_pool_initialized:
-            logger.debug("GPU 메모리 풀 이미 초기화됨 - 스킵")
             return
 
         try:
-            if torch.cuda.is_available():
-                # GPU 메모리 설정
-                torch.cuda.set_per_process_memory_fraction(0.8)
-                torch.cuda.empty_cache()
-                torch.backends.cudnn.benchmark = True
-                torch.backends.cudnn.deterministic = False
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
-
-                logger.info("✅ GPU 메모리 풀 단일 초기화 완료")
-            else:
-                logger.info("CUDA 사용 불가 - CPU 모드")
-
+            # GPU 메모리 풀 설정
+            torch.cuda.set_per_process_memory_fraction(0.8)  # 80% 사용
             _memory_pool_initialized = True
+            logger.info("CUDA 메모리 풀 초기화 완료")
 
         except Exception as e:
-            logger.error(f"GPU 메모리 풀 설정 실패: {e}")
-            _memory_pool_initialized = False
+            logger.error(f"CUDA 메모리 풀 설정 실패: {e}")
 
 
-def get_cuda_memory_info() -> Dict[str, Any]:
-    """CUDA 메모리 정보 반환"""
+def get_optimal_batch_size(
+    model: nn.Module, input_shape: tuple, max_memory_fraction: float = 0.8
+) -> int:
+    """최적 배치 크기 계산"""
+
     if not torch.cuda.is_available():
-        return {"cuda_available": False}
+        return 32  # CPU 기본값
 
     try:
-        return {
-            "cuda_available": True,
-            "device_count": torch.cuda.device_count(),
-            "current_device": torch.cuda.current_device(),
-            "device_name": torch.cuda.get_device_name(),
-            "memory_allocated": torch.cuda.memory_allocated(),
-            "memory_reserved": torch.cuda.memory_reserved(),
-            "max_memory_allocated": torch.cuda.max_memory_allocated(),
-            "max_memory_reserved": torch.cuda.max_memory_reserved(),
-        }
+        # GPU 메모리 정보
+        total_memory = torch.cuda.get_device_properties(0).total_memory
+        available_memory = total_memory * max_memory_fraction
+
+        # 모델 크기 추정
+        model_memory = sum(p.numel() * p.element_size() for p in model.parameters())
+
+        # 입력 데이터 크기 추정
+        input_memory = 1
+        for dim in input_shape:
+            input_memory *= dim
+        input_memory *= 4  # float32 기준
+
+        # 최적 배치 크기 계산
+        batch_size = int(available_memory / (model_memory + input_memory))
+
+        # 범위 제한
+        return max(16, min(batch_size, 512))
+
     except Exception as e:
-        logger.error(f"CUDA 메모리 정보 수집 실패: {str(e)}")
-        return {"cuda_available": True, "error": str(e)}
+        logger.error(f"배치 크기 계산 실패: {e}")
+        return 32
 
 
-# CudaOptimizer 별칭 설정
-CudaOptimizer = BaseCudaOptimizer
+# 편의 함수들
+def get_cuda_optimizer(config: Optional[CudaConfig] = None) -> CUDAOptimizer:
+    """CUDA 최적화기 반환"""
+    return CUDAOptimizer(config)
 
 
-# CudaOptimizer는 BaseCudaOptimizer의 별칭
-CudaOptimizer = BaseCudaOptimizer
+def optimize_memory():
+    """메모리 최적화 실행"""
+    optimizer = get_cuda_optimizer()
+    return optimizer.optimize_memory()
 
 
-def get_cuda_optimizer(config: Optional[CudaConfig] = None) -> BaseCudaOptimizer:
-    """CUDA 최적화기 인스턴스를 반환합니다.
-
-    Args:
-        config: CUDA 설정 객체
-
-    Returns:
-        BaseCudaOptimizer: CUDA 최적화기 인스턴스
-    """
-    return BaseCudaOptimizer(config)
-
-
-def get_safe_batch_size(initial_batch_size: int = 32) -> int:  # legacy util
-    """간단 호환 함수: GPU 메모리 여유에 따라 안전 배치 크기 추정"""
-    try:
-        gb = (
-            torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            if torch.cuda.is_available()
-            else 8
-        )
-    except Exception:
-        gb = 8
-    if gb < 4:
-        return max(1, initial_batch_size // 4)
-    if gb < 8:
-        return max(1, initial_batch_size // 2)
-    return initial_batch_size
-
-
-# ----------------- Hybrid Optimizer (from hybrid_optimizer.py) -----------------
-
-
-class OptimizationStrategy(Enum):
-    """최적화 전략"""
-
-    AUTO = "auto"
-    CPU_PARALLEL = "cpu_parallel"
-    MEMORY_OPTIMIZED = "memory_optimized"
-    GPU_ACCELERATED = "gpu_accelerated"
-    HYBRID = "hybrid"
-
-
-@dataclass
-class TaskInfo:
-    """작업 정보"""
-
-    function_type: str
-    data_size: int = 0
-    parallelizable: bool = True
-    gpu_compatible: bool = False
-    memory_intensive: bool = False
-    cpu_intensive: bool = True
-
-
-@dataclass
-class HybridConfig:
-    """하이브리드 최적화 설정"""
-
-    auto_optimization: bool = True
-    memory_threshold: float = 0.8
-    cpu_threshold: float = 75.0
-    gpu_threshold: float = 80.0
-    min_parallel_size: int = 100
-    enable_monitoring: bool = True
-
-
-class HybridOptimizer:
-    """하이브리드 최적화 관리자"""
-
-    def __init__(self, config: Union[HybridConfig, Dict[str, Any]]):
-        if isinstance(config, dict):
-            self.config = HybridConfig(**config)
-        else:
-            self.config = config
-
-        self.process_pool: Optional[ProcessPoolManager] = None
-        self.memory_manager: Optional[MemoryManager] = None
-        self.cuda_optimizer: Optional[BaseCudaOptimizer] = None
-        self._initialize_components()
-
-    def _initialize_components(self):
-        """구성 요소 초기화"""
-        try:
-            self.process_pool = ProcessPoolManager(ProcessPoolConfig())
-            self.memory_manager = MemoryManager(MemoryConfig())
-            if torch.cuda.is_available():
-                self.cuda_optimizer = get_cuda_optimizer()
-            logger.info("HybridOptimizer 구성 요소 초기화 완료")
-        except Exception as e:
-            logger.error(f"하이브리드 최적화 구성 요소 초기화 실패: {e}")
-            raise
-
-    def _analyze_system_resources(self) -> Dict[str, float]:
-        """시스템 리소스 분석"""
-        # ... (구현은 hybrid_optimizer.py와 동일)
-        cpu_percent = psutil.cpu_percent(interval=0.1)
-        memory_percent = psutil.virtual_memory().percent
-        gpu_percent = 0.0
-        if self.cuda_optimizer and self.cuda_optimizer.is_available():
-            gpu_percent = self.cuda_optimizer.get_gpu_utilization()
-        return {
-            "cpu_percent": cpu_percent,
-            "memory_percent": memory_percent,
-            "gpu_percent": gpu_percent,
-        }
-
-    def _select_optimization_strategy(
-        self, task_info: TaskInfo, system_resources: Dict[str, float]
-    ) -> OptimizationStrategy:
-        """최적화 전략 선택"""
-        if not self.config.auto_optimization:
-            return OptimizationStrategy.AUTO
-        if (
-            task_info.gpu_compatible
-            and self.cuda_optimizer
-            and system_resources["gpu_percent"] < self.config.gpu_threshold
-        ):
-            return OptimizationStrategy.GPU_ACCELERATED
-        if (
-            task_info.memory_intensive
-            or system_resources["memory_percent"] > self.config.memory_threshold
-        ):
-            return OptimizationStrategy.MEMORY_OPTIMIZED
-        if (
-            task_info.parallelizable
-            and task_info.data_size >= self.config.min_parallel_size
-            and system_resources["cpu_percent"] < self.config.cpu_threshold
-        ):
-            return OptimizationStrategy.CPU_PARALLEL
-        return OptimizationStrategy.HYBRID
-
-    def optimize_execution(
-        self,
-        func: Callable,
-        model: Optional[torch.nn.Module],
-        data: Any,
-        task_info: TaskInfo,
-        **kwargs,
-    ) -> Any:
-        """최적화된 실행"""
-        system_resources = self._analyze_system_resources()
-        strategy = self._select_optimization_strategy(task_info, system_resources)
-        logger.info(f"최적화 전략 선택: {strategy.value}")
-
-        if strategy == OptimizationStrategy.GPU_ACCELERATED:
-            if self.cuda_optimizer and model:
-                return self.cuda_optimizer.optimize_inference(model, data)
-            else:
-                logger.warning("GPU 가속을 사용할 수 없어 기본 실행으로 전환합니다.")
-                return func(data, **kwargs)
-        elif strategy == OptimizationStrategy.CPU_PARALLEL:
-            if self.process_pool:
-                return self.process_pool.map(func, data)
-            else:
-                logger.warning(
-                    "CPU 병렬 처리를 사용할 수 없어 기본 실행으로 전환합니다."
-                )
-                return func(data, **kwargs)
-        # ... 기타 전략 실행
-        else:  # standard/hybrid/memory-optimized
-            return func(data, **kwargs)
-
-    def shutdown(self):
-        """자원 정리"""
-        if self.process_pool:
-            self.process_pool.shutdown()
-        if self.cuda_optimizer:
-            self.cuda_optimizer.cleanup()
-        logger.info("HybridOptimizer 자원 정리 완료")
-
-
-# TODO: 멀티 GPU 지원, 메모리 풀링, 배치 처리 최적화 함수 보강 필요
+def get_device_info() -> Dict[str, Any]:
+    """디바이스 정보 반환"""
+    optimizer = get_cuda_optimizer()
+    return optimizer.get_memory_info()

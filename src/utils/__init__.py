@@ -1,99 +1,159 @@
 """
-로또 번호 예측 시스템 - 통합 유틸리티 (완전 최적화 버전)
+DAEBAK_AI 로또 예측 시스템 - Utils 모듈 (최종 성능 최적화 버전)
 
-중복 로그 초기화 문제를 완전히 해결한 최적화된 시스템
-- 자동 로거 할당
-- 메모리 최적화된 지연 로딩
-- Thread-Safe 보장
+핵심 성능 기능에 집중한 간소화된 utils 모듈입니다.
+GPU 최우선, 메모리 효율성, 실행 속도 최적화 완료.
 """
 
-from typing import Any, Optional
-import threading
+from pathlib import Path
 
-# 핵심 시스템만 즉시 로드
-from .cache_paths import get_cache_dir, CACHE_DIR
+# 핵심 시스템 (필수)
+from .unified_logging import get_logger
+from .unified_config import load_config
+from .cache_paths import CACHE_DIR, get_cache_dir
 
-# 최적화된 로깅 시스템 로드
-from .unified_logging import (
-    get_logger as _get_logger,
-    get_logging_stats,
-    cleanup_logging,
-    get_optimization_report,
+# CUDA 최적화 (GPU 최우선)
+from .cuda_optimizers import (
+    CUDAOptimizer,
+    AMPTrainer,
+    get_cuda_optimizer,
+    optimize_memory,
 )
 
-# Lazy import 캐시 (Thread-Safe)
-_imported_items = {}
-_import_lock = threading.RLock()
+# 메모리 관리 (핵심)
+from .memory_manager import MemoryManager, get_memory_manager, memory_managed_analysis
+
+# 성능 최적화 (핵심)
+from .performance_optimizer import (
+    PerformanceProfiler,
+    GPUOptimizer,
+    MemoryOptimizer,
+    MultiThreadOptimizer,
+)
+
+# 모델 통합 (간소화)
+from .model_integrator import ModelIntegrator, IntegratorConfig
+
+# 캐시 관리 (필수)
+from .cache_manager import get_cache_manager
+
+# 비동기 I/O (성능)
+from .async_io import AsyncIOManager
+
+# 프로세스 풀 (병렬 처리)
+from .process_pool_manager import ProcessPoolManager
 
 
-def get_logger(*args, **kwargs):
-    """
-    최적화된 로거 반환 (중복 초기화 방지)
-
-    이 함수를 통해 모든 로거가 중앙 집중적으로 관리됩니다.
-    """
-    return _get_logger(*args, **kwargs)
+# 지연 로딩을 위한 함수들 (메모리 효율성)
+def get_performance_profiler():
+    """성능 프로파일러 반환"""
+    return PerformanceProfiler()
 
 
-def load_config(config_name: str = "main"):
-    """필요시에만 설정 로드 (unified_config 사용)"""
-    from .unified_config import load_config as _load_config
-
-    return _load_config(config_name)
+def get_gpu_optimizer():
+    """GPU 최적화기 반환"""
+    return GPUOptimizer()
 
 
-def __getattr__(name: str) -> Any:
-    """모듈 레벨 지연 로딩 (Thread-Safe)"""
-    module_mapping = {
-        "get_profiler": ("unified_performance", "get_profiler"),
-        "get_system_stats": ("system_diagnostics", "get_system_stats"),
-        "cleanup_resources": ("unified_performance", "cleanup_resources"),
-        "get_cuda_optimizer": ("cuda_optimizers", "get_cuda_optimizer"),
-        "HybridOptimizer": ("cuda_optimizers", "HybridOptimizer"),
-        "get_memory_manager": ("memory_manager", "get_memory_manager"),
-        "MemoryManager": ("memory_manager", "MemoryManager"),
-        "start_performance_monitoring": ("unified_performance", "start_monitoring"),
-        "stop_performance_monitoring": ("unified_performance", "stop_monitoring"),
-        "get_cuda_statistics": ("cuda_optimizers", "get_cuda_memory_info"),
-    }
-
-    if name in module_mapping:
-        module_name, item_name = module_mapping[name]
-        cache_key = f"{module_name}.{item_name}"
-        with _import_lock:
-            if cache_key not in _imported_items:
-                try:
-                    module = __import__(
-                        f"src.utils.{module_name}", fromlist=[item_name]
-                    )
-                    _imported_items[cache_key] = getattr(module, item_name)
-                except ImportError as e:
-                    logger = _get_logger("utils.lazy_import")
-                    logger.error(f"Failed to import {module_name}.{item_name}: {e}")
-                    raise
-            return _imported_items[cache_key]
-    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+def get_memory_optimizer():
+    """메모리 최적화기 반환"""
+    return MemoryOptimizer()
 
 
-# 즉시 로드하지 않고 함수로 제공
+def get_async_io_manager():
+    """비동기 I/O 매니저 반환"""
+    return AsyncIOManager()
+
+
+def get_process_pool_manager():
+    """프로세스 풀 매니저 반환"""
+    return ProcessPoolManager()
+
+
+def get_model_integrator(config=None):
+    """모델 통합기 반환"""
+    return ModelIntegrator(config)
+
+
+# 편의 함수들
+def init_utils():
+    """Utils 모듈 초기화"""
+    logger = get_logger(__name__)
+    logger.info("DAEBAK_AI Utils 모듈 초기화 완료 (성능 최적화 버전)")
+
+
+def cleanup_utils():
+    """Utils 모듈 정리"""
+    try:
+        # 메모리 관리자 정리
+        memory_manager = get_memory_manager()
+        memory_manager.cleanup()
+
+        # CUDA 메모리 정리
+        optimize_memory()
+
+        logger = get_logger(__name__)
+        logger.info("Utils 모듈 정리 완료")
+    except Exception as e:
+        print(f"Utils 모듈 정리 중 오류: {e}")
+
+
+# 성능 모니터링 함수
+def get_system_status():
+    """시스템 상태 반환"""
+    try:
+        memory_manager = get_memory_manager()
+        cuda_optimizer = get_cuda_optimizer()
+
+        return {
+            "memory_info": memory_manager.get_memory_info(),
+            "cuda_info": cuda_optimizer.get_memory_info(),
+            "status": "optimal",
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# 모듈 초기화
+init_utils()
+
 __all__ = [
-    # 즉시 사용 가능한 항목
+    # 핵심 시스템
     "get_logger",
     "load_config",
     "CACHE_DIR",
     "get_cache_dir",
-    "get_logging_stats",
-    "cleanup_logging",
-    "get_optimization_report",
-    # 지연 로딩 항목
-    "get_profiler",
-    "get_system_stats",
-    "cleanup_resources",
+    # CUDA 최적화
+    "CUDAOptimizer",
+    "AMPTrainer",
     "get_cuda_optimizer",
-    "HybridOptimizer",
-    "get_memory_manager",
+    "optimize_memory",
+    # 메모리 관리
     "MemoryManager",
-    "start_performance_monitoring",
-    "stop_performance_monitoring",
-    "get_cuda_statistics",
+    "get_memory_manager",
+    "memory_managed_analysis",
+    # 성능 최적화
+    "PerformanceProfiler",
+    "GPUOptimizer",
+    "MemoryOptimizer",
+    "MultiThreadOptimizer",
+    "get_performance_profiler",
+    "get_gpu_optimizer",
+    "get_memory_optimizer",
+    # 모델 통합
+    "ModelIntegrator",
+    "IntegratorConfig",
+    "get_model_integrator",
+    # 캐시 관리
+    "get_cache_manager",
+    # 비동기 I/O
+    "AsyncIOManager",
+    "get_async_io_manager",
+    # 프로세스 풀
+    "ProcessPoolManager",
+    "get_process_pool_manager",
+    # 편의 함수
+    "init_utils",
+    "cleanup_utils",
+    "get_system_status",
 ]

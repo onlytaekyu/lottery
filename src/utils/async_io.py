@@ -5,7 +5,7 @@
 
 import asyncio
 import aiofiles
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Tuple
 from pathlib import Path
 import json
 import pickle
@@ -220,3 +220,74 @@ class AsyncIOManager:
             "errors": 0,
             "retries": 0,
         }
+
+    # --- 🚀 병렬 및 대용량 파일 처리 최적화 ---
+
+    async def read_files_in_parallel(
+        self, file_paths: List[Union[str, Path]]
+    ) -> List[Optional[bytes]]:
+        """여러 파일을 병렬로 비동기 읽기"""
+        tasks = [self.read_file(fp) for fp in file_paths]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        processed_results = []
+        for res in results:
+            if isinstance(res, Exception):
+                logger.error(f"병렬 파일 읽기 중 오류 발생: {res}")
+                processed_results.append(None)
+            else:
+                processed_results.append(res)
+        return processed_results
+
+    async def write_files_in_parallel(
+        self, operations: List[Tuple[Union[str, Path], bytes]]
+    ) -> List[bool]:
+        """여러 파일을 병렬로 비동기 쓰기"""
+        tasks = [self.write_file(fp, data) for fp, data in operations]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        processed_results = []
+        for res in results:
+            if isinstance(res, Exception):
+                logger.error(f"병렬 파일 쓰기 중 오류 발생: {res}")
+                processed_results.append(False)
+            else:
+                processed_results.append(res)
+        return processed_results
+
+    async def read_file_chunked(self, file_path: Union[str, Path]):
+        """대용량 파일을 청크 단위로 비동기 읽기 (비동기 제너레이터)"""
+        start_time = time.time()
+        try:
+            async with self._semaphore:
+                async with aiofiles.open(file_path, "rb") as f:
+                    while True:
+                        chunk = await f.read(self.config.chunk_size)
+                        if not chunk:
+                            break
+                        self._stats["read_ops"] += 1
+                        self._stats["read_bytes"] += len(chunk)
+                        yield chunk
+        except Exception as e:
+            logger.error(f"청크 단위 파일 읽기 실패: {e}")
+        finally:
+            self._stats["read_time"] += time.time() - start_time
+
+    async def write_file_chunked(self, file_path: Union[str, Path], data_generator):
+        """데이터 제너레이터로부터 청크 단위로 비동기 쓰기"""
+        start_time = time.time()
+        total_bytes = 0
+        try:
+            async with self._semaphore:
+                async with aiofiles.open(file_path, "wb") as f:
+                    async for chunk in data_generator:
+                        await f.write(chunk)
+                        total_bytes += len(chunk)
+            self._stats["write_ops"] += 1
+            self._stats["write_bytes"] += total_bytes
+            return True
+        except Exception as e:
+            logger.error(f"청크 단위 파일 쓰기 실패: {e}")
+            return False
+        finally:
+            self._stats["write_time"] += time.time() - start_time

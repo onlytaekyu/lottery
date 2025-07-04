@@ -25,6 +25,17 @@ from .unified_logging import get_logger
 
 logger = get_logger(__name__)
 
+# pynvml 동적 임포트 (NVIDIA GPU 모니터링용)
+try:
+    import pynvml
+
+    pynvml.nvmlInit()
+    _pynvml_available = True
+    logger.info("✅ pynvml 초기화 성공. GPU 모니터링이 활성화되었습니다.")
+except Exception:
+    _pynvml_available = False
+    logger.warning("⚠️ pynvml 초기화 실패. GPU 활용률 모니터링이 비활성화됩니다.")
+
 
 @dataclass
 class PerformanceConfig:
@@ -43,6 +54,10 @@ class PerformanceConfig:
     sampling_interval: float = 0.1
     cpu_threshold: float = 80.0
     thread_threshold: int = 100
+    # 목표 성능 지표 추가
+    target_gpu_utilization: float = 0.90
+    target_memory_efficiency: float = 0.85
+    target_throughput_increase: float = 3.0
 
 
 @dataclass
@@ -53,6 +68,8 @@ class PerformanceMetrics:
     memory_used: int = 0
     cpu_usage: float = 0.0
     gpu_memory: int = 0
+    gpu_utilization: float = 0.0
+    throughput: float = 0.0
     timestamp: float = field(default_factory=time.time)
 
 
@@ -79,16 +96,26 @@ class UnifiedPerformanceTracker:
         self._thread_stats = []
 
     @contextmanager
-    def track(self, name: str):
+    def track(self, name: str, items_processed: int = 0):
         """통합 성능 추적 - 모든 메트릭을 한번에 수집"""
         start_time = time.time()
         start_memory = psutil.Process().memory_info().rss
         start_threads = threading.active_count()
 
-        # GPU 메모리 (가능한 경우)
+        # GPU 관련 정보 초기화
+        gpu_handle = None
         gpu_memory_start = 0
-        if torch.cuda.is_available():
-            gpu_memory_start = torch.cuda.memory_allocated()
+        start_gpu_util = 0
+        if _pynvml_available and torch.cuda.is_available():
+            try:
+                gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                gpu_memory_start = torch.cuda.memory_allocated()
+                start_gpu_util = float(
+                    pynvml.nvmlDeviceGetUtilizationRates(gpu_handle).gpu
+                )
+            except Exception as e:
+                logger.debug(f"GPU 초기 정보 수집 실패: {e}")
+                gpu_handle = None
 
         # 프로파일링 시작
         profiler = None
@@ -107,10 +134,24 @@ class UnifiedPerformanceTracker:
             memory_used = end_memory - start_memory
             threads_created = end_threads - start_threads
 
-            # GPU 메모리 (가능한 경우)
+            # GPU 성능 지표 계산
             gpu_memory_used = 0
-            if torch.cuda.is_available():
-                gpu_memory_used = torch.cuda.memory_allocated() - gpu_memory_start
+            gpu_utilization = 0
+            if _pynvml_available and gpu_handle:
+                try:
+                    gpu_memory_used = torch.cuda.memory_allocated() - gpu_memory_start
+                    end_gpu_util = float(
+                        pynvml.nvmlDeviceGetUtilizationRates(gpu_handle).gpu
+                    )
+                    # 컨텍스트 실행 동안의 평균 GPU 사용률 추정
+                    gpu_utilization = (
+                        (start_gpu_util + end_gpu_util) / 2.0 / 100.0
+                    )  # 0-1 사이의 값으로
+                except Exception as e:
+                    logger.debug(f"GPU 최종 정보 수집 실패: {e}")
+
+            # 처리량 계산
+            throughput = items_processed / duration if duration > 0 else 0
 
             # 프로파일링 종료
             profile_stats = None
@@ -130,6 +171,9 @@ class UnifiedPerformanceTracker:
                         "memory_used": memory_used,
                         "threads_created": threads_created,
                         "gpu_memory_used": gpu_memory_used,
+                        "gpu_utilization": gpu_utilization,
+                        "throughput": throughput,
+                        "items_processed": items_processed,
                         "profile_stats": profile_stats,
                         "timestamp": time.time(),
                     },
@@ -142,6 +186,8 @@ class UnifiedPerformanceTracker:
                 "durations": [],
                 "memory_usage": [],
                 "gpu_memory": [],
+                "gpu_utilization": [],
+                "throughput": [],
                 "thread_counts": [],
                 "profile_data": [],
             }
@@ -150,6 +196,8 @@ class UnifiedPerformanceTracker:
         session["durations"].append(metrics["duration"])
         session["memory_usage"].append(metrics["memory_used"])
         session["gpu_memory"].append(metrics["gpu_memory_used"])
+        session["gpu_utilization"].append(metrics["gpu_utilization"])
+        session["throughput"].append(metrics["throughput"])
         session["thread_counts"].append(metrics["threads_created"])
 
         if metrics["profile_stats"]:
@@ -166,9 +214,9 @@ class UnifiedPerformanceTracker:
 
     # 기존 Profiler 호환 메서드들
     @contextmanager
-    def profile(self, name: str):
+    def profile(self, name: str, items_processed: int = 0):
         """프로파일링 컨텍스트 (기존 호환성)"""
-        with self.track(name):
+        with self.track(name, items_processed=items_processed):
             yield
 
     def start(self, name: str) -> None:
