@@ -3,11 +3,10 @@ import torch
 import json
 from typing import Dict, List, Any, Tuple, Optional, Union
 import gc
-import logging
 from pathlib import Path
 from ..shared.types import LotteryNumber, PatternAnalysis
 from ..utils.memory_manager import MemoryManager, MemoryConfig
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.normalizer import Normalizer
 from ..utils.unified_config import ConfigProxy
 
@@ -123,11 +122,6 @@ class StateVectorBuilder:
         # 로거 설정
         self.logger = get_logger(__name__)
 
-        # 특성 벡터 캐시 초기화
-        from ..utils.state_vector_cache import get_cache
-
-        self.vector_cache = get_cache(config)
-
         # 메모리 관리자 초기화 (제공되지 않은 경우)
         self.embedding_dim = embedding_dim
         if memory_manager is None:
@@ -199,7 +193,7 @@ class StateVectorBuilder:
             cache_key = self._generate_cache_key(draw_history[-5:])
 
             # 중앙 집중식 캐시 확인
-            cached_vector = self.vector_cache.get(cache_key)
+            cached_vector = self._state_vector_cache.get(cache_key)
             if cached_vector is not None:
                 self.logger.debug(f"상태 벡터 캐시 히트: 키 {cache_key[:10]}...")
 
@@ -284,8 +278,6 @@ class StateVectorBuilder:
             if use_cache and len(draw_history) >= 5:
                 cache_key = self._generate_cache_key(draw_history[-5:])
                 # 중앙 집중식 캐시에 저장
-                self.vector_cache.set(cache_key, state_vector)
-                # 로컬 캐시에도 저장 (이전 방식 - 호환성 유지)
                 self._state_vector_cache[cache_key] = state_vector
 
                 # 특성 이름도 저장

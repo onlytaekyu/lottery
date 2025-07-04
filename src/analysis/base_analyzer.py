@@ -18,7 +18,7 @@ from ..utils.unified_performance import performance_monitor
 from ..utils.cache_manager import CacheManager
 from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
-from ..utils.unified_profiler import Profiler
+from ..utils.unified_performance import Profiler
 from ..utils.unified_performance import PerformanceTracker
 
 # 제네릭 타입 변수 정의

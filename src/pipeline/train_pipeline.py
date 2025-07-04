@@ -8,7 +8,7 @@ from src.models.ml.lightgbm_model import LightGBMModel
 from src.models.ml.xgboost_model import XGBoostModel
 from src.utils.data_loader import load_draw_history
 from src.utils.unified_config import load_config
-from src.utils.error_handler_refactored import get_logger, log_exception_with_trace
+from src.utils.unified_logging import get_logger, log_exception_with_trace
 from src.analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 
 # 로거 설정

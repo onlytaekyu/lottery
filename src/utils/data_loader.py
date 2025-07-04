@@ -28,7 +28,7 @@ import threading
 from datetime import datetime
 
 # 상대 임포트 사용
-from .error_handler_refactored import get_logger
+from .unified_logging import get_logger
 from .memory_manager import MemoryManager
 from ..shared.types import LotteryNumber
 from ..analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer

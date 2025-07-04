@@ -42,7 +42,7 @@ import platform
 import psutil
 
 from ..shared.types import LotteryNumber, ModelPrediction, PatternAnalysis
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.data_loader import load_draw_history
 from ..utils.pattern_filter import get_pattern_filter, PatternFilter
 from ..models.rl_model import RLModel
@@ -52,7 +52,6 @@ from ..models.base_model import BaseModel
 from ..utils.unified_config import ConfigProxy
 from ..analysis.pattern_analyzer import PatternAnalyzer
 from ..utils.unified_report import save_performance_report
-from ..utils.state_vector_cache import get_cache
 
 # 로거 설정
 logger = get_logger(__name__)

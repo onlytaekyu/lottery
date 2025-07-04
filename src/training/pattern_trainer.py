@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 
 from ..shared.types import LotteryNumber, PatternAnalysis
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 
 # 로거 설정
 logger = get_logger(__name__)

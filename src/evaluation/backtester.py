@@ -14,7 +14,7 @@ from collections import defaultdict, Counter
 from ..shared.types import LotteryNumber, ModelPrediction
 from ..utils.cache_manager import CacheManager
 from ..utils.unified_performance import performance_monitor
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.cache_paths import BACKTESTING_CACHE_DIR
 
 # 순환 참조 방지를 위해 타입 힌트에서만 사용

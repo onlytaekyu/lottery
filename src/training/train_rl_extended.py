@@ -11,10 +11,7 @@ import torch
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple, Set, Union
 import gc
-import logging
-
-from ..shared.types import LotteryNumber, PatternAnalysis, ModelPrediction
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.dynamic_batch_size_utils import get_safe_batch_size
 from ..core.state_vector_builder import StateVectorBuilder
 

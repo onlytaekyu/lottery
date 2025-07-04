@@ -7,7 +7,7 @@
 import numpy as np
 from typing import List, Dict, Tuple, Any, Optional, Union
 import os
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..shared.types import LotteryNumber, PatternAnalysis
 from .base_environment import BaseEnvironment
 

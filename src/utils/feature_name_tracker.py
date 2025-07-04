@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 
-from .error_handler_refactored import get_logger
+from .unified_logging import get_logger
 from .cache_paths import CACHE_DIR
 
 # 로거 설정
@@ -20,6 +20,7 @@ FEATURE_TRACKING_ENABLED = True
 
 # 특성 이름 저장 경로 (상대경로 사용)
 FEATURE_NAMES_DIR = CACHE_DIR / "feature_names"
+
 
 def save_feature_names(names: List[str], path: str) -> None:
     """
@@ -47,6 +48,7 @@ def save_feature_names(names: List[str], path: str) -> None:
     except Exception as e:
         logger.error(f"특성 이름 저장 실패: {str(e)}")
         raise IOError(f"특성 이름 저장 실패: {str(e)}")
+
 
 def load_feature_names(path: str) -> List[str]:
     """
@@ -87,6 +89,7 @@ def load_feature_names(path: str) -> List[str]:
         logger.error(f"특성 이름 로드 실패: {str(e)}")
         raise IOError(f"특성 이름 로드 실패: {str(e)}")
 
+
 def save_feature_index_mapping(feature_names: List[str], path: str) -> None:
     """
     특성 이름과 인덱스 매핑을 JSON 파일로 저장합니다.
@@ -117,6 +120,7 @@ def save_feature_index_mapping(feature_names: List[str], path: str) -> None:
         logger.error(f"특성 인덱스 매핑 저장 실패: {str(e)}")
         raise IOError(f"특성 인덱스 매핑 저장 실패: {str(e)}")
 
+
 def get_vector_name_path(vector_path: str) -> str:
     """
     벡터 파일의 경로에서 이름 파일 경로를 생성합니다.
@@ -134,6 +138,7 @@ def get_vector_name_path(vector_path: str) -> str:
     name_path = file_path.with_suffix("").with_suffix(".names.json")
 
     return str(name_path)
+
 
 def is_feature_tracking_enabled(
     config: Optional[Union[Dict[str, Any], Any]] = None,

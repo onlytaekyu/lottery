@@ -24,7 +24,7 @@ from collections import defaultdict, deque
 from torch.utils.data import DataLoader, Dataset
 from ..utils.unified_config import ConfigProxy
 from ..shared.types import LotteryNumber, ModelPrediction
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from .unified_trainer import UnifiedTrainer
 from ..models.lstm_model import LSTMModel
 from ..utils.cuda_optimizers import AMPTrainer

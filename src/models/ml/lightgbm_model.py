@@ -15,7 +15,7 @@ from pathlib import Path
 import time
 
 from ..base_model import BaseModel
-from ...utils.error_handler_refactored import get_logger
+from ...utils.unified_logging import get_logger
 from ...utils.model_saver import save_model, load_model
 
 logger = get_logger(__name__)
@@ -57,6 +57,10 @@ class LightGBMModel(BaseModel):
         self.params = self.default_params.copy()
         if config and "lightgbm" in config:
             self.params.update(config["lightgbm"])
+
+        # GPU 자동 감지 및 파라미터 적용
+        if config and config.get("use_gpu", False):
+            self.params["device_type"] = "gpu"
 
         logger.info(f"LightGBM 모델 초기화 완료: {self.params}")
 

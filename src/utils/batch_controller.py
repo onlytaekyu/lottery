@@ -11,7 +11,7 @@ import os
 import gc
 import time
 
-from .error_handler_refactored import get_logger
+from .unified_logging import get_logger
 from .unified_config import ConfigProxy
 from .unified_performance import MemoryTracker
 

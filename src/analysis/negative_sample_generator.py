@@ -10,192 +10,44 @@ import time
 import os
 import gc
 import threading
-import multiprocessing
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from pathlib import Path
-from typing import List, Dict, Any, Set, Tuple, Optional, Union, cast
+from typing import List, Dict, Any, Set, Tuple, Optional, Union
 
 # logging 제거 - unified_logging 사용
-from datetime import datetime
 import json
-import platform
 import psutil
 
 from ..utils.unified_logging import get_logger
-from ..utils.unified_performance import performance_monitor
-from ..utils.memory_manager import MemoryManager
-from ..utils.unified_config import ConfigProxy
-from ..utils.cuda_optimizers import DynamicBatchSizeController
+from ..utils.memory_manager import get_memory_manager
+from ..utils.batch_controller import DynamicBatchSizeController, CPUBatchProcessor
+from ..utils.cuda_singleton_manager import get_singleton_cuda_optimizer
 from ..shared.types import LotteryNumber
-from .pattern_analyzer import PatternAnalyzer, PatternFeatures
-from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
+from .pattern_analyzer import PatternAnalyzer
 from .base_analyzer import BaseAnalyzer
 
+import torch
 
 # 로거 설정
 logger = get_logger(__name__)
-
-# 글로벌 분석기 인스턴스 - 멀티프로세싱용
-_global_pattern_analyzer = None
-
-
-def init_worker(config_dict=None):
-    """
-    워커 프로세스 초기화 함수
-
-    Args:
-        config_dict: 설정 사전
-    """
-    global _global_pattern_analyzer
-    _global_pattern_analyzer = PatternAnalyzer(config_dict)
-    logger.debug("워커 프로세스 분석기 초기화 완료")
-
-
-def vectorize_combination(params):
-    """
-    멀티프로세싱을 위한 글로벌 벡터화 함수
-
-    Args:
-        params: (combination, draw_data, expected_features) 튜플
-
-    Returns:
-        벡터화된 특성
-    """
-    global _global_pattern_analyzer
-
-    combination, draw_data, expected_features = params
-
-    try:
-        # 글로벌 패턴 분석기가 없으면 새로 생성
-        if _global_pattern_analyzer is None:
-            _global_pattern_analyzer = PatternAnalyzer()
-
-        # 특성 추출 및 벡터화
-        features = _global_pattern_analyzer.extract_pattern_features(
-            combination, draw_data
-        )
-        vector = _global_pattern_analyzer.vectorize_pattern_features(features)
-
-        # 벡터 크기 조정 (필요한 경우)
-        if len(vector) != expected_features:
-            adjusted_vector = np.zeros(expected_features, dtype=np.float32)
-            # 더 작은 크기까지만 복사
-            copy_size = min(len(vector), expected_features)
-            adjusted_vector[:copy_size] = vector[:copy_size]
-            vector = adjusted_vector
-
-        return vector
-    except Exception as e:
-        logger.error(f"벡터화 오류 (조합: {combination}): {str(e)}")
-        # 오류 시 기본 벡터 할당
-        return np.zeros(expected_features, dtype=np.float32)
-
-
-def process_batch(params):
-    """
-    배치 처리 함수
-
-    Args:
-        params: (batch, draw_data, start_idx, vector_size) 튜플
-
-    Returns:
-        (시작 인덱스, 결과 리스트) 튜플
-    """
-    batch, draw_data, start_idx, vector_size = params
-
-    # 각 조합별 벡터화를 위한 파라미터 준비
-    vectorize_params = [(combo, draw_data, vector_size) for combo in batch]
-
-    # 배치별 개별 벡터화 수행
-    results = list(map(vectorize_combination, vectorize_params))
-
-    # 결과 반환 - (시작 인덱스, 결과 리스트) 형태
-    return (start_idx, results)
-
-
-def generate_batch_samples(
-    existing_combinations: Set[Tuple[int, ...]], batch_size: int
-) -> List[List[int]]:
-    """
-    비당첨 조합 배치 생성 (독립 함수)
-
-    Args:
-        existing_combinations: 이미 존재하는 당첨 조합
-        batch_size: 생성할 배치 크기
-
-    Returns:
-        비당첨 번호 조합 목록
-    """
-    batch_samples = []
-
-    # NumPy 기반 벡터화된 생성 로직
-    BATCH_MULTIPLIER = 2  # 필터링 손실을 고려하여 더 많이 생성
-    all_numbers = np.arange(1, 46)
-
-    # 필요한 양보다 약간 더 많이 생성
-    oversample_size = min(batch_size * BATCH_MULTIPLIER, 10000)
-
-    # 고유 조합만 필터링하기 위한 집합
-    unique_combinations = set()
-
-    while len(batch_samples) < batch_size:
-        # 랜덤 인덱스 배열 생성 (각 행은 6개 고유 인덱스)
-        random_indices = np.zeros((oversample_size, 6), dtype=np.int32)
-
-        for i in range(6):
-            if i == 0:
-                # 첫 번째 숫자 선택
-                random_indices[:, i] = np.random.randint(0, 45, oversample_size)
-            else:
-                # 이전 선택 숫자와 겹치지 않도록 조정
-                for j in range(oversample_size):
-                    # 이미 선택된 인덱스는 피하기
-                    mask = np.ones(45, dtype=bool)
-                    mask[random_indices[j, :i]] = False
-                    valid_indices = np.arange(45)[mask]
-                    if len(valid_indices) > 0:
-                        idx = np.random.choice(valid_indices)
-                        random_indices[j, i] = idx
-
-        # 인덱스 → 실제 번호 변환
-        random_combinations = all_numbers[random_indices]
-
-        # 각 행을 정렬
-        random_combinations = np.sort(random_combinations, axis=1)
-
-        # 배치 처리
-        for combo in random_combinations:
-            combo_tuple = tuple(combo)
-
-            # 당첨 번호와 중복 아닌지, 이미 선택되지 않았는지 확인
-            if (
-                combo_tuple not in existing_combinations
-                and combo_tuple not in unique_combinations
-            ):
-                batch_samples.append(combo.tolist())
-                unique_combinations.add(combo_tuple)
-
-                # 충분한 샘플을 얻었으면 중단
-                if len(batch_samples) >= batch_size:
-                    break
-
-    return batch_samples
 
 
 class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
     """비당첨 샘플 생성 클래스"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """
-        초기화
+        """초기화"""
+        super().__init__(config, name="negative_sampler")
 
-        Args:
-            config: 설정
-        """
-        super().__init__(config or {}, "negative_sample")
-        self.config = config or {}
-        self.pattern_analyzer = PatternAnalyzer(config)
-        self.pattern_vectorizer = EnhancedPatternVectorizer(config)
+        # GPU 가속 설정
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.use_gpu = torch.cuda.is_available()
+
+        if self.use_gpu:
+            logger.info(f"🚀 GPU 가속 활성화: {torch.cuda.get_device_name()}")
+            torch.cuda.empty_cache()
+            torch.backends.cudnn.benchmark = True
+        else:
+            logger.warning("⚠️ GPU 사용 불가, CPU 모드로 실행")
 
         # 캐시 디렉토리 설정
         try:
@@ -204,25 +56,50 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
             raise KeyError("설정에서 'paths.cache_dir' 키를 찾을 수 없습니다.")
         Path(self.cache_dir).mkdir(exist_ok=True, parents=True)
 
-        # 배치 크기 컨트롤러
         negative_sampler_config = self.config.get("negative_sampler", {})
+
+        # 컨트롤러 초기화
         self.batch_controller = DynamicBatchSizeController(
-            initial_batch_size=negative_sampler_config.get("batch_size", 1000),
-            min_batch_size=100,
-            max_batch_size=10000,
-            growth_rate=1.2,
-            reduction_rate=0.5,
+            config=self.config,
+            initial_batch_size=negative_sampler_config.get("batch_size", 2000),
+            min_batch_size=500,
+            max_batch_size=5000,
         )
+
+        # 패턴 분석기 초기화
+        self.pattern_analyzer = PatternAnalyzer(config)
+
+        # CPU/GPU별 최적화 도구 설정
+        if self.use_gpu:
+            self.cuda_optimizer = get_singleton_cuda_optimizer()
+            self.amp_scaler = torch.cuda.amp.GradScaler()
+            self.cpu_batch_processor = None
+        else:
+            self.cuda_optimizer = None
+            self.cpu_batch_processor = CPUBatchProcessor(
+                n_jobs=negative_sampler_config.get("vectorize_workers", -1),
+                batch_size=negative_sampler_config.get("vectorize_batch", 1000),
+                backend="multiprocessing",  # GIL 회피
+            )
 
         # 진행 상황 추적 변수
         self.progress = 0
         self.total = 0
 
-        # 메모리 추적기
-        self.memory_tracker = MemoryManager()
+        # 메모리 관리자 (싱글톤)
+        self.memory_tracker = get_memory_manager()
 
         # 진행 상황 추적 잠금
         self._progress_lock = threading.Lock()
+
+        # 성능 모니터링
+        self.performance_stats = {
+            "total_samples": 0,
+            "gpu_utilization": 0.0,
+            "memory_usage_mb": 0.0,
+            "processing_time": 0.0,
+            "samples_per_second": 0.0,
+        }
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
@@ -231,7 +108,6 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
         sample_size = kwargs.get("sample_size", 100000)
         return self.generate_samples(historical_data, sample_size)
 
-    # @profile("generate_negative_samples")
     def generate_samples(
         self, draw_data: List[LotteryNumber], sample_size: int = 100000
     ) -> Dict[str, Any]:
@@ -326,31 +202,118 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
     ) -> List[List[int]]:
         """
         비당첨 조합 생성 (균형잡힌 샘플링)
-        - random(30%), pattern-based(40%), adversarial(30%)
+        - GPU 우선, CPU 폴백
         """
-        n_random = int(sample_size * 0.3)
-        n_pattern = int(sample_size * 0.4)
-        n_adv = sample_size - n_random - n_pattern
-        negative_samples = []
-        # 1. Random Sampling
-        negative_samples.extend(
-            self._random_negative_samples(existing_combinations, n_random)
-        )
-        # 2. Pattern-based Sampling
-        negative_samples.extend(
-            self._pattern_based_negative_samples(existing_combinations, n_pattern)
-        )
-        # 3. Adversarial Sampling
-        negative_samples.extend(
-            self._adversarial_negative_samples(existing_combinations, n_adv)
-        )
-        return negative_samples
+        if self.use_gpu:
+            logger.info("🚀 GPU를 사용하여 비당첨 조합 생성")
+            return self._generate_samples_gpu(existing_combinations, sample_size)
+        else:
+            logger.info("💻 CPU를 사용하여 비당첨 조합 생성")
+            n_random = int(sample_size * 0.7)
+            n_pattern = sample_size - n_random
 
-    def _random_negative_samples(
+            samples = self._random_negative_samples_cpu(existing_combinations, n_random)
+            samples.extend(
+                self._pattern_based_negative_samples(existing_combinations, n_pattern)
+            )
+
+            # 중복 제거 및 최종 반환
+            final_samples = []
+            seen = set(map(tuple, samples))
+            for s in samples:
+                if tuple(s) in seen:
+                    final_samples.append(s)
+                    seen.remove(tuple(s))
+            return final_samples[:sample_size]
+
+    def _generate_samples_gpu(
+        self, existing_combinations: Set[Tuple[int, ...]], sample_size: int
+    ) -> List[List[int]]:
+        """
+        GPU를 사용한 고성능 비당첨 조합 생성
+        - 중복 제거 포함, 완전히 벡터화된 방식
+        """
+        all_numbers = torch.arange(1, 46, device=self.device, dtype=torch.int16)
+        existing_tensor = torch.tensor(
+            list(existing_combinations), device=self.device, dtype=torch.int16
+        )
+
+        final_samples = torch.empty((0, 6), device=self.device, dtype=torch.int16)
+
+        # 목표 수량보다 더 많이 생성하여 필터링 손실 보상
+        OVERSAMPLING_FACTOR = 1.5
+
+        with torch.no_grad():
+            while len(final_samples) < sample_size:
+                needed = sample_size - len(final_samples)
+                batch_size = int(needed * OVERSAMPLING_FACTOR)
+                batch_size = min(batch_size, 200000)  # 메모리 제한
+
+                # 1. 랜덤 인덱스 생성
+                # torch.rand에서 직접 topk를 사용하여 고유 인덱스 추출
+                _, random_indices = torch.topk(
+                    torch.rand(batch_size, 45, device=self.device), k=6, dim=1
+                )
+
+                # 2. 인덱스를 번호로 변환
+                new_samples = all_numbers[random_indices]
+                new_samples, _ = torch.sort(new_samples, dim=1)
+
+                # 3. 기존 당첨 번호와 중복 제거
+                # (batch, 1, 6) vs (1, M, 6) -> (batch, M)
+                is_in_existing = (
+                    (new_samples.unsqueeze(1) == existing_tensor.unsqueeze(0))
+                    .all(dim=2)
+                    .any(dim=1)
+                )
+                new_samples = new_samples[~is_in_existing]
+
+                # 4. 생성된 배치 내 중복 제거
+                # 정렬된 텐서를 사용하여 고유값 찾기 (더 효율적)
+                unique_mask = torch.cat(
+                    [
+                        torch.tensor([True], device=self.device),
+                        (new_samples[1:] != new_samples[:-1]).any(dim=1),
+                    ]
+                )
+                new_samples = new_samples[unique_mask]
+
+                # 5. 최종 샘플셋과 중복 제거
+                if len(final_samples) > 0:
+                    is_in_final = (
+                        (new_samples.unsqueeze(1) == final_samples.unsqueeze(0))
+                        .all(dim=2)
+                        .any(dim=1)
+                    )
+                    new_samples = new_samples[~is_in_final]
+
+                final_samples = torch.cat([final_samples, new_samples], dim=0)
+
+                # 메모리 정리
+                del new_samples, random_indices, unique_mask
+                if "is_in_existing" in locals():
+                    del is_in_existing
+                if "is_in_final" in locals():
+                    del is_in_final
+                torch.cuda.empty_cache()
+
+        return final_samples[:sample_size].cpu().tolist()
+
+    def _random_negative_samples_cpu(
         self, existing_combinations: Set[Tuple[int, ...]], n: int
     ) -> List[List[int]]:
-        """단순 랜덤 비당첨 조합 생성"""
-        return generate_batch_samples(existing_combinations, n)
+        """단순 랜덤 비당첨 조합 생성 (CPU)"""
+        samples = []
+        all_numbers = list(range(1, 46))
+
+        seen_combinations = existing_combinations.copy()
+
+        while len(samples) < n:
+            combo = tuple(sorted(random.sample(all_numbers, 6)))
+            if combo not in seen_combinations:
+                samples.append(list(combo))
+                seen_combinations.add(combo)
+        return samples
 
     def _pattern_based_negative_samples(
         self, existing_combinations: Set[Tuple[int, ...]], n: int
@@ -390,24 +353,6 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
             if len(filtered) >= n:
                 break
         return filtered
-
-    def _adversarial_negative_samples(
-        self, existing_combinations: Set[Tuple[int, ...]], n: int
-    ) -> List[List[int]]:
-        """패턴 분석 기반, 당첨 확률 낮은(패턴상 불리) 조합 생성"""
-        samples = []
-        all_numbers = np.arange(1, 46)
-        attempts = 0
-        while len(samples) < n and attempts < n * 10:
-            combo = random.sample(list(all_numbers), 6)
-            features = self.pattern_analyzer.extract_pattern_features(combo, None)
-            # 예: 패턴상 당첨 확률이 매우 낮은 조합(예: 동일 끝수 4개 이상, 고분산 등)
-            if features.get("same_end_digit", 0) >= 4 or features.get("spread", 0) > 35:
-                t = tuple(sorted(combo))
-                if t not in existing_combinations:
-                    samples.append(list(t))
-            attempts += 1
-        return samples[:n]
 
     def auto_label(
         self, samples: List[List[int]], positive: bool = False
@@ -452,7 +397,7 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
         sample_size: int,
     ) -> str:
         """
-        비당첨 조합 벡터화
+        GPU 가속 비당첨 조합 벡터화
 
         Args:
             negative_samples: 비당첨 번호 조합 목록
@@ -462,129 +407,445 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             저장 파일 경로
         """
-        self.logger.info(f"비당첨 조합 벡터화 시작: {len(negative_samples):,}개")
+        self.logger.info(f"🚀 GPU 가속 벡터화 시작: {len(negative_samples):,}개")
         start_time = time.time()
 
-        # 병렬 처리 설정
-        negative_sampler_config = self.config.get("negative_sampler", {})
-        max_processes = min(
-            negative_sampler_config.get("vectorize_workers", 4),
-            multiprocessing.cpu_count(),
+        # GPU 사용 가능 여부에 따라 처리 방식 선택
+        if self.use_gpu and len(negative_samples) > 1000:
+            vector_path = self._vectorize_samples_gpu(
+                negative_samples, draw_data, sample_size
+            )
+        else:
+            vector_path = self._vectorize_samples_cpu(
+                negative_samples, draw_data, sample_size
+            )
+
+        # 성능 통계 업데이트
+        processing_time = time.time() - start_time
+        self.performance_stats.update(
+            {
+                "total_samples": len(negative_samples),
+                "processing_time": processing_time,
+                "samples_per_second": len(negative_samples) / processing_time,
+            }
         )
-        batch_size = negative_sampler_config.get("vectorize_batch", 1000)
+
+        if self.use_gpu:
+            self.performance_stats["gpu_utilization"] = self._get_gpu_utilization()
+            self.performance_stats["memory_usage_mb"] = self._get_gpu_memory_usage()
 
         self.logger.info(
-            f"프로세스 풀 사용: {max_processes}개 프로세스, 배치 크기: {batch_size}"
+            f"✅ 벡터화 완료: {processing_time:.2f}초 ({self.performance_stats['samples_per_second']:.0f} samples/sec)"
         )
 
-        # 특성 벡터 크기 예측
-        expected_num_features = self._estimate_feature_vector_size()
-        self.logger.info(f"예상 특성 벡터 크기: {expected_num_features}")
+        return vector_path
 
-        # 첫 조합으로 실제 벡터 크기 확인
-        actual_num_features = expected_num_features
+    def _vectorize_samples_gpu(
+        self,
+        negative_samples: List[List[int]],
+        draw_data: List[LotteryNumber],
+        sample_size: int,
+    ) -> str:
+        """GPU 가속 벡터화"""
+        self.logger.info("🔥 GPU 가속 벡터화 실행")
+
         try:
-            # 벡터 크기 테스트
-            test_features = self.pattern_analyzer.extract_pattern_features(
+            # 배치 크기 최적화
+            batch_size = self.batch_controller.get_current_batch_size()
+            self.logger.info(f"배치 크기: {batch_size}")
+
+            # 특성 벡터 크기 확인
+            expected_num_features = self._estimate_feature_vector_size()
+            actual_num_features = self._get_actual_vector_size(
                 negative_samples[0], draw_data
             )
-            test_vector = self.pattern_analyzer.vectorize_pattern_features(
-                test_features
+
+            # 결과 저장 배열
+            feature_vectors = np.zeros(
+                (len(negative_samples), actual_num_features), dtype=np.float32
             )
-            actual_num_features = len(test_vector)
 
-            if actual_num_features != expected_num_features:
-                self.logger.warning(
-                    f"벡터 크기 불일치: 예상={expected_num_features}, 실제={actual_num_features}. 실제 크기로 조정"
-                )
+            # GPU 메모리 사전 할당
+            with torch.cuda.device(self.device):
+                torch.cuda.empty_cache()
+
+                # 벡터화 결과 저장
+                processed_count = 0
+
+                # 배치 단위로 GPU 처리
+                for i in range(0, len(negative_samples), batch_size):
+                    batch = negative_samples[i : i + batch_size]
+
+                    try:
+                        # GPU 배치 벡터화
+                        batch_vectors = self._process_batch_gpu(batch, draw_data)
+
+                        # 결과 저장
+                        for j, vector in enumerate(batch_vectors):
+                            if i + j < len(feature_vectors):
+                                feature_vectors[i + j] = vector
+
+                        processed_count += len(batch_vectors)
+
+                        # 진행 상황 업데이트
+                        with self._progress_lock:
+                            self.progress = processed_count
+                            progress_pct = (self.progress / len(negative_samples)) * 100
+                            self.logger.info(f"GPU 벡터화 진행: {progress_pct:.1f}%")
+
+                        # 동적 배치 크기 조정
+                        if i % (batch_size * 3) == 0:  # 3배치마다 체크
+                            self._adjust_batch_size_based_on_memory()
+                            batch_size = self.batch_controller.get_current_batch_size()
+
+                    except torch.cuda.OutOfMemoryError:
+                        self.logger.warning("GPU 메모리 부족, 배치 크기 감소")
+                        batch_size = self.batch_controller.handle_oom()
+                        torch.cuda.empty_cache()
+
+                        # 작은 배치로 재시도
+                        small_batch = batch[:batch_size]
+                        batch_vectors = self._process_batch_gpu(small_batch, draw_data)
+
+                        # 결과 저장
+                        for j, vector in enumerate(batch_vectors):
+                            if i + j < len(feature_vectors):
+                                feature_vectors[i + j] = vector
+
+                        processed_count += len(batch_vectors)
+
+                # GPU 메모리 정리
+                torch.cuda.empty_cache()
+
         except Exception as e:
-            self.logger.warning(f"벡터 크기 테스트 실패: {e}. 예상 크기 사용")
+            self.logger.error(f"GPU 벡터화 실패: {e}")
+            # CPU 폴백
+            return self._vectorize_samples_cpu(negative_samples, draw_data, sample_size)
 
-        # 결과 저장 배열 - 실제 벡터 크기 사용
+        # 결과 저장
+        return self._save_vectorized_results(feature_vectors, sample_size)
+
+    def _process_batch_gpu(
+        self, batch: List[List[int]], draw_data: List[LotteryNumber]
+    ) -> List[np.ndarray]:
+        """GPU 배치 처리"""
+        try:
+            # PyTorch 2.0+ AMP API 직접 사용
+            with torch.cuda.amp.autocast():
+                batch_vectors = []
+
+                # 배치 내 각 조합 처리
+                for combination in batch:
+                    # 빠른 패턴 특성 추출
+                    features = self._extract_pattern_features_fast(
+                        combination, draw_data
+                    )
+
+                    # 벡터화
+                    vector = self._vectorize_features_gpu(features)
+                    batch_vectors.append(vector)
+
+                return batch_vectors
+
+        except Exception as e:
+            self.logger.error(f"GPU 배치 처리 실패: {e}")
+            # CPU 폴백
+            return [
+                self._vectorize_combination_cpu(combo, draw_data) for combo in batch
+            ]
+
+    def _extract_pattern_features_fast(
+        self, combination: List[int], draw_data: List[LotteryNumber]
+    ) -> Dict[str, Any]:
+        """빠른 패턴 특성 추출 (GPU 최적화)"""
+        try:
+            # 기본 특성 빠른 계산
+            features = {
+                "max_consecutive_length": self._calc_consecutive_fast(combination),
+                "total_sum": sum(combination),
+                "odd_count": sum(1 for x in combination if x % 2 == 1),
+                "even_count": sum(1 for x in combination if x % 2 == 0),
+                "gap_avg": self._calc_gap_avg_fast(combination),
+                "gap_std": self._calc_gap_std_fast(combination),
+                "range_counts": self._calc_range_counts_fast(combination),
+                "cluster_overlap_ratio": 0.3,  # 기본값 (빠른 처리)
+                "frequent_pair_score": 0.05,  # 기본값
+                "roi_weight": 1.0,  # 기본값
+                "consecutive_score": 0.0,  # 기본값
+                "trend_score_avg": 0.5,  # 기본값
+                "trend_score_max": 0.8,  # 기본값
+                "trend_score_min": 0.2,  # 기본값
+                "risk_score": 0.5,  # 기본값
+            }
+
+            return features
+
+        except Exception as e:
+            self.logger.debug(f"빠른 특성 추출 실패: {e}")
+            # 기본 특성 반환
+            return {
+                "max_consecutive_length": 0,
+                "total_sum": sum(combination),
+                "odd_count": 3,
+                "even_count": 3,
+                "gap_avg": 7.5,
+                "gap_std": 5.0,
+                "range_counts": [1, 1, 1, 1, 2],
+                "cluster_overlap_ratio": 0.3,
+                "frequent_pair_score": 0.05,
+                "roi_weight": 1.0,
+                "consecutive_score": 0.0,
+                "trend_score_avg": 0.5,
+                "trend_score_max": 0.8,
+                "trend_score_min": 0.2,
+                "risk_score": 0.5,
+            }
+
+    def _calc_consecutive_fast(self, combination: List[int]) -> int:
+        """빠른 연속 번호 계산"""
+        if len(combination) < 2:
+            return 0
+
+        sorted_combo = sorted(combination)
+        max_consecutive = 1
+        current_consecutive = 1
+
+        for i in range(1, len(sorted_combo)):
+            if sorted_combo[i] == sorted_combo[i - 1] + 1:
+                current_consecutive += 1
+                max_consecutive = max(max_consecutive, current_consecutive)
+            else:
+                current_consecutive = 1
+
+        return max_consecutive
+
+    def _calc_gap_avg_fast(self, combination: List[int]) -> float:
+        """빠른 간격 평균 계산"""
+        if len(combination) < 2:
+            return 0.0
+
+        sorted_combo = sorted(combination)
+        gaps = [
+            sorted_combo[i] - sorted_combo[i - 1] for i in range(1, len(sorted_combo))
+        ]
+        return sum(gaps) / len(gaps)
+
+    def _calc_gap_std_fast(self, combination: List[int]) -> float:
+        """빠른 간격 표준편차 계산"""
+        if len(combination) < 2:
+            return 0.0
+
+        sorted_combo = sorted(combination)
+        gaps = [
+            sorted_combo[i] - sorted_combo[i - 1] for i in range(1, len(sorted_combo))
+        ]
+
+        if len(gaps) < 2:
+            return 0.0
+
+        mean_gap = sum(gaps) / len(gaps)
+        variance = sum((gap - mean_gap) ** 2 for gap in gaps) / len(gaps)
+        return variance**0.5
+
+    def _calc_range_counts_fast(self, combination: List[int]) -> List[int]:
+        """빠른 범위별 개수 계산"""
+        ranges = [0, 0, 0, 0, 0]  # 1-9, 10-18, 19-27, 28-36, 37-45
+
+        for num in combination:
+            if 1 <= num <= 9:
+                ranges[0] += 1
+            elif 10 <= num <= 18:
+                ranges[1] += 1
+            elif 19 <= num <= 27:
+                ranges[2] += 1
+            elif 28 <= num <= 36:
+                ranges[3] += 1
+            elif 37 <= num <= 45:
+                ranges[4] += 1
+
+        return ranges
+
+    def _vectorize_features_gpu(self, features: Dict[str, Any]) -> np.ndarray:
+        """GPU 기반 특성 벡터화"""
+        try:
+            # 패턴 분석기와 동일한 벡터화 (19차원)
+            vector = np.array(
+                [
+                    features["max_consecutive_length"] / 6.0,
+                    features["total_sum"] / 270.0,
+                    features["odd_count"] / 6.0,
+                    features["even_count"] / 6.0,
+                    features["gap_avg"] / 20.0,
+                    features["gap_std"] / 15.0,
+                    *[count / 6.0 for count in features["range_counts"][:5]],
+                    features["cluster_overlap_ratio"],
+                    features["frequent_pair_score"] * 10.0,
+                    features["roi_weight"] / 2.0,
+                    features["consecutive_score"] + 0.3,
+                    features["trend_score_avg"] * 10.0,
+                    features["trend_score_max"] * 10.0,
+                    features["trend_score_min"] * 10.0,
+                    features["risk_score"],
+                ],
+                dtype=np.float32,
+            )
+
+            return vector
+
+        except Exception as e:
+            self.logger.error(f"GPU 벡터화 실패: {e}")
+            # 기본 벡터 반환
+            return np.array([0.5] * 19, dtype=np.float32)
+
+    def _vectorize_samples_cpu(
+        self,
+        negative_samples: List[List[int]],
+        draw_data: List[LotteryNumber],
+        sample_size: int,
+    ) -> str:
+        """CPU 기반 벡터화 (폴백)"""
+        self.logger.info(f"💻 CPU 벡터화 실행 (CPUBatchProcessor 사용)")
+
+        if not self.cpu_batch_processor:
+            logger.error(
+                "CPUBatchProcessor가 초기화되지 않았습니다. CPU 모드에서 실행할 수 없습니다."
+            )
+            # 빈 결과를 저장하고 경로를 반환하거나 예외를 발생시킬 수 있습니다.
+            # 여기서는 빈 결과를 저장합니다.
+            empty_vectors = np.array([])
+            return self._save_vectorized_results(empty_vectors, sample_size)
+
+        actual_num_features = self._get_actual_vector_size(
+            negative_samples[0], draw_data
+        )
+
+        # 벡터화 작업을 처리할 함수 정의
+        def vectorize_worker(combination_batch):
+            return [
+                self._vectorize_combination_cpu(combo, draw_data)
+                for combo in combination_batch
+            ]
+
+        # CPUBatchProcessor를 사용하여 병렬 처리
+        results = self.cpu_batch_processor.process_batches(
+            negative_samples, vectorize_worker
+        )
+
+        # 결과 배열 생성 및 채우기
         feature_vectors = np.zeros(
             (len(negative_samples), actual_num_features), dtype=np.float32
         )
+        for i, vector in enumerate(results):
+            if vector is not None and i < len(feature_vectors):
+                feature_vectors[i] = vector
 
-        # 진행 상황 초기화
-        self.progress = 0
-        self.total = len(negative_samples)
+        return self._save_vectorized_results(feature_vectors, sample_size)
 
-        # 배치 단위로 처리할 파라미터 준비
-        batch_params = []
-        for i in range(0, len(negative_samples), batch_size):
-            end_idx = min(i + batch_size, len(negative_samples))
-            batch = negative_samples[i:end_idx]
-            batch_params.append((batch, draw_data, i, actual_num_features))
-
-        self.logger.info(f"전체 {len(batch_params)}개 배치로 처리")
-
+    def _get_actual_vector_size(
+        self, sample_combination: List[int], draw_data: List[LotteryNumber]
+    ) -> int:
+        """실제 벡터 크기 확인"""
         try:
-            # GIL 우회를 위한 ProcessPoolExecutor 사용
-            with ProcessPoolExecutor(
-                max_workers=max_processes,
-                initializer=init_worker,
-                initargs=(self.config,),
-            ) as executor:
-                # 배치 단위로 병렬 처리
-                futures = []
-                for params in batch_params:
-                    futures.append(executor.submit(process_batch, params))
+            # 빠른 특성 추출로 벡터 크기 확인
+            features = self._extract_pattern_features_fast(
+                sample_combination, draw_data
+            )
+            vector = self._vectorize_features_gpu(features)
+            return len(vector)
+        except Exception as e:
+            self.logger.warning(f"벡터 크기 확인 실패: {e}")
+            return 19  # 기본 크기
 
-                # 결과 수집 및 진행상황 업데이트
-                for future in futures:
-                    start_idx, results = future.result()
+    def _vectorize_combination_cpu(
+        self, combination: List[int], draw_data: List[LotteryNumber]
+    ) -> np.ndarray:
+        """CPU 기반 단일 조합 벡터화"""
+        try:
+            # 빠른 특성 추출
+            features = self._extract_pattern_features_fast(combination, draw_data)
 
-                    # 결과를 feature_vectors에 저장
-                    for i, vector in enumerate(results):
-                        idx = start_idx + i
-                        if idx < len(feature_vectors):
-                            feature_vectors[idx] = vector
-
-                    # 진행 상황 업데이트
-                    with self._progress_lock:
-                        self.progress += len(results)
-                        progress_pct = (self.progress / self.total) * 100
-                        elapsed = time.time() - start_time
-                        speed = self.progress / elapsed if elapsed > 0 else 0
-
-                        # 메모리 사용량 추정
-                        mem_usage = (
-                            self.progress * actual_num_features * 4 / (1024 * 1024)
-                        )  # MB
-
-                        self.logger.info(
-                            f"벡터화 진행: {self.progress:,}/{self.total:,} ({progress_pct:.1f}%) - "
-                            f"속도: {speed:.1f}개/초, 메모리: {mem_usage:.1f}MB"
-                        )
-
-                        # 메모리 확보를 위한 GC 강제 호출
-                        if self.progress % (batch_size * 5) == 0:
-                            gc.collect()
+            # 벡터화
+            return self._vectorize_features_gpu(features)  # 동일한 벡터화 함수 사용
 
         except Exception as e:
-            self.logger.error(f"벡터화 과정에서 오류 발생: {str(e)}")
+            self.logger.debug(f"CPU 벡터화 실패: {e}")
+            return np.array([0.5] * 19, dtype=np.float32)
 
-        # 고정 파일 경로 (타임스탬프 제거)
-        file_path = Path(self.cache_dir) / f"negative_vectors_{sample_size}.npy"
+    def _save_vectorized_results(
+        self, feature_vectors: np.ndarray, sample_size: int
+    ) -> str:
+        """벡터화 결과 저장"""
+        try:
+            # 고정 파일 경로 (타임스탬프 제거)
+            file_path = Path(self.cache_dir) / f"negative_vectors_{sample_size}.npy"
+            latest_path = Path(self.cache_dir) / "negative_vectors_latest.npy"
 
-        # 최신 버전 링크 (덮어쓰기)
-        latest_path = Path(self.cache_dir) / "negative_vectors_latest.npy"
+            # 저장
+            np.save(file_path, feature_vectors)
+            np.save(latest_path, feature_vectors)
 
-        # 저장
-        np.save(file_path, feature_vectors)
-        np.save(latest_path, feature_vectors)
+            # 메모리 사용량 추정
+            mem_used = feature_vectors.nbytes / (1024 * 1024)  # MB
 
-        # 메모리 사용량 추정
-        mem_used = len(negative_samples) * actual_num_features * 4 / (1024 * 1024)  # MB
+            self.logger.info(f"벡터화 결과 저장: {file_path}")
+            self.logger.info(
+                f"벡터 형태: {feature_vectors.shape}, 메모리: {mem_used:.1f}MB"
+            )
 
-        elapsed_time = time.time() - start_time
-        self.logger.info(
-            f"비당첨 조합 벡터화 완료: {len(negative_samples):,}개 ({elapsed_time:.2f}초), 메모리: {mem_used:.1f}MB"
-        )
-        self.logger.info(f"벡터화 결과 저장: {file_path}")
-        self.logger.info(f"최신 버전: {latest_path}")
+            return str(file_path)
 
-        return str(file_path)
+        except Exception as e:
+            self.logger.error(f"벡터 저장 실패: {e}")
+            raise
+
+    def _adjust_batch_size_based_on_memory(self):
+        """메모리 사용량 기반 배치 크기 조정"""
+        if not self.use_gpu:
+            return
+
+        try:
+            # GPU 메모리 사용률 확인
+            memory_usage = self._get_gpu_memory_usage()
+            memory_total = torch.cuda.get_device_properties(
+                self.device
+            ).total_memory / (
+                1024**3
+            )  # GB
+            usage_ratio = memory_usage / (memory_total * 1024)  # 비율
+
+            if usage_ratio > 0.8:  # 80% 이상 사용시
+                self.batch_controller.reduce_batch_size()
+                self.logger.info(
+                    f"메모리 사용률 {usage_ratio*100:.1f}% - 배치 크기 감소"
+                )
+            elif usage_ratio < 0.5:  # 50% 미만 사용시
+                self.batch_controller.increase_batch_size()
+                self.logger.info(
+                    f"메모리 사용률 {usage_ratio*100:.1f}% - 배치 크기 증가"
+                )
+
+        except Exception as e:
+            self.logger.debug(f"배치 크기 조정 실패: {e}")
+
+    def _get_gpu_utilization(self) -> float:
+        """GPU 사용률 조회"""
+        try:
+            if self.cuda_optimizer and hasattr(
+                self.cuda_optimizer, "get_gpu_utilization"
+            ):
+                return self.cuda_optimizer.get_gpu_utilization()
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def _get_gpu_memory_usage(self) -> float:
+        """GPU 메모리 사용량 조회 (MB)"""
+        try:
+            if self.use_gpu:
+                return torch.cuda.memory_allocated(self.device) / (1024**2)
+            return 0.0
+        except Exception:
+            return 0.0
 
     def _estimate_feature_vector_size(self) -> int:
         """

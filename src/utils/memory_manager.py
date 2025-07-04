@@ -24,7 +24,7 @@ import os
 import random
 
 # 상대경로 임포트로 변경
-from .error_handler_refactored import get_logger
+from .unified_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -686,13 +686,24 @@ class MemoryManager:
     _instance = None
 
     def __init__(self, config: Optional[MemoryConfig] = None):
-        """
-        메모리 관리자 초기화
-
-        Args:
-            config: 메모리 관리 설정 (기본값: None)
-        """
+        """메모리 관리자 초기화"""
         self.config = config or MemoryConfig()
+        self._last_cleanup_time = time.time()
+        self._cleanup_count = 0
+        self._memory_history = []
+
+        # 최적화된 정리 설정
+        self.cleanup_interval = 30.0  # 2초 → 30초로 증가
+        self.cleanup_threshold = 0.8  # 80% 사용시에만 정리
+        self.max_memory_usage_mb = 1024  # 1GB 제한
+
+        # 성능 모니터링
+        self.performance_monitoring = True
+
+        logger.info(
+            f"💾 메모리 관리자 초기화 - 정리 간격: {self.cleanup_interval}초, 임계값: {self.cleanup_threshold*100}%"
+        )
+
         self.lock = threading.RLock()
         self.memory_pool = MemoryPool(self.config)
 
@@ -1042,14 +1053,16 @@ class MemoryManager:
 
     def should_cleanup(self) -> bool:
         """
-        메모리 정리 필요 여부 확인
+        스마트 메모리 정리 필요 여부 확인 - 최적화된 버전
 
         Returns:
             정리 필요 여부
         """
         try:
-            # 마지막 정리 후 일정 시간이 지나지 않았다면 정리하지 않음
-            if time.time() - self._last_cleanup_time < 5.0:  # 최소 5초 간격
+            current_time = time.time()
+
+            # 최소 정리 간격 확인 (30초로 증가)
+            if current_time - self._last_cleanup_time < self.cleanup_interval:
                 return False
 
             if torch.cuda.is_available():
@@ -1059,6 +1072,9 @@ class MemoryManager:
                     / torch.cuda.get_device_properties(0).total_memory
                 )
 
+                # 메모리 히스토리 업데이트
+                self._update_memory_history(memory_usage)
+
                 # 경고 임계값 초과 시 경고 발생
                 if (
                     memory_usage > self.config.memory_usage_warning
@@ -1066,7 +1082,7 @@ class MemoryManager:
                 ):
                     self._memory_warning_issued = True
                     self._memory_warning_count += 1
-                    self._last_warning_time = time.time()
+                    self._last_warning_time = current_time
                     logger.warning(
                         f"GPU 메모리 사용률 높음: {memory_usage*100:.1f}% "
                         f"(경고 {self._memory_warning_count}회 발생)"
@@ -1079,13 +1095,74 @@ class MemoryManager:
                 ):
                     self._memory_warning_issued = False
 
-                return memory_usage > self.config.max_memory_usage
+                # 스마트 정리 조건
+                memory_pressure = memory_usage > self.cleanup_threshold
+                increasing_trend = self._is_memory_increasing()
+
+                should_clean = memory_pressure or (
+                    increasing_trend and memory_usage > 0.6
+                )
+
+                if should_clean and self.performance_monitoring:
+                    logger.info(
+                        f"🧹 GPU 메모리 정리 필요: 사용률={memory_usage*100:.1f}%"
+                    )
+
+                return should_clean
             else:
                 # CPU 메모리 사용률 검사
                 memory_usage = psutil.virtual_memory().percent / 100.0
-                return memory_usage > self.config.max_memory_usage
+                self._update_memory_history(memory_usage)
+
+                memory_pressure = memory_usage > self.cleanup_threshold
+                increasing_trend = self._is_memory_increasing()
+
+                should_clean = memory_pressure or (
+                    increasing_trend and memory_usage > 0.7
+                )
+
+                if should_clean and self.performance_monitoring:
+                    logger.info(
+                        f"🧹 CPU 메모리 정리 필요: 사용률={memory_usage*100:.1f}%"
+                    )
+
+                return should_clean
+
         except Exception as e:
             logger.error(f"메모리 정리 필요 여부 확인 중 오류 발생: {str(e)}")
+            return False
+
+    def _update_memory_history(self, usage: float):
+        """메모리 사용률 히스토리 업데이트"""
+        current_time = time.time()
+
+        if not hasattr(self, "_memory_history"):
+            self._memory_history = []
+
+        self._memory_history.append((current_time, usage))
+
+        # 최근 10개 기록만 유지
+        if len(self._memory_history) > 10:
+            self._memory_history = self._memory_history[-10:]
+
+    def _is_memory_increasing(self) -> bool:
+        """메모리 사용량 증가 추세 확인"""
+        if not hasattr(self, "_memory_history") or len(self._memory_history) < 3:
+            return False
+
+        try:
+            # 최근 3개 기록의 평균과 이전 기록 비교
+            recent_avg = sum(usage for _, usage in self._memory_history[-3:]) / 3
+            older_avg = (
+                sum(usage for _, usage in self._memory_history[-6:-3]) / 3
+                if len(self._memory_history) >= 6
+                else recent_avg
+            )
+
+            # 10% 이상 증가시 증가 추세로 판단
+            return recent_avg > older_avg * 1.1
+
+        except Exception:
             return False
 
     def cleanup(self) -> None:

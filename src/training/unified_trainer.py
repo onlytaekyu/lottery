@@ -19,7 +19,7 @@ from ..shared.types import LotteryNumber, PatternAnalysis, ModelPrediction
 from ..models.base_model import BaseModel
 from ..models.rl_model import RLModel
 from ..models.gnn_model import GNNModel
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..utils.dynamic_batch_size_utils import get_safe_batch_size
 from ..analysis.pattern_analyzer import PatternAnalyzer
 from ..training.train_rl import RLTrainer

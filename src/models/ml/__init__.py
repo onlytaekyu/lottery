@@ -6,14 +6,10 @@
 
 from .ml_models import MLBaseModel
 from .lightgbm_model import LightGBMModel
-from .xgboost_model import XGBoostModel
-from .catboost_model import CatBoostModel
 from .random_forest_model import RandomForestModel
 
 __all__ = [
     "MLBaseModel",
     "LightGBMModel",
-    "XGBoostModel",
-    "CatBoostModel",
     "RandomForestModel",
 ]

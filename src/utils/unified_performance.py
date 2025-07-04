@@ -350,9 +350,8 @@ def get_performance_manager() -> UnifiedPerformanceTracker:
 
 
 # 기존 호환성을 위한 함수들
-def get_profiler() -> UnifiedPerformanceTracker:
-    """프로파일러 반환 (기존 호환성)"""
-    return get_performance_manager()
+def get_profiler():
+    return UnifiedPerformanceTracker()
 
 
 def profile(name: str):

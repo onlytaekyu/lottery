@@ -18,7 +18,7 @@ import xgboost as xgb
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from ..base_model import BaseModel
-from ...utils.error_handler_refactored import get_logger
+from ...utils.unified_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -581,3 +581,190 @@ class XGBoostModel(MLBaseModel):
         result.update(importance)
 
         return result
+
+
+class TCNModel(MLBaseModel):
+    """
+    TCN 기반 로또 번호 예측 모델
+
+    Temporal Convolutional Network를 사용하여 로또 번호의 점수를 예측합니다.
+    """
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """
+        TCN 모델 초기화
+
+        Args:
+            config: 모델 설정
+        """
+        super().__init__(config, model_name="TCNModel")
+
+        # config가 None인 경우 처리
+        config = config or {}
+
+        # TCN 아키텍처 설정
+        self.input_dim = config.get("input_dim", 45)
+        self.num_channels = config.get("num_channels", [64, 128, 256, 128, 64])
+        self.kernel_size = config.get("kernel_size", 3)
+        self.dropout = config.get("dropout", 0.2)
+        self.activation = config.get("activation", "relu")
+
+        # 학습 설정
+        self.learning_rate = config.get("learning_rate", 0.001)
+        self.weight_decay = config.get("weight_decay", 1e-5)
+        self.batch_size = config.get("batch_size", 64)
+
+        # 시계열 설정
+        self.sequence_length = config.get("sequence_length", 50)
+        self.prediction_horizon = config.get("prediction_horizon", 1)
+
+        logger.info(
+            f"TCN 모델 초기화 완료: {self.input_dim}, {self.num_channels}, {self.kernel_size}, {self.dropout}, {self.activation}, {self.learning_rate}, {self.weight_decay}, {self.batch_size}, {self.sequence_length}, {self.prediction_horizon}"
+        )
+
+    def fit(self, X: np.ndarray, y: np.ndarray, **kwargs) -> Dict[str, Any]:
+        """
+        TCN 모델 학습
+
+        Args:
+            X: 특성 벡터
+            y: 타겟 점수
+            **kwargs: 추가 매개변수 (eval_set, early_stopping_rounds 등)
+
+        Returns:
+            학습 결과 및 메타데이터
+        """
+        # 로깅
+        logger.info(f"TCN 모델 학습 시작: X 형태={X.shape}, y 형태={y.shape}")
+
+        # 기본 매개변수 설정
+        early_stopping_rounds = kwargs.get("early_stopping_rounds", 50)
+        num_boost_round = kwargs.get("num_boost_round", 1000)
+        feature_names = kwargs.get(
+            "feature_names", [f"feature_{i}" for i in range(X.shape[1])]
+        )
+
+        # 특성 이름 저장
+        self.feature_names = feature_names
+
+        # 훈련/검증 데이터 준비
+        if "eval_set" in kwargs:
+            eval_set = kwargs["eval_set"]
+            train_data = lgb.Dataset(X, label=y, feature_name=feature_names)
+            valid_data = lgb.Dataset(
+                eval_set[0][0], label=eval_set[0][1], feature_name=feature_names
+            )
+        else:
+            # 검증 세트가 없으면 훈련 데이터의 20%를 검증에 사용
+            from sklearn.model_selection import train_test_split
+
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=0.2, random_state=42
+            )
+            train_data = lgb.Dataset(X_train, label=y_train, feature_name=feature_names)
+            valid_data = lgb.Dataset(X_val, label=y_val, feature_name=feature_names)
+
+        # 학습 시작
+        start_time = time.time()
+        self.model = lgb.train(
+            self.params,
+            train_data,
+            num_boost_round=num_boost_round,
+            valid_sets=[train_data, valid_data],
+            valid_names=["train", "valid"],
+            early_stopping_rounds=early_stopping_rounds,
+            verbose_eval=100,
+        )
+
+        # 학습 시간 계산
+        train_time = time.time() - start_time
+
+        # 특성 중요도 계산
+        importance = self.model.feature_importance(importance_type="gain")
+        feature_importance = dict(zip(feature_names, importance.tolist()))
+
+        # 상위 10개 중요 특성 로깅
+        top_features = sorted(
+            feature_importance.items(), key=lambda x: x[1], reverse=True
+        )[:10]
+        logger.info(f"상위 10개 중요 특성: {top_features}")
+
+        # 메타데이터 업데이트
+        self.metadata.update(
+            {
+                "train_samples": X.shape[0],
+                "features": X.shape[1],
+                "best_iteration": self.model.best_iteration,
+                "best_score": self.model.best_score,
+                "train_time": train_time,
+                "feature_importance": feature_importance,
+            }
+        )
+
+        # 훈련 완료 표시
+        self.is_trained = True
+        logger.info(
+            f"TCN 모델 학습 완료: 최적 반복={self.model.best_iteration}, 최적 점수={self.model.best_score}, 소요 시간={train_time:.2f}초"
+        )
+
+        return {
+            "best_iteration": self.model.best_iteration,
+            "best_score": self.model.best_score,
+            "train_time": train_time,
+            "is_trained": self.is_trained,
+            "model_type": self.model_name,
+        }
+
+    def predict(self, X: np.ndarray, **kwargs) -> np.ndarray:
+        """
+        TCN 모델 예측 수행
+
+        Args:
+            X: 특성 벡터
+            **kwargs: 추가 매개변수
+
+        Returns:
+            예측 점수
+        """
+        if not self.is_trained or self.model is None:
+            raise ValueError(
+                "모델이 학습되지 않았습니다. fit() 메서드를 먼저 호출하세요."
+            )
+
+        logger.info(f"TCN 예측 수행: 입력 형태={X.shape}")
+
+        # 예측 수행
+        predictions = self.model.predict(X)
+
+        return predictions
+
+    def _save_model(self, path: str) -> None:
+        """
+        TCN 모델 저장 구현
+
+        Args:
+            path: 저장 경로
+        """
+        self.model.save_model(path)
+
+    def _load_model(self, path: str) -> None:
+        """
+        TCN 모델 로드 구현
+
+        Args:
+            path: 모델 파일 경로
+        """
+        self.model = lgb.Booster(model_file=path)
+
+    def _get_feature_importance(self, importance_type: str) -> Dict[str, float]:
+        """
+        TCN 특성 중요도 계산 구현
+
+        Args:
+            importance_type: 중요도 유형 ('gain', 'split')
+
+        Returns:
+            특성 이름과 중요도 딕셔너리
+        """
+        importance = self.model.feature_importance(importance_type=importance_type)
+        return dict(zip(self.feature_names, importance.tolist()))

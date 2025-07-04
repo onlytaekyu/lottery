@@ -6,7 +6,7 @@
 
 import torch
 import torch.nn as nn
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Union
 from dataclasses import dataclass
 from threading import Lock, Thread
 from queue import Queue
@@ -15,6 +15,10 @@ from ..utils.unified_config import ConfigProxy
 from torch.utils.data import DataLoader
 import threading
 import time
+import psutil
+from enum import Enum
+from functools import wraps
+from .process_pool_manager import ProcessPoolManager, ProcessPoolConfig
 
 # 스레드 로컬 캐시 가져오기 (memory_manager에서 가져오도록 변경)
 from .memory_manager import (
@@ -34,84 +38,13 @@ from .unified_performance import Profiler
 from .error_recovery import ErrorRecovery, RecoveryConfig
 
 # 로거 설정
-from .error_handler_refactored import get_logger
+from .unified_logging import get_logger
 
 logger = get_logger(__name__)
 
 # GPU 메모리 풀 싱글톤 관리
 _memory_pool_initialized = False
 _memory_pool_lock = threading.RLock()
-
-
-# ---------------- New Stand-Alone Dynamic Batch Size (migrated) ----------------
-@dataclass
-class BatchSizeConfig:
-    """배치 크기 설정 (간소화 버전)"""
-
-    initial_batch_size: int = 1000
-    min_batch_size: int = 100
-    max_batch_size: int = 10000
-    growth_rate: float = 1.2
-    reduction_rate: float = 0.5
-
-
-class DynamicBatchSizeController:
-    """간단한 배치 크기 동적 조절기 (OOM/메모리 이벤트 대응)"""
-
-    def __init__(self, config: BatchSizeConfig | None = None):
-        self.config = config or BatchSizeConfig()
-        self._batch_size = self.config.initial_batch_size
-        self._lock = threading.Lock()
-        self._history: list[dict] = []
-
-    # ---- 기본 API ----
-    def get_current_batch_size(self) -> int:
-        with self._lock:
-            return self._batch_size
-
-    def increase_batch_size(self) -> int:
-        with self._lock:
-            new_size = int(self._batch_size * self.config.growth_rate)
-            new_size = min(new_size, self.config.max_batch_size)
-            self._set_batch_size(new_size, "increase")
-            return self._batch_size
-
-    def reduce_batch_size(self) -> int:
-        with self._lock:
-            new_size = int(self._batch_size * self.config.reduction_rate)
-            new_size = max(new_size, self.config.min_batch_size)
-            self._set_batch_size(new_size, "reduce")
-            return self._batch_size
-
-    def handle_oom(self) -> int:
-        """OOM 발생 시 호출"""
-        return self._set_batch_size(
-            max(self.config.min_batch_size, int(self._batch_size * 0.25)), "oom"
-        )
-
-    # ---- 내부 ----
-    def _set_batch_size(self, new_size: int, reason: str):
-        old = self._batch_size
-        self._batch_size = new_size
-        self._history.append(
-            {"ts": time.time(), "old": old, "new": new_size, "reason": reason}
-        )
-        return self._batch_size
-
-    # ---- 호환 API ----
-    def get_batch_size(self):
-        return self.get_current_batch_size()
-
-    def reset(self, new_initial_size: int | None = None):
-        with self._lock:
-            self._batch_size = new_initial_size or self.config.initial_batch_size
-            self._history.clear()
-
-
-# 하위 호환 별칭 유지
-DynamicBatchSize = DynamicBatchSizeController
-
-# -----------------------------------------------------------------------------
 
 
 @dataclass
@@ -864,3 +797,148 @@ def get_safe_batch_size(initial_batch_size: int = 32) -> int:  # legacy util
     if gb < 8:
         return max(1, initial_batch_size // 2)
     return initial_batch_size
+
+
+# ----------------- Hybrid Optimizer (from hybrid_optimizer.py) -----------------
+
+
+class OptimizationStrategy(Enum):
+    """최적화 전략"""
+
+    AUTO = "auto"
+    CPU_PARALLEL = "cpu_parallel"
+    MEMORY_OPTIMIZED = "memory_optimized"
+    GPU_ACCELERATED = "gpu_accelerated"
+    HYBRID = "hybrid"
+
+
+@dataclass
+class TaskInfo:
+    """작업 정보"""
+
+    function_type: str
+    data_size: int = 0
+    parallelizable: bool = True
+    gpu_compatible: bool = False
+    memory_intensive: bool = False
+    cpu_intensive: bool = True
+
+
+@dataclass
+class HybridConfig:
+    """하이브리드 최적화 설정"""
+
+    auto_optimization: bool = True
+    memory_threshold: float = 0.8
+    cpu_threshold: float = 75.0
+    gpu_threshold: float = 80.0
+    min_parallel_size: int = 100
+    enable_monitoring: bool = True
+
+
+class HybridOptimizer:
+    """하이브리드 최적화 관리자"""
+
+    def __init__(self, config: Union[HybridConfig, Dict[str, Any]]):
+        if isinstance(config, dict):
+            self.config = HybridConfig(**config)
+        else:
+            self.config = config
+
+        self.process_pool: Optional[ProcessPoolManager] = None
+        self.memory_manager: Optional[MemoryManager] = None
+        self.cuda_optimizer: Optional[BaseCudaOptimizer] = None
+        self._initialize_components()
+
+    def _initialize_components(self):
+        """구성 요소 초기화"""
+        try:
+            self.process_pool = ProcessPoolManager(ProcessPoolConfig())
+            self.memory_manager = MemoryManager(MemoryConfig())
+            if torch.cuda.is_available():
+                self.cuda_optimizer = get_cuda_optimizer()
+            logger.info("HybridOptimizer 구성 요소 초기화 완료")
+        except Exception as e:
+            logger.error(f"하이브리드 최적화 구성 요소 초기화 실패: {e}")
+            raise
+
+    def _analyze_system_resources(self) -> Dict[str, float]:
+        """시스템 리소스 분석"""
+        # ... (구현은 hybrid_optimizer.py와 동일)
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory_percent = psutil.virtual_memory().percent
+        gpu_percent = 0.0
+        if self.cuda_optimizer and self.cuda_optimizer.is_available():
+            gpu_percent = self.cuda_optimizer.get_gpu_utilization()
+        return {
+            "cpu_percent": cpu_percent,
+            "memory_percent": memory_percent,
+            "gpu_percent": gpu_percent,
+        }
+
+    def _select_optimization_strategy(
+        self, task_info: TaskInfo, system_resources: Dict[str, float]
+    ) -> OptimizationStrategy:
+        """최적화 전략 선택"""
+        if not self.config.auto_optimization:
+            return OptimizationStrategy.AUTO
+        if (
+            task_info.gpu_compatible
+            and self.cuda_optimizer
+            and system_resources["gpu_percent"] < self.config.gpu_threshold
+        ):
+            return OptimizationStrategy.GPU_ACCELERATED
+        if (
+            task_info.memory_intensive
+            or system_resources["memory_percent"] > self.config.memory_threshold
+        ):
+            return OptimizationStrategy.MEMORY_OPTIMIZED
+        if (
+            task_info.parallelizable
+            and task_info.data_size >= self.config.min_parallel_size
+            and system_resources["cpu_percent"] < self.config.cpu_threshold
+        ):
+            return OptimizationStrategy.CPU_PARALLEL
+        return OptimizationStrategy.HYBRID
+
+    def optimize_execution(
+        self,
+        func: Callable,
+        model: Optional[torch.nn.Module],
+        data: Any,
+        task_info: TaskInfo,
+        **kwargs,
+    ) -> Any:
+        """최적화된 실행"""
+        system_resources = self._analyze_system_resources()
+        strategy = self._select_optimization_strategy(task_info, system_resources)
+        logger.info(f"최적화 전략 선택: {strategy.value}")
+
+        if strategy == OptimizationStrategy.GPU_ACCELERATED:
+            if self.cuda_optimizer and model:
+                return self.cuda_optimizer.optimize_inference(model, data)
+            else:
+                logger.warning("GPU 가속을 사용할 수 없어 기본 실행으로 전환합니다.")
+                return func(data, **kwargs)
+        elif strategy == OptimizationStrategy.CPU_PARALLEL:
+            if self.process_pool:
+                return self.process_pool.map(func, data)
+            else:
+                logger.warning(
+                    "CPU 병렬 처리를 사용할 수 없어 기본 실행으로 전환합니다."
+                )
+                return func(data, **kwargs)
+        # ... 기타 전략 실행
+        else:  # standard/hybrid/memory-optimized
+            return func(data, **kwargs)
+
+    def shutdown(self):
+        """자원 정리"""
+        if self.process_pool:
+            self.process_pool.shutdown()
+        if self.cuda_optimizer:
+            self.cuda_optimizer.cleanup()
+        logger.info("HybridOptimizer 자원 정리 완료")
+
+
+# TODO: 멀티 GPU 지원, 메모리 풀링, 배치 처리 최적화 함수 보강 필요

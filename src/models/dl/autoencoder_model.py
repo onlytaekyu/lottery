@@ -16,7 +16,7 @@ from pathlib import Path
 import time
 
 from ..base_model import ModelWithAMP
-from ...utils.error_handler_refactored import get_logger
+from ...utils.unified_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -168,6 +168,11 @@ class AutoencoderModel(ModelWithAMP):
             config: 모델 설정
         """
         super().__init__(config)
+        self.device = torch.device(
+            "cuda"
+            if config and config.get("use_gpu", False) and torch.cuda.is_available()
+            else "cpu"
+        )
 
         # 모델 설정
         self.config = config or {}
@@ -198,6 +203,8 @@ class AutoencoderModel(ModelWithAMP):
 
         # 모델 구성
         self._build_model()
+
+        self.model = self.model.to(self.device)
 
         logger.info(
             f"오토인코더 모델 초기화 완료: 입력 차원={self.input_dim}, "

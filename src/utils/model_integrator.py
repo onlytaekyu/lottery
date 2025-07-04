@@ -12,7 +12,7 @@ import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from .memory_manager import MemoryManager, MemoryConfig
-from .error_handler_refactored import get_logger
+from .unified_logging import get_logger
 from dataclasses import dataclass
 import json
 
@@ -22,6 +22,7 @@ from ..models.gnn_model import GNNModel
 from ..shared.types import ModelPrediction, LotteryNumber
 
 logger = get_logger(__name__)
+
 
 @dataclass
 class ModelConfig:
@@ -37,6 +38,7 @@ class ModelConfig:
     num_workers: int
     pin_memory: bool
 
+
 @dataclass
 class EnsembleConfig:
     """앙상블 설정 데이터 클래스"""
@@ -47,6 +49,7 @@ class EnsembleConfig:
     random_state: int = 42
     n_trials: int = 10
     timeout: int = 600
+
 
 @dataclass
 class IntegratorConfig:
@@ -65,6 +68,7 @@ class IntegratorConfig:
     def __post_init__(self):
         # 캐시 디렉토리 경로를 상대 경로로 변환
         self.cache_dir = str(Path(__file__).parent.parent.parent / self.cache_dir)
+
 
 class ModelWrapper:
     """모델 래퍼"""
@@ -92,6 +96,7 @@ class ModelWrapper:
             self.total_errors += 1
             logger.error(f"모델 {self.name} 예측 실패: {str(e)}")
             raise
+
 
 class ModelIntegrator:
     """모델 통합 시스템"""

@@ -13,12 +13,19 @@ from typing import Dict, List, Any, Optional, Union, Tuple
 from pathlib import Path
 
 # ML 라이브러리 임포트
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import joblib
 
+try:
+    from cuml.ensemble import RandomForestClassifier as cuRF
+
+    CUMLOADED = True
+except ImportError:
+    from sklearn.ensemble import RandomForestClassifier as skRF
+
+    CUMLOADED = False
+
 from .ml_models import MLBaseModel
-from ...utils.error_handler_refactored import get_logger
+from ...utils.unified_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -56,6 +63,9 @@ class RandomForestModel(MLBaseModel):
         self.params = self.default_params.copy()
         if config and "random_forest" in config:
             self.params.update(config["random_forest"])
+
+        self.model = None
+        self.use_gpu = config.get("use_gpu", False) if config else False
 
         logger.info(f"RandomForest 모델 초기화 완료: {self.params}")
 
@@ -96,7 +106,10 @@ class RandomForestModel(MLBaseModel):
             X, y = X_train, y_train
 
         # 모델 초기화
-        self.model = RandomForestRegressor(**self.params)
+        if self.use_gpu and CUMLOADED:
+            self.model = cuRF()
+        else:
+            self.model = skRF()
 
         # 학습 시작
         start_time = time.time()

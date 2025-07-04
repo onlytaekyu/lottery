@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 from contextlib import contextmanager
 
-from .error_handler_refactored import get_logger, log_exception_with_trace
+from .unified_logging import get_logger, log_exception_with_trace
 
 logger = get_logger(__name__)
 

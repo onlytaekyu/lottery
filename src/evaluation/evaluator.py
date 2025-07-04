@@ -13,7 +13,7 @@ import json
 from datetime import datetime
 
 from ..shared.types import LotteryNumber
-from ..utils.error_handler_refactored import get_logger
+from ..utils.unified_logging import get_logger
 from ..models.rl_model import RLModel
 from ..models.statistical_model import StatisticalModel
 from ..models.base_model import BaseModel
