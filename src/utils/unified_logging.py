@@ -8,10 +8,18 @@ import logging.handlers
 import sys
 import threading
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from dataclasses import dataclass
 from enum import Enum
 import atexit
+import re
+
+try:
+    from rich.logging import RichHandler
+
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
 
 
 class LogLevel(Enum):
@@ -38,84 +46,136 @@ class LogConfig:
     encoding: str = "utf-8"
 
 
-class OptimizedLoggerFactory:
-    """최적화된 로거 팩토리"""
+class SensitiveDataFilter(logging.Filter):
+    """민감한 정보를 마스킹하는 로깅 필터"""
 
-    _loggers: Dict[str, logging.Logger] = {}
-    _formatter: Optional[logging.Formatter] = None
-    _lock = threading.RLock()
+    def __init__(self, patterns: Optional[List[str]] = None):
+        super().__init__()
+        self._patterns = patterns or [
+            r"'api_key':\s*'[^']+'",
+            r"'password':\s*'[^']+'",
+        ]
+        self._compiled_patterns = [re.compile(p, re.IGNORECASE) for p in self._patterns]
 
-    @classmethod
-    def get_logger(
-        cls, name: str, config: Optional[LogConfig] = None
-    ) -> logging.Logger:
-        """로거 반환 (캐싱 최적화)"""
-        if name in cls._loggers:
-            return cls._loggers[name]
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = self.mask_sensitive_data(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(self.mask_sensitive_data(arg) for arg in record.args)
+        return True
 
-        with cls._lock:
-            if name in cls._loggers:
-                return cls._loggers[name]
+    def mask_sensitive_data(self, message: str) -> str:
+        if not isinstance(message, str):
+            return message
 
-            config = config or LogConfig()
-            logger = cls._create_logger(name, config)
-            cls._loggers[name] = logger
-            return logger
+        for pattern in self._compiled_patterns:
+            message = pattern.sub(
+                lambda m: m.group().split(":")[0] + ": '***'", message
+            )
+        return message
 
-    @classmethod
-    def _create_logger(cls, name: str, config: LogConfig) -> logging.Logger:
-        """로거 생성"""
-        logger = logging.getLogger(name)
 
-        if logger.handlers:
-            return logger
+class OptimizedLogManager:
+    """동적 핸들러 및 민감 정보 필터링을 지원하는 최적화된 로그 관리자"""
 
-        logger.setLevel(config.level.value)
-        logger.propagate = False
+    _instance = None
+    _lock = threading.Lock()
 
-        # 포매터 생성 (재사용)
-        if cls._formatter is None:
-            cls._formatter = logging.Formatter(config.format_string)
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
 
+    def __init__(self, level=logging.INFO, log_dir="logs"):
+        if self._initialized:
+            return
+
+        self.root_logger = logging.getLogger("DAEBAK_AI")
+        self.root_logger.setLevel(level)
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(exist_ok=True)
+
+        self.formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        self.handlers = {}
+        self.sensitive_filter = SensitiveDataFilter()
+        self.root_logger.addFilter(self.sensitive_filter)
+
+        self._setup_handlers(level)
+        self._initialized = True
+
+    def _setup_handlers(self, level: int):
+        """로그 레벨에 따라 핸들러를 설정합니다."""
         # 콘솔 핸들러
-        if config.console_output:
+        if RICH_AVAILABLE:
+            console_handler = RichHandler(rich_tracebacks=True, show_path=False)
+        else:
             console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setLevel(config.level.value)
-            console_handler.setFormatter(cls._formatter)
-            logger.addHandler(console_handler)
+
+        console_handler.setFormatter(self.formatter)
+        self.root_logger.addHandler(console_handler)
+        self.handlers["console"] = console_handler
 
         # 파일 핸들러
-        if config.file_output:
-            logs_dir = Path("logs")
-            logs_dir.mkdir(exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            self.log_dir / "app.log",
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(self.formatter)
+        self.root_logger.addHandler(file_handler)
+        self.handlers["file"] = file_handler
 
-            log_file = logs_dir / f"{name}.log"
-            file_handler = logging.handlers.RotatingFileHandler(
-                log_file,
-                maxBytes=config.max_file_size,
-                backupCount=config.backup_count,
-                encoding=config.encoding,
-            )
-            file_handler.setLevel(config.level.value)
-            file_handler.setFormatter(cls._formatter)
-            logger.addHandler(file_handler)
+        self.set_level(level)
 
-        return logger
+    def get_logger(self, name: str) -> logging.Logger:
+        return self.root_logger.getChild(name)
 
-    @classmethod
-    def cleanup(cls):
-        """리소스 정리"""
-        for logger in cls._loggers.values():
-            for handler in logger.handlers[:]:
+    def set_level(self, level: int):
+        """전체 로깅 시스템의 레벨을 동적으로 변경합니다."""
+        self.root_logger.setLevel(level)
+
+        # 레벨에 따른 핸들러 활성화/비활성화 로직 (예시)
+        # DEBUG 레벨에서는 콘솔 출력, INFO 이상부터는 파일에도 기록
+        if level <= logging.DEBUG:
+            if "console" not in self.handlers:
+                # 핸들러 추가 로직
+                pass
+        else:
+            if "console" in self.handlers:
+                # 핸들러 제거 로직 (더 복잡한 관리가 필요할 수 있음)
+                pass
+
+    def cleanup(self):
+        """모든 핸들러를 닫고 로깅 시스템을 안전하게 종료합니다."""
+        for handler in self.root_logger.handlers[:]:
+            try:
                 handler.close()
-                logger.removeHandler(handler)
-        cls._loggers.clear()
+                self.root_logger.removeHandler(handler)
+            except Exception as e:
+                # self.get_logger(__name__).error(f"핸들러 종료 중 오류: {e}")
+                pass  # 종료 시점에는 로거가 불안정할 수 있음
 
 
-# 전역 함수 (성능 최적화)
-def get_logger(name: str, config: Optional[LogConfig] = None) -> logging.Logger:
-    """로거 반환"""
-    return OptimizedLoggerFactory.get_logger(name, config)
+_log_manager_instance: Optional[OptimizedLogManager] = None
+
+
+def get_log_manager() -> OptimizedLogManager:
+    """OptimizedLogManager의 싱글톤 인스턴스를 반환합니다."""
+    global _log_manager_instance
+    if _log_manager_instance is None:
+        _log_manager_instance = OptimizedLogManager()
+    return _log_manager_instance
+
+
+def get_logger(name: str) -> logging.Logger:
+    """지정된 이름의 로거를 가져옵니다."""
+    manager = get_log_manager()
+    return manager.get_logger(name)
 
 
 def setup_logging(
@@ -137,8 +197,14 @@ def setup_logging(
         get_logger(logger_name, config)
 
 
+def cleanup_logging():
+    """전역 로그 관리자의 리소스를 정리합니다."""
+    manager = get_log_manager()
+    manager.cleanup()
+
+
 # 종료 시 정리
-atexit.register(OptimizedLoggerFactory.cleanup)
+atexit.register(cleanup_logging)
 
 
 def log_exception(logger_name: str, exception: Exception, context: str = ""):

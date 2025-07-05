@@ -30,8 +30,6 @@ from ..utils.cuda_optimizers import AMPTrainer
 from ..utils.unified_report import save_report
 from ..utils.model_saver import save_model
 from .base_trainer import BaseTrainer
-from ..utils.unified_performance import performance_monitor
-from ..utils.unified_performance import Profiler
 
 # 로거 설정
 logger = get_logger(__name__)

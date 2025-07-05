@@ -20,6 +20,8 @@ import hashlib
 from collections import defaultdict
 import jsonschema
 from jsonschema import validate, ValidationError
+import torch
+import psutil
 
 from .unified_logging import get_logger
 
@@ -194,6 +196,14 @@ class EnhancedConfigValidator(ConfigValidator):
                         "use_tensorrt": {"type": "boolean"},
                     },
                 },
+                "system": {
+                    "type": "object",
+                    "properties": {
+                        "gpu_available": {"type": "boolean"},
+                        "gpu_count": {"type": "integer"},
+                        "cpu_count": {"type": "integer"},
+                    },
+                },
             },
             "required": ["paths", "caching", "training", "analysis"],
         }
@@ -348,8 +358,74 @@ class CudaConfig:
         return cls(**data)
 
 
+@dataclass
+class SystemInfo:
+    """시스템의 하드웨어 및 소프트웨어 정보를 동적으로 탐지하는 싱글톤 클래스."""
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+
+        self.refresh()
+        self._initialized = True
+
+    def refresh(self):
+        """시스템 정보를 다시 수집하여 최신 상태로 업데이트합니다."""
+        self.cpu_count = os.cpu_count() or 1
+        self.cpu_usage = psutil.cpu_percent()
+
+        mem = psutil.virtual_memory()
+        self.memory_total_gb = mem.total / (1024**3)
+        self.memory_available_gb = mem.available / (1024**3)
+
+        try:
+            self.gpu_available = torch.cuda.is_available()
+            if self.gpu_available:
+                self.gpu_count = torch.cuda.device_count()
+                self.gpu_devices = []
+                for i in range(self.gpu_count):
+                    props = torch.cuda.get_device_properties(i)
+                    self.gpu_devices.append(
+                        {
+                            "name": props.name,
+                            "memory_total_mb": props.total_memory / (1024**2),
+                        }
+                    )
+            else:
+                self.gpu_count = 0
+                self.gpu_devices = []
+        except Exception as e:
+            logger.warning(f"GPU 정보 탐지 실패: {e}")
+            self.gpu_available = False
+            self.gpu_count = 0
+            self.gpu_devices = []
+
+    def to_dict(self) -> Dict[str, Any]:
+        """수집된 시스템 정보를 딕셔너리로 반환합니다."""
+        return {
+            "cpu_count": self.cpu_count,
+            "cpu_usage_percent": self.cpu_usage,
+            "memory_total_gb": round(self.memory_total_gb, 2),
+            "memory_available_gb": round(self.memory_available_gb, 2),
+            "gpu_available": self.gpu_available,
+            "gpu_count": self.gpu_count,
+            "gpu_devices": self.gpu_devices,
+        }
+
+
 class UnifiedConfigManager:
-    """통합 설정 관리자"""
+    """동적 시스템 정보를 통합하는 설정 관리자"""
 
     _instance = None
     _lock = threading.RLock()
@@ -370,7 +446,9 @@ class UnifiedConfigManager:
         self.lock = threading.RLock()
         self.config_paths = ConfigPath()
         self.directory_paths = DirectoryPaths()
-        logger.info("통합 설정 관리자 초기화 완료")
+        self.system_info = SystemInfo()
+        self.validator = None  # 검증기 초기화
+        logger.info("✅ 통합 설정 관리자 초기화 (동적 시스템 정보 탐지 활성화)")
 
     def load_config(
         self,
@@ -378,21 +456,45 @@ class UnifiedConfigManager:
         file_path: Optional[str] = None,
         force_reload: bool = False,
     ) -> Dict[str, Any]:
-        with self.lock:
-            if not force_reload and config_name in self.config_cache:
-                if not self._is_file_modified(config_name, file_path):
-                    return self.config_cache[config_name]
-
+        """
+        설정 파일을 로드하고, 동적으로 탐지된 시스템 정보를 주입합니다.
+        """
+        with self._lock:
             if file_path is None:
                 file_path = self._get_default_config_path(config_name)
 
-            config = self._load_config_file(file_path)
-            self.config_cache[config_name] = config
+            is_modified = self._is_file_modified(config_name, file_path)
+
+            if (
+                not force_reload
+                and config_name in self.config_cache
+                and not is_modified
+            ):
+                logger.debug(f"캐시된 설정 반환: {config_name}")
+                return self.config_cache[config_name]
+
+            logger.info(
+                f"설정 로드 시작: {config_name} (강제 새로고침: {force_reload})"
+            )
+
+            # 파일에서 설정 로드
+            config_data = self._load_config_file(file_path)
+
+            # 동적 시스템 정보 주입
+            self.system_info.refresh()
+            config_data["system"] = self.system_info.to_dict()
+
+            # 검증
+            if self.validator and not self.validator.validate(config_data):
+                raise ValueError(f"'{config_name}' 설정 파일이 유효하지 않습니다.")
+
+            self.config_cache[config_name] = config_data
             self.file_timestamps[config_name] = (
                 os.path.getmtime(file_path) if os.path.exists(file_path) else 0
             )
-            logger.info(f"설정 로드 완료: {config_name}")
-            return config
+            logger.info(f"✅ 설정 '{config_name}' 로드 및 동적 시스템 정보 통합 완료.")
+
+            return self.config_cache[config_name]
 
     def _get_default_config_path(self, config_name: str) -> str:
         path_mapping = {

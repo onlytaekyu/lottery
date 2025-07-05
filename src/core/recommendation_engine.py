@@ -40,6 +40,7 @@ from sklearn.cluster import AgglomerativeClustering, DBSCAN
 from scipy.spatial.distance import pdist, squareform
 import platform
 import psutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..shared.types import LotteryNumber, ModelPrediction, PatternAnalysis
 from ..utils.unified_logging import get_logger
@@ -568,176 +569,50 @@ class RecommendationEngine:
         model_types: Optional[List[str]] = None,
     ) -> List[RecommendationResult]:
         """
-        하이브리드 추천 내부 로직 - 다양한 모델을 조합하여 추천
-
-        Args:
-            count: 추천할 번호 세트 수
-            data: 참조할 로또 당첨 번호 데이터
-            model_types: 사용할 모델 유형 리스트
-
-        Returns:
-            RecommendationResult 객체 리스트 (Dict 또는 ModelPrediction)
+        다양한 모델의 추천을 병렬로 생성하고 조합하는 하이브리드 전략 (병렬 처리 강화)
         """
-        logger.info(f"하이브리드 추천 전략 실행 (요청 수: {count})")
+        model_weights = self._get_model_weights()
+        model_counts = self._calculate_model_counts(model_weights, count, model_types)
 
-        # 모델 가중치 계산
-        weights = self._get_model_weights()
+        all_recommendations: List[RecommendationResult] = []
 
-        # 사용할 모델 유형 필터링
-        if model_types:
-            available_models = {k: v for k, v in weights.items() if k in model_types}
-            if available_models:
-                # 가중치 재정규화
-                total = sum(available_models.values())
-                if total > 0:
-                    weights = {k: v / total for k, v in available_models.items()}
-                else:
-                    # 모든 필터된 모델의 가중치가 0인 경우, 동일한 가중치 부여
-                    equal_weight = 1.0 / len(available_models)
-                    weights = {k: equal_weight for k in available_models}
-            else:
-                # 일치하는 모델이 없는 경우, 원래 가중치 사용
-                logger.warning(
-                    "지정된 모델 유형에 맞는 모델이 없습니다. 전체 모델 사용"
-                )
+        # ThreadPoolExecutor를 사용하여 모델 추천을 병렬로 실행
+        with ThreadPoolExecutor() as executor:
+            future_to_model = {
+                executor.submit(
+                    self._recommend_with_model, model_name, num_recs, data
+                ): model_name
+                for model_name, num_recs in model_counts.items()
+                if num_recs > 0
+            }
 
-        # 각 모델 유형별 개수 계산
-        model_counts = self._calculate_model_counts(weights, count, model_types)
-        logger.info(f"모델 유형별 추천 수: {model_counts}")
+            for future in as_completed(future_to_model):
+                model_name = future_to_model[future]
+                try:
+                    model_recs = future.result()
+                    if model_recs:
+                        all_recommendations.extend(model_recs)
+                        logger.info(
+                            f"✅ 모델 '{model_name}' 병렬 추천 생성 완료 ({len(model_recs)}개)"
+                        )
+                except Exception as exc:
+                    logger.error(f"'{model_name}' 모델 추천 생성 중 오류 발생: {exc}")
 
-        # 각 모델별로 추천 수행
-        raw_recommendations = []
-        for model_type, model_count in model_counts.items():
-            if model_count <= 0:
-                continue
-
-            logger.debug(f"{model_type} 모델로 {model_count}개 추천 시작")
-
-            try:
-                # 모델 유형별 단일 추천 모델 사용
-                if model_type != "hybrid":
-                    model_recs = self._get_model_recommendations(
-                        model_type, model_count, data
-                    )
-                    raw_recommendations.extend(model_recs)
-            except Exception as e:
-                logger.error(f"{model_type} 모델 추천 중 오류: {str(e)}")
-                continue
-
-        # 요청한 개수보다 추천이 적은 경우 무작위 추천으로 보충
-        if len(raw_recommendations) < count:
+        if not all_recommendations:
             logger.warning(
-                f"추천이 부족합니다. 무작위 추천으로 보충 ({len(raw_recommendations)}/{count})"
+                "모든 모델에서 추천을 생성하지 못했습니다. 폴백 전략을 사용합니다."
             )
-            # 여기서는 딕셔너리 형태로 추가
-            additional_recs = []
-            for _ in range(count - len(raw_recommendations)):
-                numbers = sorted(random.sample(range(1, 46), 6))
-                additional_recs.append(
-                    {
-                        "numbers": numbers,
-                        "confidence": random.uniform(0.1, 0.3),
-                        "source": "random",
-                        "model_type": "random",
-                    }
-                )
-            raw_recommendations.extend(additional_recs)
+            return self._fallback_recommend(count, data, "statistical", model_types)
 
-        # 패턴 필터링 적용 (딕셔너리 형태로 작업)
-        if self.config.get("filter_failed_patterns", True):
-            filtered_recommendations = []
+        # 점수 재계산 및 필터링
+        processed_recommendations = self._apply_scoring(all_recommendations, data)
 
-            for rec in raw_recommendations:
-                if isinstance(rec, dict):
-                    numbers = rec["numbers"]
-                elif hasattr(rec, "numbers"):
-                    numbers = rec.numbers
-                else:
-                    continue
-
-                pattern_hash = self.pattern_filter.get_pattern_hash(numbers)
-
-                # 실패 패턴이 아니면 추가
-                if not self.pattern_filter.is_failed_pattern(pattern_hash):
-                    filtered_recommendations.append(rec)
-
-            logger.info(
-                f"패턴 필터링: {len(raw_recommendations)}개 중 {len(filtered_recommendations)}개 통과"
-            )
-            raw_recommendations = filtered_recommendations
-
-            # 필터링 후 부족한 경우 다시 보충
-            if len(raw_recommendations) < count:
-                additional_recs = []
-                for _ in range(count - len(raw_recommendations)):
-                    numbers = sorted(random.sample(range(1, 46), 6))
-                    additional_recs.append(
-                        {
-                            "numbers": numbers,
-                            "confidence": random.uniform(0.1, 0.3),
-                            "source": "random",
-                            "model_type": "random",
-                        }
-                    )
-                raw_recommendations.extend(additional_recs)
-
-        # 다양성 필터링 적용 (2배 수의 후보를 생성한 후 필터링)
-        diversity_candidates = raw_recommendations[: count * 2]
-        diverse_recommendations = self._apply_diversity_filtering(
-            diversity_candidates, count
+        # 다양성 필터링
+        final_recommendations = self._apply_diversity_filtering(
+            processed_recommendations, count
         )
 
-        logger.info(
-            f"다양성 필터링: {len(diversity_candidates)}개 중 {len(diverse_recommendations)}개 선택"
-        )
-
-        return diverse_recommendations
-
-    def _calculate_model_counts(
-        self,
-        weights: Dict[str, float],
-        count: int,
-        model_types: Optional[List[str]] = None,
-    ) -> Dict[str, int]:
-        """
-        각 모델별 추천 개수 계산
-
-        Args:
-            weights: 모델별 가중치
-            count: 총 추천 개수
-            model_types: 사용할 모델 유형 목록
-
-        Returns:
-            모델별 추천 개수
-        """
-        model_counts = {}
-        remaining = count
-
-        # 가중치에 따라 각 모델 유형별 추천 개수 계산
-        for model_type, weight in sorted(
-            weights.items(), key=lambda x: x[1], reverse=True
-        ):
-            if remaining <= 0:
-                break
-
-            # 모델 유형 필터링 적용
-            if model_types and model_type not in model_types:
-                continue
-
-            # 가중치에 비례한 추천 개수 계산 (최소 1개)
-            model_count = max(1, int(count * weight))
-            if model_count > remaining:
-                model_count = remaining
-
-            model_counts[model_type] = model_count
-            remaining -= model_count
-
-        # 남은 개수를 첫 번째 모델에 할당
-        if remaining > 0 and model_counts:
-            first_model = next(iter(model_counts))
-            model_counts[first_model] += remaining
-
-        return model_counts
+        return final_recommendations
 
     def _recommend_with_model(
         self, model_name: str, count: int, data: List[LotteryNumber]

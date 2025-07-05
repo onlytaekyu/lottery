@@ -7,74 +7,81 @@
 import hashlib
 import json
 import numpy as np
+import torch
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional, Callable, Union
 
 from ..shared.types import LotteryNumber, PatternFeatures
 from ..utils.unified_logging import get_logger
 from ..utils.unified_config import load_config
+from .error_handler import get_error_handler
 
 # 싱글톤 인스턴스
 _pattern_filter_instance = None
 
 # 로거 설정
 logger = get_logger(__name__)
+error_handler = get_error_handler()
+
+GPU_AVAILABLE = torch.cuda.is_available()
+
+# 기본 설정값 정의
+DEFAULT_CONFIG = {
+    "sum_range": (90, 210),
+    "consecutive_limit": 3,
+    "even_odd_ratio_range": ((2, 4), (3, 3), (4, 2)),
+    "data_dir": "data",
+    "min_failure_count": 3,
+}
+
+# 설정 로드 실패 경고 플래그 (한 번만 출력)
+_config_warning_shown = False
 
 
-class PatternFilter:
-    """로또 번호 패턴 필터링 클래스"""
+class GPUPatternFilter:
+    """통합 GPU 패턴 필터"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         초기화
-
-        Args:
-            config: 필터 설정
         """
-        # 설정이 없으면 기본 설정 로드
-        if config is None:
-            try:
-                loaded_config = load_config()
-                if hasattr(loaded_config, "to_dict"):
-                    config = loaded_config.to_dict()
-                elif isinstance(loaded_config, dict):
-                    config = loaded_config
-                else:
-                    config = {}
-            except Exception:
-                config = {}
+        # 설정 로드 및 병합
+        self.config = self._load_and_merge_config(config)
+        self.device = torch.device("cuda" if GPU_AVAILABLE else "cpu")
 
-        # 설정을 딕셔너리로 처리
-        self.config = config if isinstance(config, dict) else {}
+        # 지연 로딩을 위한 초기화
+        self.cuda_optimizer = None
+        self.memory_manager = None
 
-        # 기본 데이터 디렉토리 경로 설정
-        self.data_dir = Path(self.config.get("data_dir", "data"))
+        # 필터 설정 (기본값 사용)
+        self.sum_range = self.config.get("sum_range", DEFAULT_CONFIG["sum_range"])
+        self.consecutive_limit = self.config.get(
+            "consecutive_limit", DEFAULT_CONFIG["consecutive_limit"]
+        )
+        self.even_odd_ratio_range = self.config.get(
+            "even_odd_ratio_range", DEFAULT_CONFIG["even_odd_ratio_range"]
+        )
+
+        # 데이터 디렉토리 및 파일 경로
+        self.data_dir = Path(self.config.get("data_dir", DEFAULT_CONFIG["data_dir"]))
         self.data_dir.mkdir(parents=True, exist_ok=True)
-
-        # 실패 패턴 파일 경로
         self.failed_patterns_file = self.data_dir / "failed_patterns.json"
-
-        # 저성능 패턴 파일 경로
         self.low_performance_patterns_file = (
             self.data_dir / "low_performance_patterns.json"
         )
 
-        # 최소 실패 횟수 (이 값 이상이면 필터링)
-        self.min_failure_count = self.config.get("min_failure_count", 3)
-
-        # 저성능 패턴 맵
+        # 패턴 로드
+        self.min_failure_count = self.config.get(
+            "min_failure_count", DEFAULT_CONFIG["min_failure_count"]
+        )
         self.low_performance_patterns = self._load_patterns(
             self.low_performance_patterns_file
         )
-
-        # 실패 패턴 맵
         self.failed_patterns = self._load_patterns(self.failed_patterns_file)
-
-        # 패턴 변경 여부 플래그
         self.failed_patterns_changed = False
 
-        # 필터 함수 목록
-        self.filters: Dict[str, Callable] = {
+        # CPU 필터 함수 목록
+        self.cpu_filters: Dict[str, Callable] = {
             "even_odd_balance": self.filter_even_odd_balance,
             "high_low_balance": self.filter_high_low_balance,
             "sum_range": self.filter_sum_range,
@@ -84,10 +91,128 @@ class PatternFilter:
         }
 
         logger.info(
-            f"패턴 필터 초기화 완료 (저성능 패턴: {len(self.low_performance_patterns)}개, "
-            f"실패 패턴: {len(self.failed_patterns)}개)"
+            f"GPUPatternFilter 초기화 (Device: {self.device}, 저성능 패턴: {len(self.low_performance_patterns)}개, 실패 패턴: {len(self.failed_patterns)}개)"
         )
 
+    def _get_cuda_optimizer(self):
+        if self.cuda_optimizer is None and GPU_AVAILABLE:
+            from .cuda_optimizers import get_cuda_optimizer
+
+            self.cuda_optimizer = get_cuda_optimizer()
+        return self.cuda_optimizer
+
+    def _get_memory_manager(self):
+        if self.memory_manager is None:
+            from .memory_manager import get_memory_manager
+
+            self.memory_manager = get_memory_manager()
+        return self.memory_manager
+
+    def _load_and_merge_config(
+        self, config: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """설정 로드 및 병합 (경고 최소화)"""
+        global _config_warning_shown
+
+        # 기본 설정으로 시작
+        base_config = DEFAULT_CONFIG.copy()
+
+        try:
+            loaded_config = load_config()
+            if hasattr(loaded_config, "to_dict"):
+                loaded_dict = loaded_config.to_dict()
+                base_config.update(loaded_dict)
+            elif isinstance(loaded_config, dict):
+                base_config.update(loaded_config)
+        except Exception as e:
+            # 경고는 한 번만 출력
+            if not _config_warning_shown:
+                logger.warning(f"기본 설정 로드 실패, 기본값 사용: {e}")
+                _config_warning_shown = True
+
+        # 사용자 제공 설정 병합
+        if config:
+            base_config.update(config)
+
+        return base_config
+
+    @error_handler.auto_recoverable(max_retries=2, delay=0.1)
+    def filter_combinations(
+        self, combinations: Union[List[List[int]], np.ndarray, torch.Tensor]
+    ) -> Union[List[List[int]], np.ndarray, torch.Tensor]:
+        """
+        입력된 조합들을 GPU 또는 CPU를 사용하여 필터링합니다.
+        입력 타입에 따라 출력 타입이 결정됩니다.
+        """
+        input_type = type(combinations)
+
+        # 텐서로 변환
+        if isinstance(combinations, list):
+            tensor = torch.tensor(combinations, dtype=torch.long, device=self.device)
+        elif isinstance(combinations, np.ndarray):
+            tensor = torch.from_numpy(combinations).to(
+                device=self.device, dtype=torch.long
+            )
+        else:
+            tensor = combinations.to(device=self.device, dtype=torch.long)
+
+        # GPU 필터링
+        if GPU_AVAILABLE:
+            mask = self._filter_combinations_gpu(tensor)
+            filtered_tensor = tensor[mask]
+        else:  # CPU 폴백
+            cpu_combinations = tensor.cpu().numpy().tolist()
+            filtered_list = [
+                comb for comb in cpu_combinations if self.should_filter_cpu(comb)
+            ]
+            filtered_tensor = torch.tensor(
+                filtered_list, dtype=torch.long, device=self.device
+            )
+
+        # 원본 타입으로 변환하여 반환
+        if input_type == list:
+            return filtered_tensor.cpu().numpy().tolist()
+        if input_type == np.ndarray:
+            return filtered_tensor.cpu().numpy()
+        return filtered_tensor
+
+    def _filter_combinations_gpu(
+        self, combinations_tensor: torch.Tensor
+    ) -> torch.Tensor:
+        """GPU를 사용하여 번호 조합 배치를 병렬로 필터링합니다."""
+        optimizer = self._get_cuda_optimizer()
+        if not optimizer:
+            return torch.ones(
+                combinations_tensor.shape[0], dtype=torch.bool, device=self.device
+            )
+
+        with optimizer.amp_context():
+            # 1. 합계 범위 필터
+            sums = combinations_tensor.sum(dim=1)
+            sum_mask = (sums >= self.sum_range[0]) & (sums <= self.sum_range[1])
+
+            # 2. 연속된 번호 필터
+            diffs = combinations_tensor[:, 1:] - combinations_tensor[:, :-1]
+            consecutive_counts = (diffs == 1).sum(dim=1)
+            consecutive_mask = consecutive_counts < self.consecutive_limit
+
+            # 3. 홀/짝 비율 필터
+            even_counts = (combinations_tensor % 2 == 0).sum(dim=1)
+            odd_counts = 6 - even_counts
+
+            even_odd_mask = torch.zeros_like(sum_mask)
+            for even_c, odd_c in self.even_odd_ratio_range:
+                even_odd_mask |= (even_counts == even_c) & (odd_counts == odd_c)
+
+            # 모든 필터 결합
+            final_mask = sum_mask & consecutive_mask & even_odd_mask
+
+        self._get_memory_manager().release_cuda_cache(
+            "pattern_filter._filter_combinations_gpu"
+        )
+        return final_mask
+
+    @error_handler.auto_recoverable(max_retries=3)
     def _load_patterns(self, file_path: Path) -> Dict[str, int]:
         """패턴 파일 로드"""
         try:
@@ -358,41 +483,11 @@ class PatternFilter:
         pattern_hash = self.generate_pattern_hash(numbers)
         return self.failed_patterns.get(pattern_hash, 0) >= self.min_failure_count
 
-    def filter_combinations(
-        self, combinations: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        번호 조합 리스트 필터링
-
-        Args:
-            combinations: 번호 조합 리스트 (각 항목은 'numbers' 키를 포함하는 딕셔너리)
-
-        Returns:
-            필터링된 번호 조합 리스트
-        """
-        if not combinations:
-            return []
-
-        filtered_combinations = []
-
-        for combo in combinations:
-            numbers = combo.get("numbers", [])
-            if not numbers:
-                continue
-
-            # 패턴 해시 생성
-            pattern_hash = self.generate_pattern_hash(numbers)
-
-            # 저성능 패턴 및 실패 패턴 필터링
-            if not self.is_low_performance_pattern(
-                pattern_hash
-            ) and not self.is_failed_pattern(pattern_hash):
-                filtered_combinations.append(combo)
-
-        logger.info(
-            f"패턴 필터링 결과: {len(combinations)}개 중 {len(filtered_combinations)}개 통과"
-        )
-        return filtered_combinations
+    def should_filter_cpu(self, numbers: List[int]) -> bool:
+        """CPU 기반 단일 조합 필터링 (기존 should_filter 로직)"""
+        # (기존 should_filter 로직을 여기에 구현)
+        is_filtered, _ = self.filter_numbers(numbers)
+        return is_filtered
 
     def add_failed_pattern(self, numbers: List[int]) -> None:
         """
@@ -701,11 +796,11 @@ class PatternFilter:
             filter_names: 적용할 필터 이름 목록 (None이면 모든 필터 적용)
 
         Returns:
-            (필터링 여부, 필터링 정보 디렉토리)
+            (필터링 여부, 필터링 정보 딕셔너리)
         """
         # 적용할 필터 목록
         if filter_names is None:
-            filter_names = list(self.filters.keys())
+            filter_names = list(self.cpu_filters.keys())
 
         # 필터 결과와 정보
         results = {}
@@ -713,8 +808,8 @@ class PatternFilter:
 
         # 각 필터 적용
         for name in filter_names:
-            if name in self.filters:
-                filter_func = self.filters[name]
+            if name in self.cpu_filters:
+                filter_func = self.cpu_filters[name]
                 filter_result, filter_info = filter_func(numbers, historical_data)
 
                 results[name] = {
@@ -760,22 +855,11 @@ class PatternFilter:
 
 def get_pattern_filter(
     config: Optional[Dict[str, Any]] = None,
-) -> PatternFilter:
+) -> GPUPatternFilter:
     """
-    패턴 필터 인스턴스를 가져옵니다 (싱글톤 패턴).
-
-    Args:
-        config: 필터 설정
-
-    Returns:
-        PatternFilter: 패턴 필터 인스턴스
+    GPUPatternFilter의 싱글톤 인스턴스를 반환합니다.
     """
     global _pattern_filter_instance
-
     if _pattern_filter_instance is None:
-        _pattern_filter_instance = PatternFilter(config)
-    elif config is not None:
-        # 기존 인스턴스가 있지만 새 설정이 있는 경우, 새 인스턴스 생성
-        _pattern_filter_instance = PatternFilter(config)
-
+        _pattern_filter_instance = GPUPatternFilter(config)
     return _pattern_filter_instance

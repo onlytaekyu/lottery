@@ -14,12 +14,10 @@ import os
 from datetime import datetime
 from abc import ABC, abstractmethod
 
-from ..utils.unified_performance import performance_monitor
-from ..utils.cache_manager import CacheManager
-from ..shared.types import LotteryNumber
-from ..utils.unified_logging import get_logger
-from ..utils.unified_performance import Profiler
-from ..utils.unified_performance import PerformanceTracker
+from src.utils.performance_optimizer import get_auto_performance_monitor
+from src.utils.cache_manager import get_cache_path_manager
+from src.shared.types import LotteryNumber
+from src.utils.unified_logging import get_logger
 
 # 제네릭 타입 변수 정의
 T = TypeVar("T")
@@ -53,8 +51,7 @@ class BaseAnalyzer(Generic[T], ABC):
         self.logger = get_logger(f"{__name__}.{name}")
 
         # 성능 측정 도구 초기화
-        self.profiler = Profiler()
-        self.performance_tracker = PerformanceTracker()
+        self.monitor = get_auto_performance_monitor()
 
         # 분석 결과 캐시
         self._cache = {}
@@ -83,6 +80,8 @@ class BaseAnalyzer(Generic[T], ABC):
                     f"{name} 분석기 재초기화 #{count + 1} (중복 로그 방지)"
                 )
 
+        self.cache_manager = get_cache_path_manager()
+
     def analyze(self, historical_data: List[LotteryNumber], *args, **kwargs) -> T:
         """
         과거 로또 당첨 번호를 분석하는 메서드
@@ -94,7 +93,7 @@ class BaseAnalyzer(Generic[T], ABC):
         Returns:
             T: 분석 결과
         """
-        with performance_monitor(f"{self.name}_analysis"):
+        with self.monitor.track(f"{self.name}_analysis"):
             try:
                 # 캐시 키 생성
                 cache_key = self._create_cache_key(
@@ -153,10 +152,7 @@ class BaseAnalyzer(Generic[T], ABC):
                 return cached_result
 
             # 파일 캐시 확인
-            cache_dir = Path(
-                self.config.get("paths", {}).get("cache_dir", "data/cache")
-            )
-            cache_file = cache_dir / f"{cache_key}.pkl"
+            cache_file = self.cache_manager.get_path(self.name, f"{cache_key}.pkl")
             if cache_file.exists():
                 try:
                     with open(cache_file, "rb") as f:
@@ -248,11 +244,7 @@ class BaseAnalyzer(Generic[T], ABC):
             self._cache[cache_key] = result
 
             # 파일 캐시에 저장 (직렬화 가능한 데이터만)
-            cache_dir = Path(
-                self.config.get("paths", {}).get("cache_dir", "data/cache")
-            )
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_file = cache_dir / f"{cache_key}.pkl"
+            cache_file = self.cache_manager.get_path(self.name, f"{cache_key}.pkl")
 
             # 직렬화 가능한 데이터로 변환
             serializable_result = self._make_serializable(result)
@@ -315,12 +307,12 @@ class BaseAnalyzer(Generic[T], ABC):
 
     def get_performance_stats(self) -> Dict[str, float]:
         """
-        성능 통계를 반환합니다.
-
-        Returns:
-            Dict[str, float]: 성능 통계
+        성능 통계를 반환합니다. (이제 사용되지 않음)
         """
-        return self.performance_tracker.get_stats()
+        self.logger.warning(
+            "get_performance_stats() is deprecated as AutoPerformanceMonitor handles logging directly."
+        )
+        return {}
 
     def run_analysis_with_caching(
         self,
@@ -352,7 +344,7 @@ class BaseAnalyzer(Generic[T], ABC):
             return cached_result
 
         # 분석 함수 실행
-        with performance_monitor(key_base):
+        with self.monitor.track(key_base):
             result = analysis_func(historical_data, *args, **kwargs)
 
         # 결과 캐싱

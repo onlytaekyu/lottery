@@ -15,6 +15,16 @@ import json
 import psutil
 from concurrent.futures import ThreadPoolExecutor
 import gc
+import threading
+from contextlib import contextmanager, ExitStack
+
+try:
+    import pynvml
+
+    pynvml.nvmlInit()
+    NVML_AVAILABLE = True
+except (ImportError, pynvml.NVMLError):
+    NVML_AVAILABLE = False
 
 from .unified_logging import get_logger
 from .performance_optimizer import (
@@ -53,6 +63,114 @@ class BenchmarkResult:
             self.speedup_ratio = self.cpu_time / self.multithread_time
 
 
+class RealTimeGpuMonitor(threading.Thread):
+    """실시간 GPU 성능을 모니터링하는 백그라운드 스레드"""
+
+    def __init__(self, gpu_id: int = 0, interval: float = 0.1):
+        super().__init__(daemon=True)
+        self.gpu_id = gpu_id
+        self.interval = interval
+        self.handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
+        self.running = False
+        self.stats = []
+
+    def run(self):
+        self.running = True
+        while self.running:
+            util = pynvml.nvmlDeviceGetUtilizationRates(self.handle)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(self.handle)
+            self.stats.append(
+                {
+                    "timestamp": time.time(),
+                    "gpu_util": util.gpu,
+                    "mem_util": util.memory,
+                    "mem_used_mb": float(mem.used) / (1024**2),
+                }
+            )
+            time.sleep(self.interval)
+
+    def stop(self):
+        self.running = False
+
+    def get_stats(self) -> Dict[str, float]:
+        if not self.stats:
+            return {}
+
+        gpu_utils = [s["gpu_util"] for s in self.stats]
+        mem_used = [s["mem_used_mb"] for s in self.stats]
+
+        return {
+            "avg_gpu_util": np.mean(gpu_utils),
+            "max_gpu_util": np.max(gpu_utils),
+            "avg_mem_used_mb": np.mean(mem_used),
+            "max_mem_used_mb": np.max(mem_used),
+        }
+
+
+@contextmanager
+def benchmark_context(name: str):
+    """특정 코드 블록의 성능을 측정하고 GPU를 모니터링하는 컨텍스트 매니저"""
+    monitor = None
+    if NVML_AVAILABLE:
+        monitor = RealTimeGpuMonitor()
+        monitor.start()
+
+    start_time = time.time()
+
+    # 시간 측정 결과를 저장할 객체
+    timing_result = {"elapsed_time": 0.0}
+
+    try:
+        yield timing_result
+    finally:
+        elapsed_time = time.time() - start_time
+        timing_result["elapsed_time"] = elapsed_time
+        logger.info(f"[{name}] 실행 시간: {elapsed_time:.4f}s")
+
+        if monitor:
+            monitor.stop()
+            stats = monitor.get_stats()
+            logger.info(f"[{name}] GPU 성능: {stats}")
+            timing_result["gpu_stats"] = stats
+
+
+class CUDAStreamManager:
+    """CUDA 스트림을 효율적으로 관리하고 재사용하는 풀링 시스템"""
+
+    def __init__(self, pool_size: int = 4):
+        self.pool_size = pool_size
+        self._streams = [torch.cuda.Stream() for _ in range(pool_size)]
+        self._in_use = [False] * pool_size
+        self._lock = threading.Lock()
+
+    @contextmanager
+    def get_stream(self):
+        """컨텍스트 관리자를 통해 스트림을 안전하게 할당하고 반납합니다."""
+        stream_index = -1
+        with self._lock:
+            for i in range(self.pool_size):
+                if not self._in_use[i]:
+                    stream_index = i
+                    self._in_use[i] = True
+                    break
+
+        if stream_index == -1:
+            # 모든 스트림이 사용 중일 경우, 기본 스트림을 사용하거나 예외 발생
+            # 여기서는 경고 후 기본 스트림(None)을 사용하도록 함
+            logger.warning(
+                "모든 CUDA 스트림이 사용 중입니다. 기본 스트림으로 대체합니다."
+            )
+            yield None
+            return
+
+        stream = self._streams[stream_index]
+        try:
+            yield stream
+        finally:
+            with self._lock:
+                self._in_use[stream_index] = False
+
+
 class GPUBenchmarkSuite:
     """GPU 우선순위 시스템 벤치마크 스위트"""
 
@@ -65,9 +183,12 @@ class GPUBenchmarkSuite:
 
         self.gpu_available = torch.cuda.is_available()
         self.results: List[BenchmarkResult] = []
+        self.stream_manager = CUDAStreamManager() if self.gpu_available else None
 
         if self.gpu_available:
-            self.logger.info("GPU 벤치마크 스위트 초기화 완료")
+            self.logger.info(
+                "GPU 벤치마크 스위트 초기화 완료 (CUDA 스트림 관리자 포함)"
+            )
         else:
             self.logger.warning("GPU 없음 - CPU 성능만 측정")
 
@@ -94,8 +215,8 @@ class GPUBenchmarkSuite:
         return self._generate_performance_report()
 
     def _benchmark_smart_computation(self):
-        """스마트 컴퓨테이션 벤치마크"""
-        self.logger.info("📊 스마트 컴퓨테이션 벤치마크")
+        """스마트 컴퓨테이션 벤치마크 (CUDA 스트림 적용)"""
+        self.logger.info("📊 스마트 컴퓨테이션 벤치마크 (스트림 관리 강화)")
 
         # 테스트 데이터 생성
         test_sizes = [1000, 10000, 100000, 1000000]
@@ -113,20 +234,31 @@ class GPUBenchmarkSuite:
                     else:
                         return np.mean(arr**2 + np.sin(arr))
 
-                # GPU/멀티쓰레드/CPU 성능 측정
-                if self.gpu_available:
-                    start_time = time.time()
-                    gpu_result = smart_compute(
-                        computation_task, data, operation_type="computation"
-                    )
-                    result.gpu_time = time.time() - start_time
-                    result.gpu_memory_used = self.memory_manager.get_memory_usage("gpu")
+                # GPU 성능 측정 (스트림 사용)
+                if self.gpu_available and self.stream_manager:
+                    with ExitStack() as stack:
+                        # 벤치마크 컨텍스트와 스트림 컨텍스트를 함께 사용
+                        stack.enter_context(
+                            benchmark_context(f"smart_computation_gpu_{size}")
+                        )
+                        stream = stack.enter_context(self.stream_manager.get_stream())
+
+                        start_time = time.time()
+                        with torch.cuda.stream(stream):
+                            gpu_result = smart_compute(
+                                computation_task, data, operation_type="computation"
+                            )
+                        torch.cuda.synchronize()  # 스트림 연산 완료 대기
+                        result.gpu_time = time.time() - start_time
+                        result.gpu_memory_used = self.memory_manager.get_memory_usage(
+                            "gpu"
+                        )
 
                 # CPU 성능 측정
-                start_time = time.time()
-                cpu_result = computation_task(data)
-                result.cpu_time = time.time() - start_time
-                result.cpu_memory_used = self.memory_manager.get_memory_usage("cpu")
+                with benchmark_context(f"smart_computation_cpu_{size}") as timing:
+                    cpu_result = computation_task(data)
+                    result.cpu_time = timing["elapsed_time"]
+                    result.cpu_memory_used = self.memory_manager.get_memory_usage("cpu")
 
                 # 처리량 계산
                 if result.gpu_time:
@@ -158,25 +290,22 @@ class GPUBenchmarkSuite:
 
             try:
                 # 스마트 메모리 할당 테스트
-                start_time = time.time()
-
-                if self.gpu_available:
-                    # GPU 메모리 할당
+                with benchmark_context(
+                    f"memory_management_gpu_{size[0]}"
+                ) as gpu_timing:
                     tensor = self.memory_manager.smart_memory_allocation(
                         size, prefer_gpu=True
                     )
-                    result.gpu_time = time.time() - start_time
+                    result.gpu_time = gpu_timing["elapsed_time"]
                     result.gpu_memory_used = self.memory_manager.get_memory_usage("gpu")
 
-                    # 메모리 정리
-                    del tensor
-                    torch.cuda.empty_cache()
-
                 # CPU 메모리 할당
-                start_time = time.time()
-                cpu_tensor = self.memory_manager.allocate_cpu_memory(size)
-                result.cpu_time = time.time() - start_time
-                result.cpu_memory_used = self.memory_manager.get_memory_usage("cpu")
+                with benchmark_context(
+                    f"memory_management_cpu_{size[0]}"
+                ) as cpu_timing:
+                    cpu_tensor = self.memory_manager.allocate_cpu_memory(size)
+                    result.cpu_time = cpu_timing["elapsed_time"]
+                    result.cpu_memory_used = self.memory_manager.get_memory_usage("cpu")
 
                 result.calculate_speedup()
 
@@ -211,30 +340,32 @@ class GPUBenchmarkSuite:
 
                     # GPU 정규화
                     if self.gpu_available:
-                        start_time = time.time()
-                        gpu_normalized = smart_normalize(data, method=method)
-                        result.gpu_time = time.time() - start_time
+                        with benchmark_context(f"normalization_gpu_{method}_{size}"):
+                            gpu_normalized = smart_normalize(data, method=method)
+                        result.gpu_time = 0  # 임시 값, 컨텍스트 매니저가 출력
                         result.gpu_memory_used = self.memory_manager.get_memory_usage(
                             "gpu"
                         )
 
                     # CPU 정규화 (기존 방식)
-                    start_time = time.time()
-                    if method == "zscore":
-                        cpu_normalized = (data - np.mean(data, axis=0)) / np.std(
-                            data, axis=0
-                        )
-                    elif method == "minmax":
-                        min_val = np.min(data, axis=0)
-                        max_val = np.max(data, axis=0)
-                        cpu_normalized = (data - min_val) / (max_val - min_val)
-                    else:  # robust
-                        median = np.median(data, axis=0)
-                        mad = np.median(np.abs(data - median), axis=0)
-                        cpu_normalized = (data - median) / mad
+                    with benchmark_context(f"normalization_cpu_{method}_{size}"):
+                        if method == "zscore":
+                            cpu_normalized = (data - np.mean(data, axis=0)) / np.std(
+                                data, axis=0
+                            )
+                        elif method == "minmax":
+                            min_val = np.min(data, axis=0)
+                            max_val = np.max(data, axis=0)
+                            cpu_normalized = (data - min_val) / (max_val - min_val)
+                        else:  # robust
+                            median = np.median(data, axis=0)
+                            mad = np.median(np.abs(data - median), axis=0)
+                            cpu_normalized = (data - median) / mad
 
-                    result.cpu_time = time.time() - start_time
-                    result.cpu_memory_used = self.memory_manager.get_memory_usage("cpu")
+                        result.cpu_time = 0  # 임시 값, 컨텍스트 매니저가 출력
+                        result.cpu_memory_used = self.memory_manager.get_memory_usage(
+                            "cpu"
+                        )
 
                     # 처리량 계산
                     if result.gpu_time:

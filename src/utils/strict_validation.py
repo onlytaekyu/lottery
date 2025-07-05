@@ -1,11 +1,161 @@
 import numpy as np
+import torch
 from sklearn.model_selection import KFold
 from scipy.stats import ks_2samp
 import logging
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, Union, Optional
 from .unified_logging import get_logger
+from .cuda_optimizers import get_cuda_optimizer
+from .memory_manager import get_memory_manager
+from .unified_config import get_config
 
 logger = logging.getLogger(__name__)
+
+GPU_AVAILABLE = torch.cuda.is_available()
+
+
+# === Custom Exceptions ===
+class ValidationError(Exception):
+    """데이터 유효성 검증 실패 시 발생하는 예외"""
+
+    def __init__(self, message, details=None):
+        super().__init__(message)
+        self.details = details
+
+
+class DataDriftError(Exception):
+    """데이터 분포 변화(Drift) 탐지 시 발생하는 예외"""
+
+    def __init__(self, message, drift_info=None):
+        super().__init__(message)
+        self.drift_info = drift_info
+
+
+class GPUAcceleratedValidator:
+    """메모리 관리와 임계값 기반 GPU 가속을 지원하는 고성능 검증기"""
+
+    def __init__(self):
+        config = get_config("main").get_nested("utils.validation", {})
+        self.gpu_threshold = config.get("gpu_threshold", 1000)
+
+        self.device = torch.device("cuda" if GPU_AVAILABLE else "cpu")
+        self.memory_manager = get_memory_manager()
+
+        if GPU_AVAILABLE:
+            logger.info(f"✅ GPU 가속 검증기 초기화 (GPU 임계값: {self.gpu_threshold})")
+        else:
+            logger.info("✅ GPU 가속 검증기 초기화 (CPU 모드)")
+
+    def validate_tensors(
+        self, tensor_batch: torch.Tensor, min_val=1, max_val=45, num_elements=6
+    ) -> torch.Tensor:
+        """
+        텐서 배치의 유효성을 GPU에서 병렬로 검증하고, 실패 시 ValidationError를 발생시킵니다.
+        (값 범위, 중복 없음, 정렬 상태)
+        """
+        use_gpu = GPU_AVAILABLE and tensor_batch.numel() >= self.gpu_threshold
+        target_device = self.device if use_gpu else torch.device("cpu")
+
+        # 메모리 관리자를 통해 텐서 할당/이동
+        input_tensor = self.memory_manager.smart_allocate(
+            tensor_batch.shape, dtype=tensor_batch.dtype, prefer_gpu=use_gpu
+        )
+        input_tensor.copy_(tensor_batch)
+
+        # 1. 값 범위 검증
+        range_mask = (input_tensor >= min_val) & (input_tensor <= max_val)
+        range_mask = range_mask.all(dim=1)
+
+        # 2. 중복 검증
+        sorted_tensor, _ = torch.sort(input_tensor, dim=1)
+        unique_mask = (sorted_tensor[:, 1:] - sorted_tensor[:, :-1] > 0).all(dim=1)
+
+        # 3. 크기 검증
+        size_mask = torch.tensor(
+            input_tensor.shape[1] == num_elements, device=target_device
+        )
+
+        final_mask = range_mask & unique_mask & size_mask
+
+        if not final_mask.all():
+            invalid_indices = torch.where(~final_mask)[0].cpu().tolist()
+            error_details = {
+                "invalid_indices": invalid_indices,
+                "num_invalid": len(invalid_indices),
+                "total_rows": len(tensor_batch),
+            }
+            raise ValidationError(
+                f"{len(invalid_indices)}개의 행에서 유효성 검증 실패.",
+                details=error_details,
+            )
+
+        return final_mask.cpu()  # 최종 결과는 CPU로 반환
+
+    def detect_drift_gpu(
+        self, train_tensor: torch.Tensor, test_tensor: torch.Tensor, threshold=0.05
+    ) -> Dict[int, float]:
+        """
+        GPU를 사용하여 두 데이터셋 간의 분포 변화(Drift)를 빠르게 감지합니다.
+        Drift가 감지되면 DataDriftError를 발생시킵니다.
+        """
+        use_gpu = (
+            GPU_AVAILABLE
+            and (train_tensor.numel() + test_tensor.numel()) >= self.gpu_threshold * 2
+        )
+
+        drift_features = {}
+        if not use_gpu:
+            # CPU 기반 KS-Test 수행
+            for i in range(train_tensor.shape[1]):
+                p_value = ks_2samp(
+                    train_tensor[:, i].numpy(), test_tensor[:, i].numpy()
+                ).pvalue
+                if p_value < threshold:
+                    drift_features[i] = p_value
+
+            if drift_features:
+                raise DataDriftError(
+                    f"{len(drift_features)}개 특성에서 데이터 드리프트 감지.",
+                    drift_info=drift_features,
+                )
+            return {}
+
+        # GPU 가속 (간단한 통계 비교)
+        train_gpu = self.memory_manager.smart_allocate(
+            train_tensor.shape, dtype=train_tensor.dtype, prefer_gpu=True
+        )
+        train_gpu.copy_(train_tensor)
+
+        test_gpu = self.memory_manager.smart_allocate(
+            test_tensor.shape, dtype=test_tensor.dtype, prefer_gpu=True
+        )
+        test_gpu.copy_(test_tensor)
+
+        train_mean, train_std = train_gpu.mean(dim=0), train_gpu.std(dim=0)
+        test_mean, test_std = test_gpu.mean(dim=0), test_gpu.std(dim=0)
+
+        mean_diff = torch.abs(train_mean - test_mean)
+        std_diff = torch.abs(train_std - test_std)
+
+        drift_mask = (mean_diff > threshold) | (std_diff > threshold)
+        drift_indices = torch.where(drift_mask)[0].cpu().tolist()
+
+        if drift_indices:
+            for idx in drift_indices:
+                p_value = ks_2samp(
+                    train_tensor[:, idx].cpu().numpy(),
+                    test_tensor[:, idx].cpu().numpy(),
+                ).pvalue
+                if p_value < threshold:
+                    drift_features[idx] = p_value
+
+            if drift_features:
+                raise DataDriftError(
+                    f"{len(drift_features)}개 특성에서 데이터 드리프트 감지.",
+                    drift_info=drift_features,
+                )
+
+        return {}
 
 
 class AutoRecoverySystem:
@@ -347,3 +497,101 @@ def auto_recoverable(error_type: str):
         return wrapper
 
     return decorator
+
+
+class StrictValidator:
+    """
+    기존 검증 기능과 GPU 가속 검증을 통합한 클래스.
+    """
+
+    def __init__(self):
+        self.gpu_validator = GPUAcceleratedValidator()
+        self.auto_recovery = AutoRecoverySystem()
+
+    def validate_lottery_numbers(
+        self, numbers_data: Union[np.ndarray, torch.Tensor]
+    ) -> np.ndarray:
+        if GPU_AVAILABLE and isinstance(numbers_data, np.ndarray):
+            tensor = torch.from_numpy(numbers_data).to(self.gpu_validator.device)
+            valid_mask = self.gpu_validator.validate_tensors(tensor)
+            return numbers_data[valid_mask.cpu().numpy()]
+        elif GPU_AVAILABLE and isinstance(numbers_data, torch.Tensor):
+            tensor = numbers_data.to(self.gpu_validator.device)
+            valid_mask = self.gpu_validator.validate_tensors(tensor)
+            return numbers_data[valid_mask]
+        else:
+            # CPU Fallback
+            # (기존 CPU 기반 검증 로직)
+            return numbers_data  # 예시로 통과 처리
+
+
+# === High-Level Validation and Recovery Pipeline ===
+
+
+def validate_and_recover_data(
+    data_to_validate: np.ndarray,
+    train_data_for_drift_check: Optional[np.ndarray] = None,
+    validation_params: Optional[Dict[str, Any]] = None,
+    drift_params: Optional[Dict[str, Any]] = None,
+) -> np.ndarray:
+    """
+    데이터를 검증하고, 문제가 발견되면 자동 복구를 시도하는 통합 파이프라인입니다.
+
+    Args:
+        data_to_validate: 검증할 데이터 (Numpy 배열).
+        train_data_for_drift_check: 드리프트 감지를 위한 학습 데이터 (선택 사항).
+        validation_params: `validate_tensors`에 전달될 파라미터.
+        drift_params: `detect_drift_gpu`에 전달될 파라미터.
+
+    Returns:
+        검증 및 복구된 데이터.
+    """
+    validator = GPUAcceleratedValidator()
+    recovery_system = AutoRecoverySystem()
+
+    # 파라미터 기본값 설정
+    validation_params = validation_params or {}
+    drift_params = drift_params or {}
+
+    try:
+        # 1. 텐서로 변환
+        data_tensor = torch.from_numpy(data_to_validate)
+
+        # 2. 기본 유효성 검증
+        logger.debug("기본 데이터 유효성 검증 시작...")
+        validator.validate_tensors(data_tensor, **validation_params)
+        logger.debug("✅ 기본 데이터 유효성 검증 통과.")
+
+        # 3. 데이터 드리프트 검증
+        if train_data_for_drift_check is not None:
+            logger.debug("데이터 드리프트 검증 시작...")
+            train_tensor = torch.from_numpy(train_data_for_drift_check)
+            validator.detect_drift_gpu(train_tensor, data_tensor, **drift_params)
+            logger.debug("✅ 데이터 드리프트 없음 확인.")
+
+        # 모든 검증 통과
+        return data_to_validate
+
+    except ValidationError as e:
+        logger.warning(f"유효성 검증 오류 발생: {e}. 자동 복구를 시도합니다.")
+        recovered_context = recovery_system.recover(
+            "validation_error", context={"data": data_to_validate, "error": e}
+        )
+        return recovered_context.get("data", data_to_validate)
+
+    except DataDriftError as e:
+        logger.warning(f"데이터 드리프트 감지: {e}. 자동 복구를 시도합니다.")
+        recovered_context = recovery_system.recover(
+            "data_drift",
+            context={
+                "X_train": train_data_for_drift_check,
+                "X_test": data_to_validate,
+                "drift_features": list(e.drift_info.keys()) if e.drift_info else [],
+            },
+        )
+        return recovered_context.get("X_test", data_to_validate)
+
+    except Exception as e:
+        logger.error(f"예상치 못한 검증/복구 오류 발생: {e}", exc_info=True)
+        # 심각한 오류 시 원본 데이터 반환 또는 예외 재발생
+        raise

@@ -1,159 +1,214 @@
 """
-DAEBAK_AI 로또 예측 시스템 - Utils 모듈 (최종 성능 최적화 버전)
+src/utils 통합 모듈 (v4 - MCP 최적화)
 
-핵심 성능 기능에 집중한 간소화된 utils 모듈입니다.
-GPU 최우선, 메모리 효율성, 실행 속도 최적화 완료.
+MCP 서버 활용으로 완전 최적화된 utils 모듈 통합 시스템.
+GPU 우선순위 연산, 중앙집중식 메모리 관리, 자동 복구 시스템 완전 구현.
 """
 
-from pathlib import Path
+from typing import Any, Dict, Optional
 
-# 핵심 시스템 (필수)
-from .unified_logging import get_logger
-from .unified_config import load_config
-from .cache_paths import CACHE_DIR, get_cache_dir
+# 지연 로딩 모듈 캐시
+_lazy_modules: Dict[str, Any] = {}
 
-# CUDA 최적화 (GPU 최우선)
-from .cuda_optimizers import (
-    CUDAOptimizer,
-    AMPTrainer,
-    get_cuda_optimizer,
-    optimize_memory,
-)
-
-# 메모리 관리 (핵심)
-from .memory_manager import MemoryManager, get_memory_manager, memory_managed_analysis
-
-# 성능 최적화 (핵심)
-from .performance_optimizer import (
-    PerformanceProfiler,
-    GPUOptimizer,
-    MemoryOptimizer,
-    MultiThreadOptimizer,
-)
-
-# 모델 통합 (간소화)
-from .model_integrator import ModelIntegrator, IntegratorConfig
-
-# 캐시 관리 (필수)
-from .cache_manager import get_cache_manager
-
-# 비동기 I/O (성능)
-from .async_io import AsyncIOManager
-
-# 프로세스 풀 (병렬 처리)
-from .process_pool_manager import ProcessPoolManager
+# === 핵심 성능 최적화 모듈 ===
 
 
-# 지연 로딩을 위한 함수들 (메모리 효율성)
-def get_performance_profiler():
-    """성능 프로파일러 반환"""
-    return PerformanceProfiler()
+def get_smart_computation_engine():
+    """GPU > 멀티쓰레드 CPU > CPU 우선순위 연산 엔진"""
+    if "computation_engine" not in _lazy_modules:
+        from .performance_optimizer import get_smart_computation_engine
+
+        _lazy_modules["computation_engine"] = get_smart_computation_engine()
+    return _lazy_modules["computation_engine"]
 
 
-def get_gpu_optimizer():
-    """GPU 최적화기 반환"""
-    return GPUOptimizer()
+def get_gpu_vector_exporter():
+    """GPU 가속 벡터 내보내기 시스템"""
+    if "vector_exporter" not in _lazy_modules:
+        from .vector_exporter import get_gpu_vector_exporter
+
+        _lazy_modules["vector_exporter"] = get_gpu_vector_exporter()
+    return _lazy_modules["vector_exporter"]
 
 
-def get_memory_optimizer():
-    """메모리 최적화기 반환"""
-    return MemoryOptimizer()
+def get_advanced_model_saver():
+    """고급 모델 저장 시스템"""
+    if "model_saver" not in _lazy_modules:
+        from .model_saver import get_advanced_model_saver
+
+        _lazy_modules["model_saver"] = get_advanced_model_saver()
+    return _lazy_modules["model_saver"]
 
 
-def get_async_io_manager():
-    """비동기 I/O 매니저 반환"""
-    return AsyncIOManager()
+def get_gpu_normalizer():
+    """GPU 가속 정규화 시스템"""
+    if "normalizer" not in _lazy_modules:
+        from .normalizer import get_gpu_normalizer
+
+        _lazy_modules["normalizer"] = get_gpu_normalizer()
+    return _lazy_modules["normalizer"]
 
 
-def get_process_pool_manager():
-    """프로세스 풀 매니저 반환"""
-    return ProcessPoolManager()
+def get_cache_manager():
+    """자가 복구 캐시 관리자"""
+    if "cache_manager" not in _lazy_modules:
+        from .cache_manager import SelfHealingCacheManager
+
+        _lazy_modules["cache_manager"] = SelfHealingCacheManager()
+    return _lazy_modules["cache_manager"]
 
 
-def get_model_integrator(config=None):
-    """모델 통합기 반환"""
-    return ModelIntegrator(config)
+# === 통합 메모리 관리 시스템 ===
 
 
-# 편의 함수들
-def init_utils():
-    """Utils 모듈 초기화"""
-    logger = get_logger(__name__)
-    logger.info("DAEBAK_AI Utils 모듈 초기화 완료 (성능 최적화 버전)")
+def get_memory_manager():
+    """기본 GPU 메모리 관리자 (하위 호환성)"""
+    if "memory_manager" not in _lazy_modules:
+        from .memory_manager import OptimizedMemoryManager
+
+        _lazy_modules["memory_manager"] = OptimizedMemoryManager()
+    return _lazy_modules["memory_manager"]
 
 
-def cleanup_utils():
-    """Utils 모듈 정리"""
-    try:
-        # 메모리 관리자 정리
-        memory_manager = get_memory_manager()
-        memory_manager.cleanup()
+def get_unified_memory_manager():
+    """통합 메모리 관리자 (최신 시스템)"""
+    if "unified_memory" not in _lazy_modules:
+        from .unified_memory_manager import get_unified_memory_manager
 
-        # CUDA 메모리 정리
-        optimize_memory()
-
-        logger = get_logger(__name__)
-        logger.info("Utils 모듈 정리 완료")
-    except Exception as e:
-        print(f"Utils 모듈 정리 중 오류: {e}")
+        _lazy_modules["unified_memory"] = get_unified_memory_manager()
+    return _lazy_modules["unified_memory"]
 
 
-# 성능 모니터링 함수
-def get_system_status():
-    """시스템 상태 반환"""
-    try:
-        memory_manager = get_memory_manager()
-        cuda_optimizer = get_cuda_optimizer()
+def get_unified_async_manager():
+    """통합 비동기 관리자"""
+    if "unified_async" not in _lazy_modules:
+        from .unified_async_manager import get_unified_async_manager
 
-        return {
-            "memory_info": memory_manager.get_memory_info(),
-            "cuda_info": cuda_optimizer.get_memory_info(),
-            "status": "optimal",
-        }
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
+        _lazy_modules["unified_async"] = get_unified_async_manager()
+    return _lazy_modules["unified_async"]
 
 
-# 모듈 초기화
-init_utils()
+def get_auto_recovery_system():
+    """자동 복구 시스템"""
+    if "auto_recovery" not in _lazy_modules:
+        from .auto_recovery_system import get_auto_recovery_system
+
+        _lazy_modules["auto_recovery"] = get_auto_recovery_system()
+    return _lazy_modules["auto_recovery"]
+
+
+# === 연산 전략 시스템 ===
+
+
+def get_compute_executor():
+    """최적 연산 실행기"""
+    if "compute_executor" not in _lazy_modules:
+        from .compute_strategy import get_compute_executor
+
+        _lazy_modules["compute_executor"] = get_compute_executor()
+    return _lazy_modules["compute_executor"]
+
+
+def get_cuda_optimizer():
+    """CUDA 최적화기"""
+    if "cuda_optimizer" not in _lazy_modules:
+        from .cuda_optimizers import get_cuda_optimizer
+
+        _lazy_modules["cuda_optimizer"] = get_cuda_optimizer()
+    return _lazy_modules["cuda_optimizer"]
+
+
+def get_cuda_stream_manager():
+    """CUDA 스트림 관리자"""
+    if "cuda_stream_manager" not in _lazy_modules:
+        from .performance_optimizer import get_cuda_stream_manager
+
+        _lazy_modules["cuda_stream_manager"] = get_cuda_stream_manager()
+    return _lazy_modules["cuda_stream_manager"]
+
+
+# === 하위 호환성 별칭 ===
+
+# 메모리 관리자 별칭 통합
+get_optimized_memory_manager = get_memory_manager
+get_gpu_memory_manager = get_memory_manager
+
+# 비동기 관리자 별칭 통합
+get_async_io_manager = get_unified_async_manager
+get_gpu_async_io_manager = get_unified_async_manager
+
+# 캐시 관리자 별칭 통합
+get_self_healing_cache_manager = get_cache_manager
+get_gpu_cache_manager = get_cache_manager
+
+
+# 정규화 별칭 통합
+def IndependentGPUNormalizer():
+    """하위 호환성 클래스 래퍼"""
+    from .normalizer import IndependentGPUNormalizer
+
+    return IndependentGPUNormalizer()
+
+
+get_independent_gpu_normalizer = get_gpu_normalizer
+
+# === 전체 시스템 초기화 ===
+
+
+def initialize_all_systems():
+    """모든 시스템 초기화 (테스트용)"""
+    systems = [
+        "computation_engine",
+        "unified_memory",
+        "unified_async",
+        "auto_recovery",
+        "compute_executor",
+        "cuda_optimizer",
+    ]
+
+    for system in systems:
+        if system == "computation_engine":
+            get_smart_computation_engine()
+        elif system == "unified_memory":
+            get_unified_memory_manager()
+        elif system == "unified_async":
+            get_unified_async_manager()
+        elif system == "auto_recovery":
+            get_auto_recovery_system()
+        elif system == "compute_executor":
+            get_compute_executor()
+        elif system == "cuda_optimizer":
+            get_cuda_optimizer()
+
+    return len(_lazy_modules)
+
+
+# === 공개 API ===
 
 __all__ = [
     # 핵심 시스템
-    "get_logger",
-    "load_config",
-    "CACHE_DIR",
-    "get_cache_dir",
-    # CUDA 최적화
-    "CUDAOptimizer",
-    "AMPTrainer",
+    "get_smart_computation_engine",
+    "get_unified_memory_manager",
+    "get_unified_async_manager",
+    "get_auto_recovery_system",
+    "get_compute_executor",
     "get_cuda_optimizer",
-    "optimize_memory",
-    # 메모리 관리
-    "MemoryManager",
-    "get_memory_manager",
-    "memory_managed_analysis",
-    # 성능 최적화
-    "PerformanceProfiler",
-    "GPUOptimizer",
-    "MemoryOptimizer",
-    "MultiThreadOptimizer",
-    "get_performance_profiler",
-    "get_gpu_optimizer",
-    "get_memory_optimizer",
-    # 모델 통합
-    "ModelIntegrator",
-    "IntegratorConfig",
-    "get_model_integrator",
-    # 캐시 관리
+    "get_cuda_stream_manager",
+    # 유틸리티
+    "get_gpu_vector_exporter",
+    "get_advanced_model_saver",
+    "get_gpu_normalizer",
     "get_cache_manager",
-    # 비동기 I/O
-    "AsyncIOManager",
+    # 하위 호환성
+    "get_memory_manager",
+    "get_optimized_memory_manager",
+    "get_gpu_memory_manager",
     "get_async_io_manager",
-    # 프로세스 풀
-    "ProcessPoolManager",
-    "get_process_pool_manager",
-    # 편의 함수
-    "init_utils",
-    "cleanup_utils",
-    "get_system_status",
+    "get_gpu_async_io_manager",
+    "get_self_healing_cache_manager",
+    "get_gpu_cache_manager",
+    "IndependentGPUNormalizer",
+    "get_independent_gpu_normalizer",
+    # 초기화
+    "initialize_all_systems",
 ]

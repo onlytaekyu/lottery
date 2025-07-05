@@ -1,18 +1,19 @@
 """
-ProcessPool 관리자
+고급 병렬 처리 관리자 (v3 - GPU 워커 통합)
 
-CPU 집약적 작업을 병렬 처리하기 위한 프로세스 풀 시스템입니다.
-메모리 효율성과 성능 최적화를 위해 설계되었습니다.
+CPU 및 GPU 워커 풀을 동적으로 관리하여,
+작업 유형에 따라 최적의 리소스를 할당하는 고성능 병렬 처리 시스템.
 """
 
 import os
 import sys
 import time
 import psutil
+import torch
 import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from contextlib import contextmanager
 
 from .unified_logging import get_logger, log_exception
@@ -20,11 +21,33 @@ from .unified_logging import get_logger, log_exception
 logger = get_logger(__name__)
 
 
-@dataclass
-class ProcessPoolConfig:
-    """ProcessPool 설정"""
+def gpu_worker_process(task_queue: mp.Queue, result_queue: mp.Queue, gpu_id: int):
+    """GPU 워커 프로세스 함수 (상태 보고 기능 추가)"""
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    device = torch.device(f"cuda:{gpu_id}")
+    logger.info(f"✅ GPU 워커 시작 (PID: {os.getpid()}, GPU: {gpu_id})")
 
-    max_workers: int = min(4, psutil.cpu_count())
+    while True:
+        try:
+            task_id, func, args, kwargs = task_queue.get()
+            if func is None:
+                break
+
+            result_queue.put(("busy", gpu_id, task_id))
+            result = func(*args, **kwargs, device=device)
+            result_queue.put(("done", gpu_id, task_id, result))
+
+        except Exception as e:
+            log_exception(e, f"GPU 워커 (GPU: {gpu_id}) 오류 발생")
+            result_queue.put(("error", gpu_id, task_id, e))
+
+
+@dataclass
+class ParallelManagerConfig:
+    """고급 병렬 처리 관리자 설정"""
+
+    cpu_workers: int = min(4, psutil.cpu_count(logical=False) or 1)
+    gpu_workers: int = torch.cuda.device_count()
     chunk_size: int = 100
     timeout: float = 300.0
     memory_limit_mb: int = 1024
@@ -33,282 +56,152 @@ class ProcessPoolConfig:
     restart_threshold: int = 100  # 작업 수행 후 재시작
 
 
-class ProcessPoolManager:
-    """프로세스 풀 관리자"""
+class AdvancedParallelManager:
+    """CPU 및 GPU 리소스를 지능적으로 통합 관리하는 병렬 처리기 (v4)"""
 
-    def __init__(self, config: Union[ProcessPoolConfig, Dict[str, Any]]):
-        # 딕셔너리가 전달된 경우 ProcessPoolConfig로 변환
-        if isinstance(config, dict):
-            self.config = ProcessPoolConfig(
-                max_workers=config.get("max_workers", min(4, psutil.cpu_count())),
-                chunk_size=config.get("chunk_size", 100),
-                timeout=config.get("timeout", 300.0),
-                memory_limit_mb=config.get("memory_limit_mb", 1024),
-                enable_monitoring=config.get("enable_monitoring", True),
-                auto_restart=config.get("auto_restart", True),
-                restart_threshold=config.get("restart_threshold", 100),
-            )
-        else:
-            self.config = config
+    def __init__(self, config: ParallelManagerConfig, max_retries: int = 3):
+        self.config = config
+        self.max_retries = max_retries
+        self.cpu_executor = ProcessPoolExecutor(max_workers=self.config.cpu_workers)
 
-        self.executor = None
-        self.task_count = 0
-        self.performance_stats = {
-            "total_tasks": 0,
-            "completed_tasks": 0,
-            "failed_tasks": 0,
-            "total_time": 0.0,
-            "avg_task_time": 0.0,
-        }
+        # GPU 워커 초기화
+        self.gpu_task_queue = mp.Queue()
+        self.gpu_result_queue = mp.Queue()
+        self.gpu_processes = []
+        self.gpu_worker_status = (
+            {}
+        )  # {gpu_id: {'status': 'idle'/'busy', 'last_job_time': float}}
 
-        # 메모리 모니터링 최적화를 위한 캐싱
-        self._memory_cache = {
-            "last_check": 0,
-            "memory_ok": True,
-            "check_interval": 5.0,  # 5초마다 체크
-        }
-
-        self._initialize_pool()
-
-    def _initialize_pool(self):
-        """프로세스 풀 초기화"""
-        try:
-            self.executor = ProcessPoolExecutor(
-                max_workers=self.config.max_workers,
-                mp_context=mp.get_context("spawn"),  # Windows 호환성
-            )
-            # 전역 인스턴스인지 확인하여 중복 로그 방지
-            global _global_process_pool_manager, _initialization_logged
-            if self is _global_process_pool_manager and not _initialization_logged:
-                logger.info(
-                    f"ProcessPool 초기화 완료: {self.config.max_workers}개 워커"
+        if self.config.gpu_workers > 0:
+            for i in range(self.config.gpu_workers):
+                proc = mp.Process(
+                    target=gpu_worker_process,
+                    args=(self.gpu_task_queue, self.gpu_result_queue, i),
                 )
-                _initialization_logged = True
-            else:
-                logger.debug(
-                    f"ProcessPool 초기화 완료: {self.config.max_workers}개 워커"
-                )
-        except Exception as e:
-            logger.error(f"ProcessPool 초기화 실패: {e}")
-            raise
-
-    def _check_memory_usage(self) -> bool:
-        """메모리 사용량 확인 (캐싱 최적화)"""
-        try:
-            current_time = time.time()
-
-            # 캐시된 결과가 유효한지 확인
-            if (current_time - self._memory_cache["last_check"]) < self._memory_cache[
-                "check_interval"
-            ]:
-                return self._memory_cache["memory_ok"]
-
-            # 실제 메모리 사용량 확인
-            memory_info = psutil.virtual_memory()
-            memory_usage_mb = (memory_info.total - memory_info.available) / (
-                1024 * 1024
-            )
-
-            memory_ok = memory_usage_mb <= self.config.memory_limit_mb
-
-            # 캐시 업데이트
-            self._memory_cache.update(
-                {
-                    "last_check": current_time,
-                    "memory_ok": memory_ok,
+                proc.start()
+                self.gpu_processes.append(proc)
+                self.gpu_worker_status[i] = {
+                    "status": "idle",
+                    "last_job_time": time.time(),
                 }
-            )
 
-            if not memory_ok:
-                logger.warning(
-                    f"메모리 사용량 초과: {memory_usage_mb:.1f}MB > {self.config.memory_limit_mb}MB"
-                )
+        self.thread_executor = ThreadPoolExecutor()
 
-            return memory_ok
+    def _get_idle_gpu_worker(self) -> Optional[int]:
+        """가장 오랫동안 유휴 상태였던 GPU 워커 ID를 반환합니다."""
+        idle_workers = {
+            gpu_id: data
+            for gpu_id, data in self.gpu_worker_status.items()
+            if data["status"] == "idle"
+        }
+        if not idle_workers:
+            return None
+        # 마지막 작업 시간 기준으로 정렬하여 가장 오래된 워커 선택
+        return min(
+            idle_workers, key=lambda gpu_id: idle_workers[gpu_id]["last_job_time"]
+        )
 
-        except Exception as e:
-            logger.error(f"메모리 확인 실패: {e}")
-            return True  # 확인 실패 시 계속 진행
+    def _execute_on_gpu(self, func: Callable, tasks: List[Any]) -> List[Any]:
+        """GPU 워커 풀에서 작업 실행 (지능적 분배 및 재시도)"""
+        num_tasks = len(tasks)
+        results = [None] * num_tasks
+        retries = [0] * num_tasks
 
-    def _restart_pool_if_needed(self):
-        """필요시 프로세스 풀 재시작"""
-        if (
-            self.config.auto_restart
-            and self.task_count >= self.config.restart_threshold
-        ):
+        task_map = {i: task for i, task in enumerate(tasks)}
 
-            logger.info(f"프로세스 풀 재시작 ({self.task_count}개 작업 완료)")
-            self.shutdown()
-            self._initialize_pool()
-            self.task_count = 0
+        while task_map:
+            # 유휴 GPU 워커에게 작업 할당
+            idle_worker_id = self._get_idle_gpu_worker()
+            if idle_worker_id is not None and task_map:
+                task_id, task_args = task_map.popitem()
+                self.gpu_worker_status[idle_worker_id]["status"] = "busy"
+                self.gpu_task_queue.put((task_id, func, task_args, {}))
 
-    def execute_parallel(
-        self, func: Callable, data_chunks: List[Any], **kwargs
-    ) -> List[Any]:
-        """
-        병렬 작업 실행
+            # 결과 처리
+            status, gpu_id, task_id, data = self.gpu_result_queue.get()
 
-        Args:
-            func: 실행할 함수
-            data_chunks: 데이터 청크 리스트
-            **kwargs: 함수에 전달할 추가 인자
-
-        Returns:
-            결과 리스트
-        """
-        if not self.executor:
-            raise RuntimeError("ProcessPool이 초기화되지 않았습니다")
-
-        if not self._check_memory_usage():
-            logger.warning("메모리 부족으로 순차 처리로 전환")
-            return self._execute_sequential(func, data_chunks, **kwargs)
-
-        start_time = time.time()
-        results = []
-
-        try:
-            # 작업 제출
-            future_to_chunk = {
-                self.executor.submit(func, chunk, **kwargs): chunk
-                for chunk in data_chunks
-            }
-
-            self.performance_stats["total_tasks"] += len(data_chunks)
-
-            # 결과 수집
-            for future in as_completed(future_to_chunk, timeout=self.config.timeout):
-                chunk = future_to_chunk[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                    self.performance_stats["completed_tasks"] += 1
-                except Exception as e:
-                    logger.error(f"작업 실행 실패: {e}")
-                    self.performance_stats["failed_tasks"] += 1
-                    # 실패한 작업은 None으로 처리
-                    results.append(None)
-
-            # 성능 통계 업데이트
-            elapsed_time = time.time() - start_time
-            self.performance_stats["total_time"] += elapsed_time
-            self.performance_stats["avg_task_time"] = self.performance_stats[
-                "total_time"
-            ] / max(1, self.performance_stats["completed_tasks"])
-
-            self.task_count += len(data_chunks)
-            self._restart_pool_if_needed()
-
-            logger.info(
-                f"병렬 처리 완료: {len(data_chunks)}개 청크, {elapsed_time:.2f}초"
-            )
-            return results
-
-        except Exception as e:
-            logger.error(f"병렬 처리 실패: {e}")
-            # 실패 시 순차 처리로 폴백
-            return self._execute_sequential(func, data_chunks, **kwargs)
-
-    def _execute_sequential(
-        self, func: Callable, data_chunks: List[Any], **kwargs
-    ) -> List[Any]:
-        """순차 처리 폴백"""
-        logger.info("순차 처리 모드로 실행")
-        results = []
-
-        for chunk in data_chunks:
-            try:
-                result = func(chunk, **kwargs)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"순차 처리 실패: {e}")
-                results.append(None)
+            if status == "done":
+                results[task_id] = data
+                self.gpu_worker_status[gpu_id]["status"] = "idle"
+                self.gpu_worker_status[gpu_id]["last_job_time"] = time.time()
+            elif status == "error":
+                logger.warning(f"GPU 작업 {task_id} 실패. 재시도합니다. (오류: {data})")
+                self.gpu_worker_status[gpu_id]["status"] = "idle"
+                if retries[task_id] < self.max_retries:
+                    retries[task_id] += 1
+                    task_map[task_id] = tasks[task_id]  # 작업을 다시 큐에 넣음
+                else:
+                    logger.error(
+                        f"GPU 작업 {task_id} 최대 재시도 횟수 초과. 최종 실패 처리."
+                    )
+                    results[task_id] = data  # 예외를 결과로 저장
+            elif status == "busy":
+                self.gpu_worker_status[gpu_id]["status"] = "busy"
 
         return results
 
-    def execute_single(self, func: Callable, data: Any, **kwargs) -> Any:
-        """단일 작업 실행"""
-        if not self.executor:
-            raise RuntimeError("ProcessPool이 초기화되지 않았습니다")
+    def shutdown(self):
+        """모든 워커 풀 종료"""
+        self.cpu_executor.shutdown(wait=True)
+        if self.config.gpu_workers > 0:
+            for _ in range(self.config.gpu_workers):
+                self.gpu_task_queue.put((None, None, None, None))
+            for proc in self.gpu_processes:
+                proc.join()
+        self.thread_executor.shutdown(wait=True)
+        logger.info("모든 병렬 처리 관리자 리소스가 종료되었습니다.")
 
-        try:
-            future = self.executor.submit(func, data, **kwargs)
-            result = future.result(timeout=self.config.timeout)
-            self.task_count += 1
-            self._restart_pool_if_needed()
-            return result
-        except Exception as e:
-            logger.error(f"단일 작업 실행 실패: {e}")
-            raise
+    def execute_parallel(
+        self, func: Callable, tasks: List[Any], prefer_gpu: bool = False
+    ) -> List[Any]:
+        """
+        작업을 병렬로 실행 (GPU 우선 또는 CPU)
+        """
+        if prefer_gpu and self.config.gpu_workers > 0:
+            return self._execute_on_gpu(func, tasks)
+        else:
+            return self._execute_on_cpu(func, tasks)
 
-    def get_performance_stats(self) -> Dict[str, Any]:
-        """성능 통계 반환"""
-        stats = self.performance_stats.copy()
-        stats.update(
-            {
-                "current_task_count": self.task_count,
-                "max_workers": self.config.max_workers,
-                "success_rate": (
-                    stats["completed_tasks"] / max(1, stats["total_tasks"]) * 100
-                ),
-            }
-        )
-        return stats
+    def _execute_on_cpu(self, func: Callable, tasks: List[Any]) -> List[Any]:
+        """CPU 프로세스 풀에서 작업 실행"""
+        futures = [self.cpu_executor.submit(func, *task) for task in tasks]
+        # 결과를 원래 순서대로 정렬
+        results = [None] * len(tasks)
+        future_map = {future: i for i, future in enumerate(futures)}
 
-    def shutdown(self, wait: bool = True):
-        """프로세스 풀 종료"""
-        if self.executor:
+        for future in as_completed(future_map):
+            index = future_map[future]
             try:
-                self.executor.shutdown(wait=wait)
-                logger.info("ProcessPool 종료 완료")
+                results[index] = future.result()
             except Exception as e:
-                logger.error(f"ProcessPool 종료 실패: {e}")
-            finally:
-                self.executor = None
+                logger.error(f"CPU 작업 {index} 실패: {e}")
+                results[index] = e  # 예외를 결과로 저장
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.shutdown()
+        return results
 
 
-# 전역 ProcessPool 관리자 인스턴스
-_global_process_pool_manager = None
-_initialization_logged = False  # 초기화 로그 중복 방지
+# (기존 get_process_pool_manager는 get_parallel_manager로 이름 변경 및 수정)
+_manager_instance = None
 
 
-def get_process_pool_manager(
-    config: Optional[Union[ProcessPoolConfig, Dict[str, Any]]] = None,
-) -> ProcessPoolManager:
-    """전역 ProcessPool 관리자 반환 (싱글톤 패턴)"""
-    global _global_process_pool_manager, _initialization_logged
-
-    if _global_process_pool_manager is None:
-        if config is None:
-            config = ProcessPoolConfig()
-        _global_process_pool_manager = ProcessPoolManager(config)
-        if not _initialization_logged:
-            # config가 딕셔너리인 경우 max_workers 키로 접근
-            if isinstance(config, dict):
-                max_workers = config.get("max_workers", 4)
-            else:
-                max_workers = config.max_workers
-            logger.info(f"전역 ProcessPool 관리자 생성: {max_workers}개 워커")
-            _initialization_logged = True
-    else:
-        logger.debug("기존 전역 ProcessPool 관리자 재사용")
-
-    return _global_process_pool_manager
+def get_parallel_manager(
+    config: Optional[ParallelManagerConfig] = None,
+) -> "AdvancedParallelManager":
+    global _manager_instance
+    if _manager_instance is None:
+        cfg = config or ParallelManagerConfig()
+        _manager_instance = AdvancedParallelManager(cfg)
+    return _manager_instance
 
 
 @contextmanager
-def process_pool_context(config: Optional[ProcessPoolConfig] = None):
+def process_pool_context(config: Optional[ParallelManagerConfig] = None):
     """ProcessPool 컨텍스트 매니저"""
     manager = None
     try:
         if config is None:
-            config = ProcessPoolConfig()
-        manager = ProcessPoolManager(config)
+            config = ParallelManagerConfig()
+        manager = AdvancedParallelManager(config)
         yield manager
     finally:
         if manager:
@@ -355,8 +248,7 @@ def parallel_map(
 
 def cleanup_process_pool():
     """전역 ProcessPool 정리"""
-    global _global_process_pool_manager, _initialization_logged
-    if _global_process_pool_manager:
-        _global_process_pool_manager.shutdown()
-        _global_process_pool_manager = None
-        _initialization_logged = False  # 로그 플래그 초기화
+    global _manager_instance
+    if _manager_instance:
+        _manager_instance.shutdown()
+        _manager_instance = None
