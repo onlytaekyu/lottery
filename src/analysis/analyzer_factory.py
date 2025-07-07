@@ -133,6 +133,47 @@ class AnalyzerFactory:
 
                 return UnifiedAnalyzer(config)
 
+            # ===== 신규 고급 분석기 추가 =====
+            elif analyzer_type == "bayesian":
+                from .bayesian_analyzer import BayesianAnalyzer
+
+                return BayesianAnalyzer(config)
+
+            elif analyzer_type == "trend_v2":
+                from .trend_analyzer_v2 import TrendAnalyzerV2
+
+                return TrendAnalyzerV2(config)
+
+            elif analyzer_type == "ensemble":
+                from .ensemble_analyzer import EnsembleAnalyzer
+
+                return EnsembleAnalyzer(config)
+
+            elif analyzer_type == "graph_network":
+                from .graph_network_analyzer import GraphNetworkAnalyzer
+
+                return GraphNetworkAnalyzer(config)
+
+            elif analyzer_type == "meta_feature":
+                from .meta_feature_analyzer import MetaFeatureAnalyzer
+
+                return MetaFeatureAnalyzer(config)
+
+            elif analyzer_type == "optimized_vectorizer":
+                from .optimized_pattern_vectorizer import OptimizedPatternVectorizer
+
+                return OptimizedPatternVectorizer(config)
+
+            elif analyzer_type == "three_digit_engine":
+                from .three_digit_expansion_engine import ThreeDigitExpansionEngine
+
+                return ThreeDigitExpansionEngine(config)
+
+            elif analyzer_type == "three_digit_predictor":
+                from .three_digit_priority_predictor import ThreeDigitPriorityPredictor
+
+                return ThreeDigitPriorityPredictor(config)
+
             else:
                 raise ValueError(f"알 수 없는 분석기 타입: {analyzer_type}")
 

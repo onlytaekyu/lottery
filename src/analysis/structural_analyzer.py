@@ -11,11 +11,14 @@ from collections import Counter, defaultdict
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.metrics import silhouette_score
 
-from src.analysis.base_analyzer import BaseAnalyzer
-from src.shared.types import LotteryNumber
+from .base_analyzer import BaseAnalyzer
+from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
-from src.shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality
-from src.utils.unified_performance import performance_monitor
+from ..shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality
+from ..utils.unified_performance_engine import (
+    get_unified_performance_engine,
+    get_auto_performance_monitor,
+)
 
 logger = get_logger(__name__)
 
@@ -70,7 +73,8 @@ class StructuralAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         )
 
         # 쌍 빈도 분석 - graph_utils 사용
-        with performance_monitor("calculate_pair_frequency"):
+        monitor = get_auto_performance_monitor()
+        with monitor.track("calculate_pair_frequency"):
             # 쌍 빈도 계산
             pair_freq_tuples = calculate_pair_frequency(
                 historical_data, logger=self.logger
@@ -136,7 +140,8 @@ class StructuralAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Dict[str, float]: 번호 쌍 중심성 분석 결과
         """
-        with performance_monitor("analyze_pair_centrality"):
+        monitor = get_auto_performance_monitor()
+        with monitor.track("analyze_pair_centrality"):
             # graph_utils를 사용하여 쌍 빈도 계산
             pair_freq_tuples = calculate_pair_frequency(
                 historical_data, logger=self.logger

@@ -12,11 +12,14 @@ from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans, AgglomerativeClustering
 
-from src.analysis.base_analyzer import BaseAnalyzer
-from src.shared.types import LotteryNumber
+from .base_analyzer import BaseAnalyzer
+from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
-from src.utils.unified_performance import performance_monitor
-from src.utils.unified_config import ConfigProxy
+from ..utils.unified_performance_engine import (
+    get_unified_performance_engine,
+    get_auto_performance_monitor,
+)
+from ..utils.unified_config import ConfigProxy
 
 logger = get_logger(__name__)
 
@@ -79,7 +82,7 @@ class ROIAnalyzer(BaseAnalyzer):
         self.logger.info("ROIAnalyzer 초기화 완료")
 
         # 성능 최적화 시스템 초기화
-        from src.utils.memory_manager import get_memory_manager
+        from ..utils.memory_manager import get_memory_manager
 
         self.memory_manager = get_memory_manager()
 
@@ -743,7 +746,8 @@ class ROIAnalyzer(BaseAnalyzer):
 
     def calculate_roi_group_score(self, historical_data: List[LotteryNumber]) -> float:
         """ROI 그룹별 점수를 계산합니다."""
-        with performance_monitor("calculate_roi_group_score"):
+        monitor = get_auto_performance_monitor()
+        with monitor.track("calculate_roi_group_score"):
             logger.info("ROI 그룹별 점수 계산 중...")
 
             if len(historical_data) < 50:
@@ -771,7 +775,8 @@ class ROIAnalyzer(BaseAnalyzer):
         self, historical_data: List[LotteryNumber]
     ) -> float:
         """ROI 클러스터 점수를 계산합니다."""
-        with performance_monitor("calculate_roi_cluster_score"):
+        monitor = get_auto_performance_monitor()
+        with monitor.track("calculate_roi_cluster_score"):
             logger.info("ROI 클러스터 점수 계산 중...")
 
             if len(historical_data) < 50:

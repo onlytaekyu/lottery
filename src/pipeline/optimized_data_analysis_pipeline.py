@@ -110,16 +110,18 @@ def initialize_optimization_systems(config: Dict[str, Any]):
         # 최적화 설정 로드 (별도 파일에서)
         optimization_config = config.get("optimization", {})
 
-        # optimization.yaml 파일에서 추가 설정 로드
+        # config.yaml의 optimization 섹션에서 추가 설정 로드
         try:
-            from src.utils.unified_config import load_config as load_optimization_config
+            from src.utils.unified_config import load_config as load_main_config
 
-            optimization_file_config = load_optimization_config("optimization")
-            if isinstance(optimization_file_config, dict):
-                # 파일 설정을 기본 설정과 병합
-                optimization_config.update(optimization_file_config)
+            main_config = load_main_config("main")
+            if isinstance(main_config, dict) and "optimization" in main_config:
+                # 메인 설정의 optimization 섹션을 기본 설정과 병합
+                optimization_config.update(main_config["optimization"])
         except Exception as e:
-            logger.debug(f"optimization.yaml 로드 실패, 기본 설정 사용: {e}")
+            logger.debug(
+                f"config.yaml의 optimization 섹션 로드 실패, 기본 설정 사용: {e}"
+            )
 
             # ProcessPool 관리자 초기화
         try:

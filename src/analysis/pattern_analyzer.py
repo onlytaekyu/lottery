@@ -23,11 +23,12 @@ import math
 
 from ..utils.unified_logging import get_logger
 from ..shared.types import LotteryNumber, PatternAnalysis
-from ..utils.memory_manager import MemoryManager
+
+# from ..utils.memory_manager import MemoryManager  # 제거됨
 from ..analysis.base_analyzer import BaseAnalyzer
 from ..utils.unified_config import ConfigProxy
-from ..utils.unified_report import safe_convert, save_analysis_performance_report
-from ..utils.unified_performance import performance_monitor
+
+# 제거된 모듈들 - 사용하지 않음
 from ..shared.graph_utils import (
     calculate_pair_frequency,
     calculate_pair_centrality,
@@ -91,13 +92,14 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         super().__init__(config or {}, "pattern")
 
         # 🚀 성능 최적화 시스템 통합 초기화
-        from ..utils.memory_manager import MemoryManager, MemoryConfig
+        from ..utils.memory_manager import get_memory_manager
         from ..utils.cuda_optimizers import get_cuda_optimizer, CudaConfig
         from ..utils.process_pool_manager import get_process_pool_manager
-        from ..utils.hybrid_optimizer import get_hybrid_optimizer
+
+        # from ..utils.hybrid_optimizer import get_hybrid_optimizer  # 존재하지 않음
 
         # 메모리 관리자 초기화 (기존 유지)
-        self.memory_manager = MemoryManager()
+        self.memory_manager = get_memory_manager()
 
         # CUDA 최적화 초기화 (싱글톤 사용)
         try:
@@ -115,7 +117,7 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
                 config=cuda_config, requester_name="pattern_analyzer"
             )
 
-            if self.cuda_optimizer:
+            if self.cuda_optimizer and self.cuda_optimizer.is_available():
                 self.logger.debug("CUDA 최적화기 연결 완료 (pattern_analyzer)")
             else:
                 self.logger.debug("CUDA 사용 불가능 (pattern_analyzer)")
@@ -144,7 +146,8 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
                 "cpu_threshold": 80.0,
                 "gpu_threshold": 0.9,
             }
-            self.hybrid_optimizer = get_hybrid_optimizer(hybrid_config)
+            # self.hybrid_optimizer = get_hybrid_optimizer(hybrid_config)  # 존재하지 않음
+            self.hybrid_optimizer = None
             self.logger.info("✅ 하이브리드 최적화 시스템 초기화 완료")
         except Exception as e:
             self.logger.warning(f"하이브리드 최적화 초기화 실패: {e}")
@@ -164,6 +167,13 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         self.cache_manager = CacheManager()
 
         self.logger.info("🎉 PatternAnalyzer 성능 최적화 시스템 초기화 완료")
+
+        # 3자리 패턴 분석 관련 초기화
+        self.three_digit_cache = {}
+        self.three_digit_combinations = self._generate_three_digit_combinations()
+        self.three_to_six_expansion_cache = {}
+
+        self.logger.info("✅ 3자리 패턴 분석 시스템 초기화 완료")
 
     def load_data(self, limit: Optional[int] = None) -> List[LotteryNumber]:
         """
@@ -227,7 +237,9 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         with self.memory_manager.allocation_scope():
 
             # 📊 성능 모니터링
-            with performance_monitor("pattern_analysis_optimized"):
+            from ..utils.unified_performance_engine import get_auto_performance_monitor
+
+            with get_auto_performance_monitor().track("pattern_analysis_optimized"):
 
                 # 🔧 최적화 레벨 자동 결정
                 if optimization_level == "auto" and self.hybrid_optimizer:
@@ -1805,7 +1817,9 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
         Returns:
             PatternAnalysis: 패턴 분석 결과
         """
-        with performance_monitor(f"pattern_analysis_{scope}"):
+        from ..utils.unified_performance_engine import get_auto_performance_monitor
+
+        with get_auto_performance_monitor().track(f"pattern_analysis_{scope}"):
             try:
                 # 캐시 키 생성
                 cache_key = self._create_cache_key(
@@ -2124,7 +2138,8 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
                 data_metrics["error"] = error
 
             # 통합 보고서 시스템 사용
-            save_analysis_performance_report(
+                            from ..utils.unified_report import save_analysis_performance_report
+                save_analysis_performance_report(
                 None,  # profiler
                 None,  # performance_tracker (통합 시스템 사용)
                 self.config,
@@ -2235,3 +2250,564 @@ class PatternAnalyzer(BaseAnalyzer[PatternAnalysis]):
             self.logger.error(f"5구간 히스토리 생성 중 오류: {e}")
             # 빈 히스토리 반환
             return [[0] * 5 for _ in range(len(draw_data))]
+
+    # ===== 3자리 패턴 분석 시스템 =====
+
+    def _generate_three_digit_combinations(self) -> List[Tuple[int, int, int]]:
+        """
+        모든 3자리 조합 생성 (1~45에서 3개 선택)
+
+        Returns:
+            List[Tuple[int, int, int]]: 3자리 조합 리스트 (220개)
+        """
+        from itertools import combinations
+
+        combinations_list = list(combinations(range(1, 46), 3))
+        self.logger.info(f"3자리 조합 생성 완료: {len(combinations_list)}개")
+        return combinations_list
+
+    def analyze_3digit_patterns(
+        self, historical_data: List[LotteryNumber]
+    ) -> Dict[str, Any]:
+        """
+        3자리 패턴 분석 - 5등 적중률 최우선 분석
+
+        Args:
+            historical_data: 과거 당첨 번호 데이터
+
+        Returns:
+            Dict[str, Any]: 3자리 패턴 분석 결과
+        """
+        try:
+            self.logger.info("🎯 3자리 패턴 분석 시작")
+            start_time = time.time()
+
+            # 3자리 조합별 당첨 통계 계산
+            three_digit_stats = self._calculate_3digit_statistics(historical_data)
+
+            # 3자리 → 6자리 확장 성공률 분석
+            expansion_success_rates = self._analyze_3to6_expansion_rates(
+                historical_data
+            )
+
+            # 3자리 패턴 특성 분석
+            pattern_features = self._analyze_3digit_pattern_features(historical_data)
+
+            # 고확률 3자리 후보 선별 (상위 100개)
+            top_candidates = self._select_top_3digit_candidates(
+                three_digit_stats, expansion_success_rates, pattern_features
+            )
+
+            analysis_time = time.time() - start_time
+
+            result = {
+                "three_digit_stats": three_digit_stats,
+                "expansion_success_rates": expansion_success_rates,
+                "pattern_features": pattern_features,
+                "top_candidates": top_candidates,
+                "analysis_time": analysis_time,
+                "total_combinations": len(self.three_digit_combinations),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            self.logger.info(f"✅ 3자리 패턴 분석 완료 ({analysis_time:.2f}초)")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"3자리 패턴 분석 중 오류: {e}")
+            return {"error": str(e), "timestamp": datetime.now().isoformat()}
+
+    def _calculate_3digit_statistics(
+        self, historical_data: List[LotteryNumber]
+    ) -> Dict[str, Any]:
+        """
+        3자리 조합별 당첨 통계 계산
+
+        Args:
+            historical_data: 과거 당첨 번호 데이터
+
+        Returns:
+            Dict[str, Any]: 3자리 조합별 통계
+        """
+        try:
+            # 3자리 조합별 당첨 횟수 계산
+            hit_counts = {}
+            last_hit_rounds = {}
+
+            for round_idx, draw in enumerate(historical_data):
+                draw_numbers = set(draw.numbers)
+
+                for combo in self.three_digit_combinations:
+                    combo_set = set(combo)
+
+                    # 3자리 조합이 당첨 번호에 포함되는지 확인
+                    if combo_set.issubset(draw_numbers):
+                        hit_counts[combo] = hit_counts.get(combo, 0) + 1
+                        last_hit_rounds[combo] = round_idx
+
+            # 통계 계산
+            total_rounds = len(historical_data)
+            stats = {}
+
+            for combo in self.three_digit_combinations:
+                hit_count = hit_counts.get(combo, 0)
+                hit_rate = hit_count / total_rounds if total_rounds > 0 else 0
+
+                # 마지막 당첨 이후 경과 회차
+                last_hit = last_hit_rounds.get(combo, -1)
+                rounds_since_hit = (
+                    total_rounds - last_hit - 1 if last_hit >= 0 else total_rounds
+                )
+
+                stats[combo] = {
+                    "hit_count": hit_count,
+                    "hit_rate": hit_rate,
+                    "rounds_since_hit": rounds_since_hit,
+                    "expected_frequency": hit_rate * 100,  # 100회 기준 예상 빈도
+                }
+
+            self.logger.debug(f"3자리 통계 계산 완료: {len(stats)}개 조합")
+            return stats
+
+        except Exception as e:
+            self.logger.error(f"3자리 통계 계산 중 오류: {e}")
+            return {}
+
+    def _analyze_3to6_expansion_rates(
+        self, historical_data: List[LotteryNumber]
+    ) -> Dict[str, Any]:
+        """
+        3자리 → 6자리 확장 성공률 분석
+
+        Args:
+            historical_data: 과거 당첨 번호 데이터
+
+        Returns:
+            Dict[str, Any]: 확장 성공률 분석 결과
+        """
+        try:
+            expansion_stats = {}
+
+            for draw in historical_data:
+                draw_numbers = set(draw.numbers)
+
+                # 각 당첨 번호 조합에서 3자리 부분집합 추출
+                from itertools import combinations
+
+                for three_combo in combinations(draw.numbers, 3):
+                    three_set = set(three_combo)
+                    remaining_numbers = draw_numbers - three_set
+
+                    if three_combo not in expansion_stats:
+                        expansion_stats[three_combo] = {
+                            "total_expansions": 0,
+                            "expansion_patterns": [],
+                            "remaining_number_frequency": {},
+                        }
+
+                    expansion_stats[three_combo]["total_expansions"] += 1
+                    expansion_stats[three_combo]["expansion_patterns"].append(
+                        tuple(sorted(remaining_numbers))
+                    )
+
+                    # 나머지 번호 빈도 계산
+                    for num in remaining_numbers:
+                        freq_dict = expansion_stats[three_combo][
+                            "remaining_number_frequency"
+                        ]
+                        freq_dict[num] = freq_dict.get(num, 0) + 1
+
+            # 확장 성공률 계산
+            for combo in expansion_stats:
+                stats = expansion_stats[combo]
+                total_exp = stats["total_expansions"]
+
+                # 가장 자주 함께 나온 나머지 번호들
+                remaining_freq = stats["remaining_number_frequency"]
+                top_remaining = sorted(
+                    remaining_freq.items(), key=lambda x: x[1], reverse=True
+                )[:10]
+
+                stats["top_remaining_numbers"] = top_remaining
+                stats["expansion_success_rate"] = (
+                    total_exp / len(historical_data) if historical_data else 0
+                )
+
+            self.logger.debug(f"3→6 확장 분석 완료: {len(expansion_stats)}개 패턴")
+            return expansion_stats
+
+        except Exception as e:
+            self.logger.error(f"3→6 확장 분석 중 오류: {e}")
+            return {}
+
+    def _analyze_3digit_pattern_features(
+        self, historical_data: List[LotteryNumber]
+    ) -> Dict[str, Any]:
+        """
+        3자리 패턴 특성 분석 (연번, 간격, 홀짝 등)
+
+        Args:
+            historical_data: 과거 당첨 번호 데이터
+
+        Returns:
+            Dict[str, Any]: 3자리 패턴 특성 분석 결과
+        """
+        try:
+            pattern_features = {}
+
+            for combo in self.three_digit_combinations:
+                nums = sorted(combo)
+
+                # 기본 특성 계산
+                features = {
+                    "sum": sum(nums),
+                    "range": nums[-1] - nums[0],
+                    "gaps": [nums[i + 1] - nums[i] for i in range(len(nums) - 1)],
+                    "odd_count": sum(1 for n in nums if n % 2 == 1),
+                    "even_count": sum(1 for n in nums if n % 2 == 0),
+                    "consecutive_count": self._count_consecutive_in_3digit(nums),
+                    "segment_distribution": self._analyze_3digit_segments(nums),
+                }
+
+                # 추가 특성
+                features["gap_avg"] = sum(features["gaps"]) / len(features["gaps"])
+                features["gap_std"] = np.std(features["gaps"])
+                features["odd_even_ratio"] = features["odd_count"] / 3
+                features["balance_score"] = self._calculate_3digit_balance_score(nums)
+
+                pattern_features[combo] = features
+
+            self.logger.debug(
+                f"3자리 패턴 특성 분석 완료: {len(pattern_features)}개 조합"
+            )
+            return pattern_features
+
+        except Exception as e:
+            self.logger.error(f"3자리 패턴 특성 분석 중 오류: {e}")
+            return {}
+
+    def _count_consecutive_in_3digit(self, nums: List[int]) -> int:
+        """3자리 조합에서 연속 번호 개수 계산"""
+        consecutive_count = 0
+        for i in range(len(nums) - 1):
+            if nums[i + 1] - nums[i] == 1:
+                consecutive_count += 1
+        return consecutive_count
+
+    def _analyze_3digit_segments(self, nums: List[int]) -> Dict[str, int]:
+        """3자리 조합의 구간 분포 분석"""
+        segments = {"low": 0, "mid": 0, "high": 0}  # 1-15, 16-30, 31-45
+
+        for num in nums:
+            if num <= 15:
+                segments["low"] += 1
+            elif num <= 30:
+                segments["mid"] += 1
+            else:
+                segments["high"] += 1
+
+        return segments
+
+    def _calculate_3digit_balance_score(self, nums: List[int]) -> float:
+        """3자리 조합의 균형 점수 계산"""
+        # 번호들이 1-45 범위에 얼마나 균등하게 분포되어 있는지 계산
+        expected_avg = 23  # 1-45의 평균
+        actual_avg = sum(nums) / len(nums)
+
+        # 평균 차이와 분산을 고려한 균형 점수
+        avg_diff = abs(actual_avg - expected_avg)
+        variance = np.var(nums)
+
+        # 균형 점수 (0~1, 높을수록 균형적)
+        balance_score = 1 / (1 + (avg_diff / 10) + (variance / 100))
+        return balance_score
+
+    def _select_top_3digit_candidates(
+        self,
+        three_digit_stats: Dict[str, Any],
+        expansion_success_rates: Dict[str, Any],
+        pattern_features: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """
+        고확률 3자리 후보 선별 (상위 100개)
+
+        Args:
+            three_digit_stats: 3자리 조합별 통계
+            expansion_success_rates: 확장 성공률
+            pattern_features: 패턴 특성
+
+        Returns:
+            List[Dict[str, Any]]: 상위 100개 후보 리스트
+        """
+        try:
+            candidates = []
+
+            for combo in self.three_digit_combinations:
+                stats = three_digit_stats.get(combo, {})
+                expansion = expansion_success_rates.get(combo, {})
+                features = pattern_features.get(combo, {})
+
+                # 종합 점수 계산
+                score = self._calculate_3digit_composite_score(
+                    stats, expansion, features
+                )
+
+                candidate = {
+                    "combination": combo,
+                    "composite_score": score,
+                    "hit_rate": stats.get("hit_rate", 0),
+                    "expansion_success_rate": expansion.get(
+                        "expansion_success_rate", 0
+                    ),
+                    "balance_score": features.get("balance_score", 0),
+                    "rounds_since_hit": stats.get("rounds_since_hit", 0),
+                    "top_remaining_numbers": expansion.get("top_remaining_numbers", []),
+                }
+
+                candidates.append(candidate)
+
+            # 종합 점수 기준 정렬하여 상위 100개 선택
+            top_candidates = sorted(
+                candidates, key=lambda x: x["composite_score"], reverse=True
+            )[:100]
+
+            self.logger.info(f"상위 3자리 후보 선별 완료: {len(top_candidates)}개")
+            return top_candidates
+
+        except Exception as e:
+            self.logger.error(f"3자리 후보 선별 중 오류: {e}")
+            return []
+
+    def _calculate_3digit_composite_score(
+        self, stats: Dict[str, Any], expansion: Dict[str, Any], features: Dict[str, Any]
+    ) -> float:
+        """
+        3자리 조합의 종합 점수 계산
+
+        Args:
+            stats: 통계 정보
+            expansion: 확장 성공률 정보
+            features: 패턴 특성 정보
+
+        Returns:
+            float: 종합 점수
+        """
+        try:
+            # 가중치 설정
+            weights = {
+                "hit_rate": 0.3,
+                "expansion_success": 0.25,
+                "balance": 0.2,
+                "recency": 0.15,
+                "pattern_quality": 0.1,
+            }
+
+            # 각 요소별 점수 계산 (0~1 정규화)
+            hit_rate_score = min(stats.get("hit_rate", 0) * 10, 1.0)  # 10% 이상이면 1.0
+
+            expansion_score = min(expansion.get("expansion_success_rate", 0) * 5, 1.0)
+
+            balance_score = features.get("balance_score", 0)
+
+            # 최근성 점수 (최근에 당첨된 것일수록 낮은 점수)
+            rounds_since = stats.get("rounds_since_hit", 100)
+            recency_score = min(rounds_since / 50, 1.0)  # 50회 이상이면 1.0
+
+            # 패턴 품질 점수
+            pattern_score = self._calculate_pattern_quality_score(features)
+
+            # 종합 점수 계산
+            composite_score = (
+                hit_rate_score * weights["hit_rate"]
+                + expansion_score * weights["expansion_success"]
+                + balance_score * weights["balance"]
+                + recency_score * weights["recency"]
+                + pattern_score * weights["pattern_quality"]
+            )
+
+            return composite_score
+
+        except Exception as e:
+            self.logger.error(f"종합 점수 계산 중 오류: {e}")
+            return 0.0
+
+    def _calculate_pattern_quality_score(self, features: Dict[str, Any]) -> float:
+        """패턴 품질 점수 계산"""
+        try:
+            # 홀짝 균형 점수
+            odd_even_balance = 1 - abs(features.get("odd_even_ratio", 0.5) - 0.5) * 2
+
+            # 간격 균형 점수
+            gap_std = features.get("gap_std", 0)
+            gap_balance = 1 / (1 + gap_std / 5)  # 표준편차가 작을수록 높은 점수
+
+            # 연속 번호 페널티
+            consecutive_count = features.get("consecutive_count", 0)
+            consecutive_penalty = max(0, 1 - consecutive_count * 0.3)
+
+            # 종합 패턴 품질 점수
+            quality_score = (odd_even_balance + gap_balance + consecutive_penalty) / 3
+
+            return quality_score
+
+        except Exception as e:
+            self.logger.error(f"패턴 품질 점수 계산 중 오류: {e}")
+            return 0.5
+
+    def expand_3digit_to_6digit(
+        self,
+        three_digit_combo: Tuple[int, int, int],
+        historical_data: List[LotteryNumber],
+        expansion_method: str = "frequency_based",
+    ) -> List[Tuple[int, int, int, int, int, int]]:
+        """
+        3자리 조합을 6자리로 확장
+
+        Args:
+            three_digit_combo: 3자리 조합
+            historical_data: 과거 당첨 번호 데이터
+            expansion_method: 확장 방법 ("frequency_based", "pattern_based", "ml_based")
+
+        Returns:
+            List[Tuple[int, int, int, int, int, int]]: 확장된 6자리 조합 리스트
+        """
+        try:
+            if expansion_method == "frequency_based":
+                return self._expand_by_frequency(three_digit_combo, historical_data)
+            elif expansion_method == "pattern_based":
+                return self._expand_by_pattern(three_digit_combo, historical_data)
+            elif expansion_method == "ml_based":
+                return self._expand_by_ml(three_digit_combo, historical_data)
+            else:
+                self.logger.warning(f"알 수 없는 확장 방법: {expansion_method}")
+                return self._expand_by_frequency(three_digit_combo, historical_data)
+
+        except Exception as e:
+            self.logger.error(f"3→6 확장 중 오류: {e}")
+            return []
+
+    def _expand_by_frequency(
+        self,
+        three_digit_combo: Tuple[int, int, int],
+        historical_data: List[LotteryNumber],
+    ) -> List[Tuple[int, int, int, int, int, int]]:
+        """빈도 기반 3→6 확장"""
+        try:
+            # 3자리 조합과 함께 자주 나온 번호들 분석
+            remaining_frequency = {}
+            three_set = set(three_digit_combo)
+
+            for draw in historical_data:
+                draw_set = set(draw.numbers)
+
+                # 3자리 조합이 포함된 경우
+                if three_set.issubset(draw_set):
+                    remaining_numbers = draw_set - three_set
+
+                    for num in remaining_numbers:
+                        remaining_frequency[num] = remaining_frequency.get(num, 0) + 1
+
+            # 빈도 기준 상위 번호들 선택
+            top_remaining = sorted(
+                remaining_frequency.items(), key=lambda x: x[1], reverse=True
+            )
+
+            # 상위 10개 번호로 3자리 확장 (C(10,3) = 120개 조합)
+            from itertools import combinations
+
+            if len(top_remaining) >= 3:
+                top_numbers = [num for num, _ in top_remaining[:10]]
+                expansions = []
+
+                for remaining_combo in combinations(top_numbers, 3):
+                    full_combo = tuple(sorted(three_digit_combo + remaining_combo))
+                    expansions.append(full_combo)
+
+                return expansions[:20]  # 상위 20개만 반환
+
+            return []
+
+        except Exception as e:
+            self.logger.error(f"빈도 기반 확장 중 오류: {e}")
+            return []
+
+    def _expand_by_pattern(
+        self,
+        three_digit_combo: Tuple[int, int, int],
+        historical_data: List[LotteryNumber],
+    ) -> List[Tuple[int, int, int, int, int, int]]:
+        """패턴 기반 3→6 확장"""
+        try:
+            # 3자리 조합의 패턴 특성 분석
+            three_nums = sorted(three_digit_combo)
+
+            # 균형잡힌 6자리 조합 생성을 위한 후보 번호 선별
+            candidates = []
+
+            for num in range(1, 46):
+                if num not in three_digit_combo:
+                    # 패턴 균형 점수 계산
+                    test_combo = sorted(three_nums + [num])
+                    balance_score = self._calculate_expansion_balance_score(
+                        three_nums, num, historical_data
+                    )
+                    candidates.append((num, balance_score))
+
+            # 균형 점수 기준 정렬
+            candidates.sort(key=lambda x: x[1], reverse=True)
+
+            # 상위 후보들로 3자리 확장
+            from itertools import combinations
+
+            top_candidates = [num for num, _ in candidates[:12]]
+            expansions = []
+
+            for remaining_combo in combinations(top_candidates, 3):
+                full_combo = tuple(sorted(three_digit_combo + remaining_combo))
+                expansions.append(full_combo)
+
+            return expansions[:15]  # 상위 15개만 반환
+
+        except Exception as e:
+            self.logger.error(f"패턴 기반 확장 중 오류: {e}")
+            return []
+
+    def _expand_by_ml(
+        self,
+        three_digit_combo: Tuple[int, int, int],
+        historical_data: List[LotteryNumber],
+    ) -> List[Tuple[int, int, int, int, int, int]]:
+        """ML 기반 3→6 확장 (향후 구현)"""
+        self.logger.info("ML 기반 확장은 향후 구현 예정, 빈도 기반으로 대체")
+        return self._expand_by_frequency(three_digit_combo, historical_data)
+
+    def _calculate_expansion_balance_score(
+        self,
+        three_nums: List[int],
+        candidate_num: int,
+        historical_data: List[LotteryNumber],
+    ) -> float:
+        """확장 후보 번호의 균형 점수 계산"""
+        try:
+            test_combo = three_nums + [candidate_num]
+
+            # 기본 균형 점수
+            balance_score = self._calculate_3digit_balance_score(test_combo)
+
+            # 과거 데이터에서의 공출현 빈도
+            co_occurrence = 0
+            for draw in historical_data:
+                if candidate_num in draw.numbers:
+                    if any(num in draw.numbers for num in three_nums):
+                        co_occurrence += 1
+
+            co_occurrence_score = min(co_occurrence / len(historical_data) * 10, 1.0)
+
+            # 종합 점수
+            total_score = balance_score * 0.7 + co_occurrence_score * 0.3
+
+            return total_score
+
+        except Exception as e:
+            self.logger.error(f"확장 균형 점수 계산 중 오류: {e}")
+            return 0.0

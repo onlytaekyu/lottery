@@ -54,13 +54,11 @@ class ConfigPath:
     """설정 파일 경로 정보"""
 
     main_config: str = "config/config.yaml"
-    optimization_config: str = "config/optimization.yaml"
     pattern_analysis_config: str = "config/new_pattern_analysis_config.yaml"
 
     def __post_init__(self):
         """경로 정규화"""
         self.main_config = os.path.normpath(self.main_config)
-        self.optimization_config = os.path.normpath(self.optimization_config)
         self.pattern_analysis_config = os.path.normpath(self.pattern_analysis_config)
 
 
@@ -499,7 +497,6 @@ class UnifiedConfigManager:
     def _get_default_config_path(self, config_name: str) -> str:
         path_mapping = {
             "main": self.config_paths.main_config,
-            "optimization": self.config_paths.optimization_config,
             "pattern_analysis": self.config_paths.pattern_analysis_config,
         }
         return path_mapping.get(config_name, f"config/{config_name}.yaml")

@@ -14,10 +14,10 @@ import os
 from datetime import datetime
 from abc import ABC, abstractmethod
 
-from src.utils.performance_optimizer import get_auto_performance_monitor
-from src.utils.cache_manager import get_cache_path_manager
-from src.shared.types import LotteryNumber
-from src.utils.unified_logging import get_logger
+from ..utils.performance_optimizer import get_auto_performance_monitor
+from ..utils.cache_manager import get_cache_path_manager
+from ..shared.types import LotteryNumber
+from ..utils.unified_logging import get_logger
 
 # 제네릭 타입 변수 정의
 T = TypeVar("T")

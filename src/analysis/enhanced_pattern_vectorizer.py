@@ -2336,3 +2336,533 @@ class EnhancedPatternVectorizer:
                 f"fallback_feature_{i}" for i in range(len(fallback_vector))
             ]
             return fallback_vector, fallback_names
+
+    def vectorize_3digit_features(
+        self, three_digit_analysis: Dict[str, Any]
+    ) -> np.ndarray:
+        """
+        3자리 패턴 분석 결과를 벡터화
+
+        Args:
+            three_digit_analysis: 3자리 패턴 분석 결과
+
+        Returns:
+            np.ndarray: 3자리 패턴 특성 벡터 (고정 차원)
+        """
+        try:
+            self.logger.info("🎯 3자리 패턴 벡터화 시작")
+
+            # 3자리 패턴 특성 벡터 구성
+            vector_components = {}
+
+            # 1. 상위 후보 통계 벡터화 (30차원)
+            vector_components["top_candidates"] = self._vectorize_top_candidates(
+                three_digit_analysis.get("top_candidates", [])
+            )
+
+            # 2. 확장 성공률 벡터화 (25차원)
+            vector_components["expansion_rates"] = self._vectorize_expansion_rates(
+                three_digit_analysis.get("expansion_success_rates", {})
+            )
+
+            # 3. 패턴 특성 벡터화 (20차원)
+            vector_components["pattern_features"] = (
+                self._vectorize_pattern_features_3digit(
+                    three_digit_analysis.get("pattern_features", {})
+                )
+            )
+
+            # 4. 통계 특성 벡터화 (15차원)
+            vector_components["statistics"] = self._vectorize_3digit_statistics(
+                three_digit_analysis.get("three_digit_stats", {})
+            )
+
+            # 5. 메타 정보 벡터화 (10차원)
+            vector_components["meta_info"] = self._vectorize_3digit_meta_info(
+                three_digit_analysis
+            )
+
+            # 벡터 결합
+            combined_vector = self._combine_3digit_vectors(vector_components)
+
+            self.logger.info(f"✅ 3자리 패턴 벡터화 완료: {len(combined_vector)}차원")
+            return combined_vector
+
+        except Exception as e:
+            self.logger.error(f"3자리 패턴 벡터화 중 오류: {e}")
+            return np.zeros(100, dtype=np.float32)  # 기본 100차원 벡터
+
+    def _vectorize_top_candidates(
+        self, top_candidates: List[Dict[str, Any]]
+    ) -> np.ndarray:
+        """상위 후보들을 벡터화 (30차원)"""
+        try:
+            vector = np.zeros(30, dtype=np.float32)
+
+            if not top_candidates:
+                return vector
+
+            # 상위 10개 후보의 주요 특성 추출
+            for i, candidate in enumerate(top_candidates[:10]):
+                base_idx = i * 3
+                if base_idx + 2 < len(vector):
+                    vector[base_idx] = candidate.get("composite_score", 0.0)
+                    vector[base_idx + 1] = candidate.get("hit_rate", 0.0)
+                    vector[base_idx + 2] = candidate.get("expansion_success_rate", 0.0)
+
+            return vector
+
+        except Exception as e:
+            self.logger.error(f"상위 후보 벡터화 중 오류: {e}")
+            return np.zeros(30, dtype=np.float32)
+
+    def _vectorize_expansion_rates(self, expansion_rates: Dict[str, Any]) -> np.ndarray:
+        """확장 성공률을 벡터화 (25차원)"""
+        try:
+            vector = np.zeros(25, dtype=np.float32)
+
+            if not expansion_rates:
+                return vector
+
+            # 확장 성공률 통계 계산
+            success_rates = []
+            total_expansions = []
+
+            for combo_data in expansion_rates.values():
+                success_rates.append(combo_data.get("expansion_success_rate", 0.0))
+                total_expansions.append(combo_data.get("total_expansions", 0))
+
+            if success_rates:
+                # 통계 특성 벡터화
+                vector[0] = np.mean(success_rates)
+                vector[1] = np.std(success_rates)
+                vector[2] = np.max(success_rates)
+                vector[3] = np.min(success_rates)
+                vector[4] = np.median(success_rates)
+
+                # 확장 횟수 통계
+                vector[5] = np.mean(total_expansions)
+                vector[6] = np.std(total_expansions)
+                vector[7] = np.max(total_expansions)
+                vector[8] = np.min(total_expansions)
+
+                # 분위수 정보
+                vector[9] = np.percentile(success_rates, 25)
+                vector[10] = np.percentile(success_rates, 75)
+
+                # 상위 성공률 조합들의 특성
+                sorted_rates = sorted(success_rates, reverse=True)
+                top_10_rates = sorted_rates[:10]
+
+                for i, rate in enumerate(top_10_rates):
+                    if i + 11 < len(vector):
+                        vector[i + 11] = rate
+
+                # 나머지 차원은 추가 통계로 채움
+                if len(vector) > 21:
+                    vector[21] = len(success_rates)  # 전체 조합 수
+                    vector[22] = sum(
+                        1 for r in success_rates if r > 0
+                    )  # 성공한 조합 수
+                    vector[23] = np.var(success_rates)  # 분산
+                    vector[24] = (
+                        len(success_rates) / 220 if success_rates else 0
+                    )  # 커버리지
+
+            return vector
+
+        except Exception as e:
+            self.logger.error(f"확장 성공률 벡터화 중 오류: {e}")
+            return np.zeros(25, dtype=np.float32)
+
+    def _vectorize_pattern_features_3digit(
+        self, pattern_features: Dict[str, Any]
+    ) -> np.ndarray:
+        """3자리 패턴 특성을 벡터화 (20차원)"""
+        try:
+            vector = np.zeros(20, dtype=np.float32)
+
+            if not pattern_features:
+                return vector
+
+            # 모든 조합의 패턴 특성 통계 계산
+            all_sums = []
+            all_ranges = []
+            all_gap_avgs = []
+            all_gap_stds = []
+            all_balance_scores = []
+            all_odd_ratios = []
+
+            for combo_features in pattern_features.values():
+                all_sums.append(combo_features.get("sum", 0))
+                all_ranges.append(combo_features.get("range", 0))
+                all_gap_avgs.append(combo_features.get("gap_avg", 0))
+                all_gap_stds.append(combo_features.get("gap_std", 0))
+                all_balance_scores.append(combo_features.get("balance_score", 0))
+                all_odd_ratios.append(combo_features.get("odd_even_ratio", 0))
+
+            # 통계 벡터화
+            if all_sums:
+                vector[0] = np.mean(all_sums)
+                vector[1] = np.std(all_sums)
+                vector[2] = np.mean(all_ranges)
+                vector[3] = np.std(all_ranges)
+                vector[4] = np.mean(all_gap_avgs)
+                vector[5] = np.std(all_gap_avgs)
+                vector[6] = np.mean(all_gap_stds)
+                vector[7] = np.std(all_gap_stds)
+                vector[8] = np.mean(all_balance_scores)
+                vector[9] = np.std(all_balance_scores)
+                vector[10] = np.mean(all_odd_ratios)
+                vector[11] = np.std(all_odd_ratios)
+
+                # 분위수 정보
+                vector[12] = np.percentile(all_sums, 25)
+                vector[13] = np.percentile(all_sums, 75)
+                vector[14] = np.percentile(all_balance_scores, 25)
+                vector[15] = np.percentile(all_balance_scores, 75)
+
+                # 추가 통계
+                vector[16] = np.max(all_balance_scores)
+                vector[17] = np.min(all_balance_scores)
+                vector[18] = len(all_sums)
+                vector[19] = np.var(all_balance_scores)
+
+            return vector
+
+        except Exception as e:
+            self.logger.error(f"3자리 패턴 특성 벡터화 중 오류: {e}")
+            return np.zeros(20, dtype=np.float32)
+
+    def _vectorize_3digit_statistics(
+        self, three_digit_stats: Dict[str, Any]
+    ) -> np.ndarray:
+        """3자리 통계를 벡터화 (15차원)"""
+        try:
+            vector = np.zeros(15, dtype=np.float32)
+
+            if not three_digit_stats:
+                return vector
+
+            # 통계 데이터 수집
+            hit_rates = []
+            hit_counts = []
+            rounds_since_hits = []
+            expected_frequencies = []
+
+            for combo_stats in three_digit_stats.values():
+                hit_rates.append(combo_stats.get("hit_rate", 0))
+                hit_counts.append(combo_stats.get("hit_count", 0))
+                rounds_since_hits.append(combo_stats.get("rounds_since_hit", 0))
+                expected_frequencies.append(combo_stats.get("expected_frequency", 0))
+
+            # 통계 벡터화
+            if hit_rates:
+                vector[0] = np.mean(hit_rates)
+                vector[1] = np.std(hit_rates)
+                vector[2] = np.max(hit_rates)
+                vector[3] = np.min(hit_rates)
+                vector[4] = np.mean(hit_counts)
+                vector[5] = np.std(hit_counts)
+                vector[6] = np.mean(rounds_since_hits)
+                vector[7] = np.std(rounds_since_hits)
+                vector[8] = np.mean(expected_frequencies)
+                vector[9] = np.std(expected_frequencies)
+                vector[10] = np.median(hit_rates)
+                vector[11] = np.median(rounds_since_hits)
+                vector[12] = len(hit_rates)
+                vector[13] = sum(1 for r in hit_rates if r > 0)  # 실제 당첨된 조합 수
+                vector[14] = np.var(hit_rates)
+
+            return vector
+
+        except Exception as e:
+            self.logger.error(f"3자리 통계 벡터화 중 오류: {e}")
+            return np.zeros(15, dtype=np.float32)
+
+    def _vectorize_3digit_meta_info(
+        self, three_digit_analysis: Dict[str, Any]
+    ) -> np.ndarray:
+        """3자리 메타 정보를 벡터화 (10차원)"""
+        try:
+            vector = np.zeros(10, dtype=np.float32)
+
+            # 메타 정보 추출
+            vector[0] = three_digit_analysis.get("analysis_time", 0.0)
+            vector[1] = three_digit_analysis.get("total_combinations", 0)
+            vector[2] = len(three_digit_analysis.get("top_candidates", []))
+            vector[3] = len(three_digit_analysis.get("expansion_success_rates", {}))
+            vector[4] = len(three_digit_analysis.get("pattern_features", {}))
+            vector[5] = len(three_digit_analysis.get("three_digit_stats", {}))
+
+            # 품질 지표
+            top_candidates = three_digit_analysis.get("top_candidates", [])
+            if top_candidates:
+                vector[6] = np.mean(
+                    [c.get("composite_score", 0) for c in top_candidates]
+                )
+                vector[7] = np.max(
+                    [c.get("composite_score", 0) for c in top_candidates]
+                )
+                vector[8] = np.std(
+                    [c.get("composite_score", 0) for c in top_candidates]
+                )
+
+            # 타임스탬프를 숫자로 변환 (시간 정보 보존)
+            timestamp = three_digit_analysis.get("timestamp", "")
+            if timestamp:
+                try:
+                    from datetime import datetime
+
+                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    vector[9] = dt.timestamp() % 1000000  # 마지막 6자리만 사용
+                except:
+                    vector[9] = 0.0
+
+            return vector
+
+        except Exception as e:
+            self.logger.error(f"3자리 메타 정보 벡터화 중 오류: {e}")
+            return np.zeros(10, dtype=np.float32)
+
+    def _combine_3digit_vectors(
+        self, vector_components: Dict[str, np.ndarray]
+    ) -> np.ndarray:
+        """3자리 벡터 구성요소들을 결합"""
+        try:
+            # 각 구성요소 벡터 결합
+            combined = []
+
+            for component_name in [
+                "top_candidates",
+                "expansion_rates",
+                "pattern_features",
+                "statistics",
+                "meta_info",
+            ]:
+                if component_name in vector_components:
+                    component_vector = vector_components[component_name]
+                    if component_vector is not None and len(component_vector) > 0:
+                        combined.extend(component_vector.tolist())
+                        self.logger.debug(
+                            f"3자리 벡터 구성요소 '{component_name}': {len(component_vector)}차원 추가"
+                        )
+
+            # 최종 벡터 생성
+            final_vector = np.array(combined, dtype=np.float32)
+
+            # 고정 차원으로 조정 (100차원)
+            target_dim = 100
+            if len(final_vector) > target_dim:
+                final_vector = final_vector[:target_dim]
+            elif len(final_vector) < target_dim:
+                padding = np.zeros(target_dim - len(final_vector), dtype=np.float32)
+                final_vector = np.concatenate([final_vector, padding])
+
+            self.logger.info(f"3자리 벡터 결합 완료: {len(final_vector)}차원")
+            return final_vector
+
+        except Exception as e:
+            self.logger.error(f"3자리 벡터 결합 중 오류: {e}")
+            return np.zeros(100, dtype=np.float32)
+
+    def generate_3digit_training_samples(
+        self, historical_analyses: List[Dict[str, Any]], window_size: int = 30
+    ) -> np.ndarray:
+        """
+        3자리 패턴 분석 결과들로부터 학습 샘플 생성
+
+        Args:
+            historical_analyses: 과거 3자리 분석 결과들
+            window_size: 윈도우 크기
+
+        Returns:
+            np.ndarray: 학습 샘플 배열
+        """
+        try:
+            self.logger.info(
+                f"3자리 학습 샘플 생성 시작: {len(historical_analyses)}개 분석 결과"
+            )
+
+            samples = []
+
+            # 슬라이딩 윈도우로 학습 샘플 생성
+            for i in range(len(historical_analyses) - window_size + 1):
+                window_data = historical_analyses[i : i + window_size]
+
+                # 윈도우 데이터를 벡터화
+                window_vector = self._vectorize_3digit_window(window_data)
+
+                if window_vector is not None and len(window_vector) > 0:
+                    samples.append(window_vector)
+
+            if samples:
+                sample_array = np.array(samples, dtype=np.float32)
+                self.logger.info(f"3자리 학습 샘플 생성 완료: {sample_array.shape}")
+                return sample_array
+            else:
+                self.logger.warning("3자리 학습 샘플 생성 실패: 유효한 샘플 없음")
+                return np.array([])
+
+        except Exception as e:
+            self.logger.error(f"3자리 학습 샘플 생성 중 오류: {e}")
+            return np.array([])
+
+    def _vectorize_3digit_window(self, window_data: List[Dict[str, Any]]) -> np.ndarray:
+        """3자리 윈도우 데이터를 벡터화"""
+        try:
+            # 윈도우 내 모든 분석 결과를 벡터화하여 평균
+            window_vectors = []
+
+            for analysis in window_data:
+                vector = self.vectorize_3digit_features(analysis)
+                if vector is not None and len(vector) > 0:
+                    window_vectors.append(vector)
+
+            if window_vectors:
+                # 평균 벡터 계산
+                mean_vector = np.mean(window_vectors, axis=0)
+                return mean_vector
+            else:
+                return np.zeros(100, dtype=np.float32)
+
+        except Exception as e:
+            self.logger.error(f"3자리 윈도우 벡터화 중 오류: {e}")
+            return np.zeros(100, dtype=np.float32)
+
+    def save_3digit_vector_to_file(
+        self, vector: np.ndarray, filename: str = "3digit_feature_vector.npy"
+    ) -> str:
+        """
+        3자리 특성 벡터를 파일로 저장
+
+        Args:
+            vector: 저장할 벡터
+            filename: 파일명
+
+        Returns:
+            str: 저장된 파일 경로
+        """
+        try:
+            from ..utils.cache_paths import get_cache_dir
+
+            cache_dir = get_cache_dir()
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            file_path = cache_dir / filename
+            np.save(file_path, vector)
+
+            self.logger.info(f"3자리 벡터 저장 완료: {file_path}")
+            return str(file_path)
+
+        except Exception as e:
+            self.logger.error(f"3자리 벡터 저장 중 오류: {e}")
+            return ""
+
+    def get_3digit_feature_names(self) -> List[str]:
+        """3자리 특성 벡터의 특성 이름 반환"""
+        feature_names = []
+
+        # 상위 후보 특성 (30개)
+        for i in range(10):
+            feature_names.extend(
+                [
+                    f"top_candidate_{i}_composite_score",
+                    f"top_candidate_{i}_hit_rate",
+                    f"top_candidate_{i}_expansion_rate",
+                ]
+            )
+
+        # 확장 성공률 특성 (25개)
+        expansion_features = [
+            "expansion_rate_mean",
+            "expansion_rate_std",
+            "expansion_rate_max",
+            "expansion_rate_min",
+            "expansion_rate_median",
+            "total_expansions_mean",
+            "total_expansions_std",
+            "total_expansions_max",
+            "total_expansions_min",
+            "expansion_rate_q25",
+            "expansion_rate_q75",
+        ]
+
+        for i in range(10):
+            expansion_features.append(f"top_expansion_rate_{i}")
+
+        expansion_features.extend(
+            [
+                "total_combinations",
+                "successful_combinations",
+                "expansion_variance",
+                "coverage_ratio",
+            ]
+        )
+
+        feature_names.extend(expansion_features)
+
+        # 패턴 특성 (20개)
+        pattern_features = [
+            "sum_mean",
+            "sum_std",
+            "range_mean",
+            "range_std",
+            "gap_avg_mean",
+            "gap_avg_std",
+            "gap_std_mean",
+            "gap_std_std",
+            "balance_score_mean",
+            "balance_score_std",
+            "odd_ratio_mean",
+            "odd_ratio_std",
+            "sum_q25",
+            "sum_q75",
+            "balance_q25",
+            "balance_q75",
+            "balance_max",
+            "balance_min",
+            "pattern_count",
+            "balance_variance",
+        ]
+
+        feature_names.extend(pattern_features)
+
+        # 통계 특성 (15개)
+        stats_features = [
+            "hit_rate_mean",
+            "hit_rate_std",
+            "hit_rate_max",
+            "hit_rate_min",
+            "hit_count_mean",
+            "hit_count_std",
+            "rounds_since_hit_mean",
+            "rounds_since_hit_std",
+            "expected_freq_mean",
+            "expected_freq_std",
+            "hit_rate_median",
+            "rounds_since_hit_median",
+            "stats_count",
+            "actual_hit_count",
+            "hit_rate_variance",
+        ]
+
+        feature_names.extend(stats_features)
+
+        # 메타 정보 (10개)
+        meta_features = [
+            "analysis_time",
+            "total_combinations",
+            "top_candidates_count",
+            "expansion_patterns_count",
+            "pattern_features_count",
+            "stats_count",
+            "avg_composite_score",
+            "max_composite_score",
+            "composite_score_std",
+            "timestamp_hash",
+        ]
+
+        feature_names.extend(meta_features)
+
+        return feature_names

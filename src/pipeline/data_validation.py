@@ -14,7 +14,7 @@ from pathlib import Path
 
 from src.shared.types import LotteryNumber
 from src.utils.error_handler_refactored import get_logger
-from src.utils.unified_performance import performance_monitor
+from src.utils.unified_performance_engine import get_unified_performance_engine
 from src.utils.memory_manager import get_memory_manager
 from src.utils.unified_report import save_analysis_performance_report
 

@@ -19,7 +19,8 @@ import psutil
 
 from ..utils.unified_logging import get_logger
 from ..utils.memory_manager import get_memory_manager
-from ..utils.batch_controller import DynamicBatchSizeController, CPUBatchProcessor
+
+# from ..utils.batch_controller import DynamicBatchSizeController, CPUBatchProcessor  # 존재하지 않음
 from ..utils.cuda_singleton_manager import get_singleton_cuda_optimizer
 from ..shared.types import LotteryNumber
 from .pattern_analyzer import PatternAnalyzer
@@ -71,9 +72,25 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
 
         # CPU/GPU별 최적화 도구 설정
         if self.use_gpu:
-            self.cuda_optimizer = get_singleton_cuda_optimizer()
-            self.amp_scaler = torch.cuda.amp.GradScaler()
-            self.cpu_batch_processor = None
+            try:
+                from ..utils.cuda_singleton_manager import (
+                    get_singleton_cuda_optimizer,
+                    CudaSingletonConfig,
+                )
+                cuda_config = CudaSingletonConfig(
+                    use_amp=True,
+                    batch_size=32,
+                    use_cudnn=True,
+                )
+                self.cuda_optimizer = get_singleton_cuda_optimizer(
+                    config=cuda_config, requester_name="negative_sample_generator"
+                )
+                self.amp_scaler = torch.cuda.amp.GradScaler()
+                self.cpu_batch_processor = None
+            except Exception as e:
+                logger.warning(f"CUDA 최적화기 초기화 실패: {e}")
+                self.cuda_optimizer = None
+                self.cpu_batch_processor = CPUBatchProcessor(
         else:
             self.cuda_optimizer = None
             self.cpu_batch_processor = CPUBatchProcessor(

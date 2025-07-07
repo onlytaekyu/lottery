@@ -8,8 +8,8 @@ import numpy as np
 from typing import Dict, Any, List, Set, Tuple, Optional
 from collections import Counter, defaultdict
 
-from src.analysis.base_analyzer import BaseAnalyzer
-from src.shared.types import LotteryNumber
+from .base_analyzer import BaseAnalyzer
+from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
 
 logger = get_logger(__name__)

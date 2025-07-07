@@ -21,13 +21,13 @@ from datetime import datetime
 from ..utils.unified_logging import get_logger
 from ..shared.types import LotteryNumber
 from ..utils.unified_config import ConfigProxy
-from .base_trend_analyzer import BaseTrendAnalyzer
+from .base_analyzer import BaseAnalyzer
 
 # 로거 설정
 logger = get_logger(__name__)
 
 
-class TrendAnalyzer(BaseTrendAnalyzer):
+class TrendAnalyzer(BaseAnalyzer):
     """
     추세 분석기 클래스
 
@@ -41,7 +41,9 @@ class TrendAnalyzer(BaseTrendAnalyzer):
         Args:
             config: 설정 객체
         """
-        super().__init__(config, "trend")
+        super().__init__(config, analyzer_type="trend")
+        self.trend_window = 50
+        self.segment_window = 20
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
@@ -77,7 +79,7 @@ class TrendAnalyzer(BaseTrendAnalyzer):
         # 회차별 번호 추출
         draw_numbers = [lottery.numbers for lottery in analysis_data]
 
-        # 베이스 클래스의 공통 메서드 사용
+        # 추세 특성 추출
         trend_features = self._extract_trend_features(draw_numbers)
 
         # 결과 반환
@@ -86,6 +88,111 @@ class TrendAnalyzer(BaseTrendAnalyzer):
             "data_count": len(historical_data),
             "window_size": window_size,
             "timestamp": int(time.time()),
+        }
+
+    def _extract_trend_features(self, draw_numbers: List[List[int]]) -> Dict[str, Any]:
+        """
+        추세 특성 추출
+
+        Args:
+            draw_numbers: 회차별 당첨 번호
+
+        Returns:
+            Dict[str, Any]: 추세 특성
+        """
+        features = {}
+
+        # 번호별 출현 빈도 추세
+        features.update(self._analyze_frequency_trend(draw_numbers))
+
+        # 세그먼트 반복 패턴
+        features.update(self._analyze_segment_repeat_patterns(draw_numbers))
+
+        # 연속성 패턴
+        features.update(self._analyze_consecutive_patterns(draw_numbers))
+
+        return features
+
+    def _analyze_frequency_trend(
+        self, draw_numbers: List[List[int]]
+    ) -> Dict[str, float]:
+        """
+        번호별 출현 빈도 추세 분석
+
+        Args:
+            draw_numbers: 회차별 당첨 번호
+
+        Returns:
+            Dict[str, float]: 빈도 추세 분석 결과
+        """
+        # 전체 번호 출현 빈도 계산
+        all_numbers = [num for draw in draw_numbers for num in draw]
+        frequency = Counter(all_numbers)
+
+        # 최근 절반과 이전 절반의 빈도 비교
+        mid_point = len(draw_numbers) // 2
+        recent_numbers = [num for draw in draw_numbers[mid_point:] for num in draw]
+        old_numbers = [num for draw in draw_numbers[:mid_point] for num in draw]
+
+        recent_freq = Counter(recent_numbers)
+        old_freq = Counter(old_numbers)
+
+        # 추세 점수 계산
+        trend_score = 0.0
+        total_numbers = len(set(all_numbers))
+
+        for num in range(1, 46):
+            recent_count = recent_freq.get(num, 0)
+            old_count = old_freq.get(num, 0)
+
+            if old_count > 0:
+                trend_ratio = recent_count / old_count
+                trend_score += abs(trend_ratio - 1.0)
+
+        return {
+            "frequency_trend_score": (
+                trend_score / total_numbers if total_numbers > 0 else 0.0
+            ),
+            "most_frequent_number": frequency.most_common(1)[0][0] if frequency else 0,
+            "frequency_variance": (
+                np.var(list(frequency.values())) if frequency else 0.0
+            ),
+        }
+
+    def _analyze_consecutive_patterns(
+        self, draw_numbers: List[List[int]]
+    ) -> Dict[str, float]:
+        """
+        연속성 패턴 분석
+
+        Args:
+            draw_numbers: 회차별 당첨 번호
+
+        Returns:
+            Dict[str, float]: 연속성 패턴 분석 결과
+        """
+        consecutive_counts = []
+
+        for numbers in draw_numbers:
+            sorted_numbers = sorted(numbers)
+            consecutive_count = 0
+
+            for i in range(len(sorted_numbers) - 1):
+                if sorted_numbers[i + 1] - sorted_numbers[i] == 1:
+                    consecutive_count += 1
+
+            consecutive_counts.append(consecutive_count)
+
+        return {
+            "avg_consecutive_count": (
+                np.mean(consecutive_counts) if consecutive_counts else 0.0
+            ),
+            "consecutive_variance": (
+                np.var(consecutive_counts) if consecutive_counts else 0.0
+            ),
+            "max_consecutive_count": (
+                max(consecutive_counts) if consecutive_counts else 0
+            ),
         }
 
     def _analyze_segment_repeat_patterns(

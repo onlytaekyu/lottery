@@ -89,6 +89,42 @@ execution:
   use_gpu: true
   vector_cache_size: 1000
   verbose: true
+
+# ===================
+# 성능 최적화 설정 (optimization.yaml 통합)
+# ===================
+optimization:
+  # ProcessPool 관리자 설정
+  process_pool:
+    max_workers: 4
+    chunk_size: 100
+    timeout: 300
+    memory_limit_mb: 1024
+    enable_monitoring: true
+    auto_restart: true
+    restart_threshold: 100
+
+  # 메모리 관리 설정
+  memory:
+    max_memory_usage: 0.85
+    cache_size: 268435456  # 256MB
+    auto_cleanup_interval: 60.0
+    use_memory_pooling: true
+    pool_size: 32
+
+  # 하이브리드 최적화 설정
+  hybrid:
+    auto_optimization: true
+    memory_threshold: 0.8
+    cpu_threshold: 75.0
+    gpu_threshold: 0.8
+
+  # CUDA 최적화 설정
+  cuda:
+    use_amp: true
+    batch_size: 128
+    use_cudnn: true
+    empty_cache_threshold: 0.9
 filtering:
   remove_low_variance_features: true
   variance_threshold: 0.001  # Phase 1 개선: 0.01 → 0.001

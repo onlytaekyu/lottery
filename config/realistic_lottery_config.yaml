@@ -1,0 +1,124 @@
+# 현실적 로또 시스템 설정
+realistic_lottery:
+  # 현실적 목표 설정
+  target_improvements:
+    5th_prize:
+      base_probability: 0.017544  # 1/57
+      target_probability: 0.028571  # 1/35
+      target_improvement: 63%
+      focus_weight: 0.4
+      
+    4th_prize:
+      base_probability: 0.000969  # 1/1032
+      target_probability: 0.001429  # 1/700
+      target_improvement: 47%
+      focus_weight: 0.4
+      
+    3rd_prize:
+      base_probability: 0.000028  # 1/35724
+      target_probability: 0.00004   # 1/25000
+      target_improvement: 43%
+      focus_weight: 0.2
+
+  # 성과 목표
+  performance_goals:
+    hit_rate_5th: 0.35  # 35%
+    hit_rate_4th: 0.05  # 5%
+    hit_rate_3rd: 0.003  # 0.3%
+    loss_reduction: 0.58  # 58% 개선
+    total_loss_target: 0.25  # 25%
+
+  # 리스크 관리 설정
+  risk_management:
+    max_monthly_investment_ratio: 0.01  # 월소득 1%
+    max_consecutive_losses: 10
+    stop_loss_threshold: 0.8
+    kelly_fraction: 0.25
+    emergency_stop_conditions:
+      - consecutive_losses_exceeded
+      - monthly_loss_limit_reached
+      - model_performance_degraded
+    
+  # 포트폴리오 배분
+  portfolio_allocation:
+    conservative: 0.4  # 2세트 - 5등 최적화
+    aggressive: 0.4    # 2세트 - 3-4등 최적화
+    balanced: 0.2      # 1세트 - 혼합 전략
+    
+  # 전략별 설정
+  strategies:
+    conservative:
+      focus_grades: [5]
+      methods: ["frequency_based", "cluster_analysis"]
+      risk_level: "low"
+      expected_hit_rate: 0.35
+      
+    aggressive:
+      focus_grades: [3, 4]
+      methods: ["trend_following", "ai_ensemble"]
+      risk_level: "high"
+      expected_hit_rate: 0.05
+      
+    balanced:
+      focus_grades: [3, 4, 5]
+      methods: ["weighted_average", "meta_learning"]
+      risk_level: "medium"
+      expected_hit_rate: 0.15
+      
+  # 성능 모니터링
+  performance_monitoring:
+    tracking_frequency: 'weekly'
+    rebalancing_frequency: 'monthly'
+    model_retraining_threshold: 0.7
+    alert_thresholds:
+      hit_rate_decline: 0.15
+      roi_decline: 0.20
+      consecutive_losses: 5
+      
+  # 백테스팅 설정
+  backtesting:
+    test_period_weeks: 52  # 1년
+    validation_split: 0.2
+    cross_validation_folds: 5
+    minimum_test_rounds: 100
+    
+  # 모델 설정
+  models:
+    ensemble_weights:
+      lightgbm: 0.3
+      autoencoder: 0.25
+      tcn: 0.25
+      random_forest: 0.2
+      
+    retraining_schedule:
+      frequency: "monthly"
+      performance_threshold: 0.75
+      data_drift_threshold: 0.1
+      
+  # 캐시 및 저장 경로
+  paths:
+    model_cache: "data/cache/realistic_models"
+    performance_reports: "data/result/realistic_reports"
+    backtesting_results: "data/result/backtesting"
+    portfolio_history: "data/result/portfolio_history"
+    
+  # 알림 설정
+  notifications:
+    enabled: true
+    channels: ["console", "file"]
+    alert_levels:
+      performance_degradation: "warning"
+      risk_limit_exceeded: "error"
+      target_achieved: "info"
+      
+  # 실험 설정
+  experiments:
+    ab_testing:
+      enabled: true
+      test_duration_weeks: 12
+      statistical_significance: 0.05
+      
+    hyperparameter_tuning:
+      enabled: true
+      optimization_budget: 100
+      search_space: "auto" 

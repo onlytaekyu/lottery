@@ -287,3 +287,95 @@ def load_and_prepare_data(file_path: str, **kwargs) -> Dataset:
 
 # 기존 DataLoader 클래스는 GPUNativeDataLoader의 래퍼로 동작 가능
 DataLoader = GPUNativeDataLoader
+
+
+def load_draw_history(file_path: str = None) -> List:
+    """
+    로또 당첨 번호 이력을 로드합니다.
+
+    Args:
+        file_path: 데이터 파일 경로 (기본값: None, config에서 가져옴)
+
+    Returns:
+        List[LotteryNumber]: 로또 당첨 번호 리스트
+    """
+    from ..shared.types import LotteryNumber
+    from pathlib import Path
+
+    try:
+        # 파일 경로 설정
+        if file_path is None:
+            # 기본 경로 사용
+            config = get_config("main")
+            data_config = config.get("data", {})
+            file_path = data_config.get("historical_data_path", "data/raw/lottery.csv")
+
+        # 파일 존재 확인
+        if not Path(file_path).exists():
+            logger.warning(f"데이터 파일이 존재하지 않습니다: {file_path}")
+            return []
+
+        # CSV 파일 로드
+        df = pd.read_csv(file_path)
+
+        # 필요한 컬럼이 있는지 확인
+        required_columns = ["draw_no"]
+        number_columns = ["num1", "num2", "num3", "num4", "num5", "num6"]
+
+        if not all(col in df.columns for col in required_columns):
+            logger.error(f"필수 컬럼이 없습니다: {required_columns}")
+            return []
+
+        # 번호 컬럼이 있는지 확인 (다양한 형태 지원)
+        if all(col in df.columns for col in number_columns):
+            # num1, num2, ... 형태
+            pass
+        elif "numbers" in df.columns:
+            # numbers 컬럼에 모든 번호가 있는 경우
+            number_columns = ["numbers"]
+        else:
+            logger.error("번호 컬럼을 찾을 수 없습니다")
+            return []
+
+        # LotteryNumber 객체 리스트 생성
+        lottery_numbers = []
+
+        for _, row in df.iterrows():
+            try:
+                draw_no = int(row["draw_no"])
+
+                # 번호 추출
+                if len(number_columns) == 6:  # num1, num2, ... 형태
+                    numbers = [int(row[col]) for col in number_columns]
+                else:  # numbers 컬럼 형태
+                    numbers_str = str(row["numbers"])
+                    if "," in numbers_str:
+                        numbers = [int(x.strip()) for x in numbers_str.split(",")]
+                    else:
+                        # 공백으로 분리된 경우
+                        numbers = [int(x) for x in numbers_str.split()]
+
+                # 날짜 정보 (있는 경우)
+                date = None
+                if "date" in df.columns:
+                    date = str(row["date"])
+                elif "draw_date" in df.columns:
+                    date = str(row["draw_date"])
+
+                # LotteryNumber 객체 생성
+                lottery_number = LotteryNumber(
+                    draw_no=draw_no, numbers=numbers, date=date
+                )
+
+                lottery_numbers.append(lottery_number)
+
+            except Exception as e:
+                logger.warning(f"행 {row.name} 처리 실패: {e}")
+                continue
+
+        logger.info(f"로또 데이터 로드 완료: {len(lottery_numbers)}개 회차")
+        return lottery_numbers
+
+    except Exception as e:
+        logger.error(f"로또 데이터 로드 실패: {e}")
+        return []

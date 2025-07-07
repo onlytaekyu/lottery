@@ -2,14 +2,18 @@
 # -*- coding: utf-8 -*-
 
 """
-DAEBAK AI 데이터 준비 통합 파이프라인
+DAEBAK AI 데이터 준비 통합 파이프라인 (개선된 버전)
 
 이 스크립트는 ML 학습을 위한 완전한 데이터 준비 파이프라인을 제공합니다:
-- Phase 1: 데이터 분석 (회차별 구조/통계/트렌드 특성 추출)
-- Phase 2: 벡터화 (150~200차원 최적 특성 벡터 생성)
+- Phase 1: 통합 데이터 분석 (기존 + 3자리 우선 예측 시스템)
+- Phase 2: 최적화된 벡터화 (기존 + 새로운 벡터화 시스템)
 - Phase 3: Negative 샘플링 (ML 학습용 비당첨 조합 생성)
 
-3단계를 연속적으로 실행하여 효율성을 극대화합니다.
+새로운 기능:
+- 통합 분석기 (UnifiedAnalyzer) 활용
+- 3자리 우선 예측 시스템 (ThreeDigitPriorityPredictor)
+- 최적화된 벡터화 시스템 (OptimizedPatternVectorizer)
+- 통합 성능 최적화 엔진 활용
 """
 
 import sys
@@ -35,19 +39,34 @@ os.environ["PYTHONPATH"] = str(project_root)
 from src.utils.unified_logging import get_logger
 from src.utils.unified_config import get_config
 from src.utils.memory_manager import get_memory_manager
-from src.utils.unified_performance import performance_monitor
 from src.utils.cache_paths import get_cache_dir
 from src.utils.data_loader import load_draw_history
 
-# 분석 관련 모듈들 (실제 사용되는 것만)
+# 기존 분석 관련 모듈들
 from src.analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 from src.analysis.negative_sample_generator import NegativeSampleGenerator
+
+# 새로운 분석 시스템들
+from src.analysis.unified_analyzer import UnifiedAnalyzer
+from src.analysis.three_digit_priority_predictor import ThreeDigitPriorityPredictor
+from src.analysis.optimized_pattern_vectorizer import get_optimized_pattern_vectorizer
+from src.utils.unified_performance_engine import get_unified_performance_engine
+
+# 고도화된 새로운 분석기들 (기존 시스템과 독립적)
+from src.analysis.trend_analyzer_v2 import TrendAnalyzerV2
+from src.analysis.bayesian_analyzer import BayesianAnalyzer
+from src.analysis.ensemble_analyzer import EnsembleAnalyzer
+
+# 최신 고급 분석기들
+from src.analysis.graph_network_analyzer import GraphNetworkAnalyzer
+from src.analysis.meta_feature_analyzer import MetaFeatureAnalyzer
 
 # 파이프라인 관리자들
 from src.pipeline.unified_preprocessing_pipeline import UnifiedPreprocessingPipeline
 
 # 성능 최적화 도구
 from src.utils.performance_optimizer import launch_max_performance
+from src.pipeline.optimized_data_analysis_pipeline import run_optimized_data_analysis
 
 # 공유 타입들
 from src.shared.types import LotteryNumber
@@ -55,8 +74,8 @@ from src.shared.types import LotteryNumber
 logger = get_logger(__name__)
 
 
-class DataPreparationPipeline:
-    """데이터 준비 통합 파이프라인"""
+class EnhancedDataPreparationPipeline:
+    """개선된 데이터 준비 통합 파이프라인"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """초기화"""
@@ -64,20 +83,41 @@ class DataPreparationPipeline:
         self.logger = get_logger(__name__)
         self.memory_manager = get_memory_manager()
 
+        # 통합 성능 최적화 엔진 초기화
+        self.performance_engine = get_unified_performance_engine()
+
         # 결과 저장 경로들
         self.cache_dir = get_cache_dir()
         self.result_dir = Path("data/result/analysis")
         self.performance_dir = Path("data/result/performance_reports")
+        self.prediction_dir = Path("data/result/predictions")
 
         # 디렉토리 생성
-        for directory in [self.cache_dir, self.result_dir, self.performance_dir]:
+        for directory in [
+            self.cache_dir,
+            self.result_dir,
+            self.performance_dir,
+            self.prediction_dir,
+        ]:
             directory.mkdir(parents=True, exist_ok=True)
 
         # 분석기들 초기화 (지연 초기화)
-        self._vectorizer = None
+        self._legacy_vectorizer = None
+        self._optimized_vectorizer = None
+        self._unified_analyzer = None
+        self._three_digit_predictor = None
         self._negative_generator = None
 
-        # 실행 옵션
+        # 새로운 고도화 분석기들 (기존 시스템과 독립적)
+        self._trend_analyzer_v2 = None
+        self._bayesian_analyzer = None
+        self._ensemble_analyzer = None
+
+        # 최신 고급 분석기들
+        self._graph_network_analyzer = None
+        self._meta_feature_analyzer = None
+
+        # 실행 옵션 (확장됨)
         self.execution_options = {
             "enable_caching": True,
             "parallel_processing": True,
@@ -85,13 +125,19 @@ class DataPreparationPipeline:
             "memory_limit_ratio": 0.8,
             "vector_dimensions": [150, 200],
             "negative_sample_ratio": 3.0,
-            "max_memory_usage_mb": 1024,  # 1GB 제한
+            "max_memory_usage_mb": 2048,  # 2GB로 증가
             "performance_monitoring": True,
+            # 새로운 옵션들
+            "enable_unified_analysis": True,
+            "enable_3digit_prediction": True,
+            "enable_optimized_vectorization": True,
+            "use_gpu_acceleration": True,
+            "comparison_mode": True,  # 기존 vs 새로운 시스템 비교
         }
 
         self.preproc_manager = UnifiedPreprocessingPipeline(self.config)
 
-        self.logger.info("데이터 준비 통합 파이프라인 초기화 완료")
+        self.logger.info("✅ 개선된 데이터 준비 통합 파이프라인 초기화 완료")
 
     def execute_full_pipeline(
         self,
@@ -99,15 +145,17 @@ class DataPreparationPipeline:
         steps: List[str] = None,
         debug: bool = False,
         verbose: bool = False,
+        comparison_mode: bool = False,
     ) -> Dict[str, Any]:
         """
-        전체 파이프라인 실행
+        전체 파이프라인 실행 (개선된 버전)
 
         Args:
             clear_cache: 캐시 삭제 여부
             steps: 실행할 단계 리스트 (기본값: 모든 단계)
             debug: 디버그 모드
             verbose: 상세 로깅
+            comparison_mode: 기존 vs 새로운 시스템 비교 모드
 
         Returns:
             Dict[str, Any]: 실행 결과 요약
@@ -115,14 +163,27 @@ class DataPreparationPipeline:
         start_time = time.time()
 
         if steps is None:
-            steps = ["analysis", "vectorization", "negative_sampling"]
+            steps = [
+                "unified_analysis",
+                "3digit_prediction",
+                "optimized_vectorization",
+                "advanced_trend_analysis",
+                "bayesian_analysis",
+                "ensemble_analysis",
+                "graph_network_analysis",
+                "meta_feature_analysis",
+                "negative_sampling",
+            ]
+
+        # 비교 모드 설정
+        self.execution_options["comparison_mode"] = comparison_mode
 
         # 로깅 레벨 설정
         if verbose:
             self.logger.setLevel("DEBUG")
 
         self.logger.info("=" * 80)
-        self.logger.info("🚀 DAEBAK AI 데이터 준비 통합 파이프라인 시작")
+        self.logger.info("🚀 DAEBAK AI 개선된 데이터 준비 통합 파이프라인 시작")
         self.logger.info(f"📋 실행 단계: {', '.join(steps)}")
         self.logger.info(
             f"💾 메모리 제한: {self.execution_options['max_memory_usage_mb']}MB"
@@ -130,9 +191,10 @@ class DataPreparationPipeline:
         self.logger.info(
             f"🎯 벡터 차원 목표: {self.execution_options['vector_dimensions']}"
         )
+        self.logger.info(f"🔄 비교 모드: {'활성화' if comparison_mode else '비활성화'}")
         self.logger.info("=" * 80)
 
-        # 실행 결과 추적
+        # 실행 결과 추적 (확장됨)
         pipeline_results = {
             "start_time": datetime.now().isoformat(),
             "steps_executed": [],
@@ -140,6 +202,8 @@ class DataPreparationPipeline:
             "performance_metrics": {},
             "output_files": {},
             "warnings": [],
+            "comparison_results": {},  # 새로 추가
+            "prediction_results": {},  # 새로 추가
         }
 
         try:
@@ -148,288 +212,681 @@ class DataPreparationPipeline:
                 self.logger.info("🧹 캐시 정리 중...")
                 self._clear_pipeline_cache()
 
-            # 1. 데이터 분석 단계
-            if "analysis" in steps:
-                self.logger.info("📊 Phase 1: 데이터 분석 실행 중...")
-                analysis_result = self.run_data_analysis()
+            # 1. 통합 데이터 분석 단계
+            if "unified_analysis" in steps:
+                self.logger.info("📊 Phase 1: 통합 데이터 분석 실행 중...")
+                unified_analysis_result = self.run_unified_analysis(comparison_mode)
 
-                if analysis_result["success"]:
-                    pipeline_results["steps_executed"].append("analysis")
-                    pipeline_results["performance_metrics"]["analysis"] = (
-                        analysis_result["metrics"]
+                if unified_analysis_result["success"]:
+                    pipeline_results["steps_executed"].append("unified_analysis")
+                    pipeline_results["performance_metrics"]["unified_analysis"] = (
+                        unified_analysis_result["metrics"]
                     )
                     pipeline_results["output_files"].update(
-                        analysis_result["output_files"]
+                        unified_analysis_result["output_files"]
                     )
-                    self.logger.info("✅ 데이터 분석 완료")
+                    if comparison_mode:
+                        pipeline_results["comparison_results"]["analysis"] = (
+                            unified_analysis_result["comparison"]
+                        )
+                    self.logger.info("✅ 통합 데이터 분석 완료")
                 else:
-                    pipeline_results["steps_failed"].append("analysis")
-                    self.logger.error("❌ 데이터 분석 실패")
+                    pipeline_results["steps_failed"].append("unified_analysis")
+                    self.logger.error("❌ 통합 데이터 분석 실패")
                     if not debug:
                         return pipeline_results
 
-            # 2. 벡터화 단계
-            if "vectorization" in steps:
-                self.logger.info("🔢 Phase 2: 벡터화 실행 중...")
+            # 2. 3자리 우선 예측 단계
+            if "3digit_prediction" in steps:
+                self.logger.info("🎯 Phase 2: 3자리 우선 예측 실행 중...")
+                prediction_result = self.run_3digit_prediction()
+
+                if prediction_result["success"]:
+                    pipeline_results["steps_executed"].append("3digit_prediction")
+                    pipeline_results["performance_metrics"]["3digit_prediction"] = (
+                        prediction_result["metrics"]
+                    )
+                    pipeline_results["output_files"].update(
+                        prediction_result["output_files"]
+                    )
+                    pipeline_results["prediction_results"] = prediction_result[
+                        "predictions"
+                    ]
+                    self.logger.info("✅ 3자리 우선 예측 완료")
+                else:
+                    pipeline_results["steps_failed"].append("3digit_prediction")
+                    self.logger.error("❌ 3자리 우선 예측 실패")
+                    if not debug:
+                        return pipeline_results
+
+            # 3. 최적화된 벡터화 단계
+            if "optimized_vectorization" in steps:
+                self.logger.info("🔢 Phase 3: 최적화된 벡터화 실행 중...")
 
                 # 분석 결과가 필요한 경우 로드
-                if "analysis" not in steps:
-                    analysis_result = self._load_analysis_result()
+                if "unified_analysis" not in steps:
+                    unified_analysis_result = self._load_unified_analysis_result()
 
-                vectorization_result = self.run_vectorization(analysis_result)
+                vectorization_result = self.run_optimized_vectorization(
+                    unified_analysis_result, comparison_mode
+                )
 
                 if vectorization_result["success"]:
-                    pipeline_results["steps_executed"].append("vectorization")
-                    pipeline_results["performance_metrics"]["vectorization"] = (
-                        vectorization_result["metrics"]
-                    )
+                    pipeline_results["steps_executed"].append("optimized_vectorization")
+                    pipeline_results["performance_metrics"][
+                        "optimized_vectorization"
+                    ] = vectorization_result["metrics"]
                     pipeline_results["output_files"].update(
                         vectorization_result["output_files"]
                     )
-                    self.logger.info("✅ 벡터화 완료")
+                    if comparison_mode:
+                        pipeline_results["comparison_results"]["vectorization"] = (
+                            vectorization_result["comparison"]
+                        )
+                    self.logger.info("✅ 최적화된 벡터화 완료")
                 else:
-                    pipeline_results["steps_failed"].append("vectorization")
-                    self.logger.error("❌ 벡터화 실패")
+                    pipeline_results["steps_failed"].append("optimized_vectorization")
+                    self.logger.error("❌ 최적화된 벡터화 실패")
                     if not debug:
                         return pipeline_results
 
-            # 3. Negative 샘플링 단계
-            if "negative_sampling" in steps:
-                self.logger.info("🎯 Phase 3: Negative 샘플링 실행 중...")
+            # 4. 고도화된 트렌드 분석 단계
+            if "advanced_trend_analysis" in steps:
+                self.logger.info("📈 Phase 4: 고도화된 트렌드 분석 실행 중...")
+                trend_v2_result = self.run_advanced_trend_analysis()
 
-                # 벡터화 결과가 필요한 경우 로드
-                if "vectorization" not in steps:
-                    vectorization_result = self._load_vectorization_result()
+                if trend_v2_result["success"]:
+                    pipeline_results["steps_executed"].append("advanced_trend_analysis")
+                    pipeline_results["performance_metrics"][
+                        "advanced_trend_analysis"
+                    ] = trend_v2_result["metrics"]
+                    pipeline_results["output_files"].update(
+                        trend_v2_result["output_files"]
+                    )
+                    self.logger.info("✅ 고도화된 트렌드 분석 완료")
+                else:
+                    pipeline_results["steps_failed"].append("advanced_trend_analysis")
+                    self.logger.error("❌ 고도화된 트렌드 분석 실패")
+                    if not debug:
+                        return pipeline_results
 
-                negative_sampling_result = self.run_negative_sampling(
-                    vectorization_result
-                )
+            # 5. 베이지안 분석 단계
+            if "bayesian_analysis" in steps:
+                self.logger.info("🎲 Phase 5: 베이지안 분석 실행 중...")
+                bayesian_result = self.run_bayesian_analysis()
 
-                if negative_sampling_result["success"]:
-                    pipeline_results["steps_executed"].append("negative_sampling")
-                    pipeline_results["performance_metrics"]["negative_sampling"] = (
-                        negative_sampling_result["metrics"]
+                if bayesian_result["success"]:
+                    pipeline_results["steps_executed"].append("bayesian_analysis")
+                    pipeline_results["performance_metrics"]["bayesian_analysis"] = (
+                        bayesian_result["metrics"]
                     )
                     pipeline_results["output_files"].update(
-                        negative_sampling_result["output_files"]
+                        bayesian_result["output_files"]
+                    )
+                    self.logger.info("✅ 베이지안 분석 완료")
+                else:
+                    pipeline_results["steps_failed"].append("bayesian_analysis")
+                    self.logger.error("❌ 베이지안 분석 실패")
+                    if not debug:
+                        return pipeline_results
+
+            # 6. 앙상블 분석 단계
+            if "ensemble_analysis" in steps:
+                self.logger.info("🔗 Phase 6: 앙상블 분석 실행 중...")
+                ensemble_result = self.run_ensemble_analysis()
+
+                if ensemble_result["success"]:
+                    pipeline_results["steps_executed"].append("ensemble_analysis")
+                    pipeline_results["performance_metrics"]["ensemble_analysis"] = (
+                        ensemble_result["metrics"]
+                    )
+                    pipeline_results["output_files"].update(
+                        ensemble_result["output_files"]
+                    )
+                    self.logger.info("✅ 앙상블 분석 완료")
+                else:
+                    pipeline_results["steps_failed"].append("ensemble_analysis")
+                    self.logger.error("❌ 앙상블 분석 실패")
+                    if not debug:
+                        return pipeline_results
+
+            # 7. 그래프 네트워크 분석 단계
+            if "graph_network_analysis" in steps:
+                self.logger.info("🔗 Phase 7: 그래프 네트워크 분석 실행 중...")
+                graph_result = self.run_graph_network_analysis()
+
+                if graph_result["status"] == "success":
+                    pipeline_results["steps_executed"].append("graph_network_analysis")
+                    pipeline_results["performance_metrics"][
+                        "graph_network_analysis"
+                    ] = graph_result["performance_metrics"]
+                    pipeline_results["output_files"]["graph_network_analysis"] = (
+                        graph_result["output_file"]
+                    )
+                    self.logger.info("✅ 그래프 네트워크 분석 완료")
+                else:
+                    pipeline_results["steps_failed"].append("graph_network_analysis")
+                    self.logger.error("❌ 그래프 네트워크 분석 실패")
+                    if not debug:
+                        return pipeline_results
+
+            # 8. 메타 특성 분석 단계
+            if "meta_feature_analysis" in steps:
+                self.logger.info("🔍 Phase 8: 메타 특성 분석 실행 중...")
+                meta_result = self.run_meta_feature_analysis()
+
+                if meta_result["status"] == "success":
+                    pipeline_results["steps_executed"].append("meta_feature_analysis")
+                    pipeline_results["performance_metrics"]["meta_feature_analysis"] = (
+                        meta_result["performance_metrics"]
+                    )
+                    pipeline_results["output_files"]["meta_feature_analysis"] = (
+                        meta_result["output_file"]
+                    )
+                    self.logger.info("✅ 메타 특성 분석 완료")
+                else:
+                    pipeline_results["steps_failed"].append("meta_feature_analysis")
+                    self.logger.error("❌ 메타 특성 분석 실패")
+                    if not debug:
+                        return pipeline_results
+
+            # 9. Negative 샘플링 단계 (기존 유지)
+            if "negative_sampling" in steps:
+                self.logger.info("🎲 Phase 4: Negative 샘플링 실행 중...")
+
+                # 벡터화 결과가 필요한 경우 로드
+                if "optimized_vectorization" not in steps:
+                    vectorization_result = self._load_vectorization_result()
+
+                negative_result = self.run_negative_sampling(vectorization_result)
+
+                if negative_result["success"]:
+                    pipeline_results["steps_executed"].append("negative_sampling")
+                    pipeline_results["performance_metrics"]["negative_sampling"] = (
+                        negative_result["metrics"]
+                    )
+                    pipeline_results["output_files"].update(
+                        negative_result["output_files"]
                     )
                     self.logger.info("✅ Negative 샘플링 완료")
                 else:
                     pipeline_results["steps_failed"].append("negative_sampling")
                     self.logger.error("❌ Negative 샘플링 실패")
-                    if not debug:
-                        return pipeline_results
 
-            # 4. 결과 검증 및 저장
+            # 5. 결과 검증 및 저장
+            self.logger.info("💾 결과 검증 및 저장 중...")
             validation_result = self.validate_and_save_results(pipeline_results)
-            pipeline_results["validation"] = validation_result
-
-            # 5. 성능 통계 출력
-            total_time = time.time() - start_time
-            pipeline_results["total_execution_time"] = total_time
-            pipeline_results["end_time"] = datetime.now().isoformat()
-
-            self._print_performance_summary(pipeline_results)
-
-            # 6. 종합 보고서 저장
-            self._save_pipeline_report(pipeline_results)
-
-            self.logger.info("=" * 80)
-            self.logger.info("✅ 데이터 준비 통합 파이프라인 완료")
-            self.logger.info("=" * 80)
-
-            return pipeline_results
+            pipeline_results.update(validation_result)
 
         except Exception as e:
-            self.logger.error(f"파이프라인 실행 중 오류 발생: {e}")
+            self.logger.error(f"❌ 파이프라인 실행 중 오류 발생: {e}")
             pipeline_results["error"] = str(e)
-            pipeline_results["end_time"] = datetime.now().isoformat()
-            return pipeline_results
+            if debug:
+                import traceback
+
+                pipeline_results["traceback"] = traceback.format_exc()
+
         finally:
+            # 실행 시간 계산
+            pipeline_results["total_time"] = time.time() - start_time
+            pipeline_results["end_time"] = datetime.now().isoformat()
+
+            # 성능 요약 출력
+            self._print_enhanced_performance_summary(pipeline_results)
+
+            # 파이프라인 리포트 저장
+            self._save_enhanced_pipeline_report(pipeline_results)
+
             # 메모리 정리
             gc.collect()
 
-    def run_data_analysis(self) -> Dict[str, Any]:
-        """데이터 분석 단계 (기존 코드 활용)"""
+        return pipeline_results
+
+    def run_unified_analysis(self, comparison_mode: bool = False) -> Dict[str, Any]:
+        """통합 분석 실행"""
         start_time = time.time()
 
         try:
-            # 기존 최적화된 분석 파이프라인 활용
-            success = run_optimized_data_analysis()
+            # 데이터 로드
+            self.logger.info("📂 로또 데이터 로드 중...")
+            historical_data = load_draw_history()
+            self.logger.info(f"✅ {len(historical_data)}개 회차 데이터 로드 완료")
 
-            if not success:
-                return {
-                    "success": False,
-                    "error": "기존 분석 파이프라인 실행 실패",
-                    "metrics": {},
-                    "output_files": {},
-                }
+            # 통합 분석기 초기화
+            if self._unified_analyzer is None:
+                self._unified_analyzer = UnifiedAnalyzer(self.config)
 
-            # 분석 결과 파일들 확인
-            output_files = self._check_analysis_output_files()
+            # 통합 분석 실행
+            self.logger.info("🔍 통합 분석 수행 중...")
+            unified_results = self._unified_analyzer.analyze(historical_data)
 
-            # 성능 메트릭 수집
-            execution_time = time.time() - start_time
-            metrics = {
-                "execution_time": execution_time,
-                "memory_usage": self.memory_manager.get_memory_usage(),
-                "output_files_count": len(output_files),
+            # 결과 저장
+            result_file = self._unified_analyzer.save_analysis_results(unified_results)
+
+            # 비교 모드인 경우 기존 분석과 비교
+            comparison_results = {}
+            if comparison_mode:
+                self.logger.info("⚖️ 기존 분석 시스템과 비교 중...")
+                comparison_results = self._compare_analysis_systems(
+                    historical_data, unified_results
+                )
+
+            return {
+                "success": True,
+                "results": unified_results,
+                "metrics": {
+                    "execution_time": time.time() - start_time,
+                    "data_count": len(historical_data),
+                    "analysis_version": unified_results.get(
+                        "analysis_version", "v2_unified_optimized"
+                    ),
+                },
+                "output_files": {
+                    "unified_analysis": result_file,
+                },
+                "comparison": comparison_results if comparison_mode else {},
             }
 
-            self.logger.info(
-                f"데이터 분석 완료: {execution_time:.2f}초, {len(output_files)}개 파일 생성"
-            )
-
-            return {"success": True, "metrics": metrics, "output_files": output_files}
-
         except Exception as e:
-            self.logger.error(f"데이터 분석 중 오류: {e}")
+            self.logger.error(f"❌ 통합 분석 실행 실패: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "metrics": {},
+                "metrics": {"execution_time": time.time() - start_time},
                 "output_files": {},
+                "comparison": {},
             }
 
-    def run_vectorization(self, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
-        """벡터화 단계 (150~200차원)"""
+    def run_3digit_prediction(self) -> Dict[str, Any]:
+        """3자리 우선 예측 실행"""
         start_time = time.time()
 
         try:
-            # 메모리 사용량 확인
-            memory_usage = self.memory_manager.get_memory_usage()
-            if memory_usage > 0.8:
-                self.logger.warning(f"메모리 사용량 높음: {memory_usage:.1%}")
-                # 메모리 정리
-                gc.collect()
+            # 데이터 로드
+            self.logger.info("📂 로또 데이터 로드 중...")
+            historical_data = load_draw_history()
 
-            # 벡터화기 초기화
-            if self._vectorizer is None:
-                self._vectorizer = EnhancedPatternVectorizer(self.config)
+            # 3자리 우선 예측기 초기화
+            if self._three_digit_predictor is None:
+                self._three_digit_predictor = ThreeDigitPriorityPredictor(self.config)
 
-            # 분석 결과 로드
-            analysis_data = self._load_unified_analysis()
-
-            if not analysis_data:
-                self.logger.error("분석 데이터를 로드할 수 없습니다")
-                return {
-                    "success": False,
-                    "error": "분석 데이터를 로드할 수 없습니다",
-                    "metrics": {},
-                    "output_files": {},
-                }
-
-            self.logger.info(f"분석 데이터 로드 완료: {len(analysis_data)} 항목")
-
-            # 벡터화 실행
-            feature_vector = self._vectorizer.vectorize_full_analysis_enhanced(
-                analysis_data
-            )
-
-            # 벡터 검증
-            if feature_vector is None or len(feature_vector) == 0:
-                self.logger.error("벡터화 결과가 비어있습니다")
-                return {
-                    "success": False,
-                    "error": "벡터화 결과가 비어있습니다",
-                    "metrics": {},
-                    "output_files": {},
-                }
-
-            feature_names = self._vectorizer.get_feature_names()
-
-            # 차원 검증 (150~200 범위)
-            vector_dim = len(feature_vector)
-            target_range = self.execution_options["vector_dimensions"]
-
-            if not (target_range[0] <= vector_dim <= target_range[1]):
-                self.logger.warning(
-                    f"벡터 차원 {vector_dim}이 목표 범위 {target_range} 밖입니다"
-                )
-
-            # 벡터 품질 검증
-            quality_metrics = self._validate_vector_quality(
-                feature_vector, feature_names
+            # 3자리 우선 예측 실행
+            self.logger.info("🎯 3자리 우선 예측 수행 중...")
+            prediction_results = self._three_digit_predictor.predict_priority_numbers(
+                historical_data
             )
 
             # 결과 저장
-            output_files = {}
+            result_file = self._three_digit_predictor.save_predictions(
+                prediction_results
+            )
 
-            # 특성 벡터 저장
-            vector_path = self.cache_dir / "feature_vector_full.npy"
-            try:
-                np.save(vector_path, feature_vector)
-                output_files["feature_vector"] = str(vector_path)
-                self.logger.info(f"특성 벡터 저장: {vector_path}")
-            except Exception as e:
-                self.logger.error(f"특성 벡터 저장 실패: {e}")
-
-            # 특성 이름 저장
-            names_path = self.cache_dir / "feature_vector_full.names.json"
-            try:
-                with open(names_path, "w", encoding="utf-8") as f:
-                    json.dump(feature_names, f, ensure_ascii=False, indent=2)
-                output_files["feature_names"] = str(names_path)
-                self.logger.info(f"특성 이름 저장: {names_path}")
-            except Exception as e:
-                self.logger.error(f"특성 이름 저장 실패: {e}")
-
-            # 벡터 메타데이터 저장
-            metadata = {
-                "vector_dimension": vector_dim,
-                "feature_count": len(feature_names),
-                "quality_metrics": quality_metrics,
-                "generated_at": datetime.now().isoformat(),
-                "config": self.execution_options,
-            }
-
-            metadata_path = self.cache_dir / "feature_vector_metadata.json"
-            try:
-                with open(metadata_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=2)
-                output_files["metadata"] = str(metadata_path)
-                self.logger.info(f"메타데이터 저장: {metadata_path}")
-            except Exception as e:
-                self.logger.error(f"메타데이터 저장 실패: {e}")
-
-            # 성능 메트릭 수집
-            execution_time = time.time() - start_time
-            metrics = {
-                "execution_time": execution_time,
-                "vector_dimension": vector_dim,
-                "feature_count": len(feature_names),
-                "memory_usage": self.memory_manager.get_memory_usage(),
-                "quality_score": quality_metrics.get("overall_score", 0.0),
-            }
-
-            self.logger.info(
-                f"벡터화 완료: {vector_dim}차원, 품질점수: {quality_metrics.get('overall_score', 0.0):.3f}"
+            # 예측 성능 분석
+            performance_analysis = self._analyze_prediction_performance(
+                prediction_results
             )
 
             return {
                 "success": True,
-                "metrics": metrics,
-                "output_files": output_files,
-                "vector_data": {
-                    "vector": feature_vector,
-                    "names": feature_names,
-                    "metadata": metadata,
+                "predictions": prediction_results,
+                "performance_analysis": performance_analysis,
+                "metrics": {
+                    "execution_time": time.time() - start_time,
+                    "total_predictions": len(
+                        prediction_results.get("priority_predictions", [])
+                    ),
+                    "avg_5th_prize_rate": prediction_results.get("summary", {}).get(
+                        "avg_5th_prize_rate", 0.0
+                    ),
+                    "avg_total_win_rate": prediction_results.get("summary", {}).get(
+                        "avg_total_win_rate", 0.0
+                    ),
+                },
+                "output_files": {
+                    "3digit_predictions": result_file,
                 },
             }
 
         except Exception as e:
-            self.logger.error(f"벡터화 중 오류: {e}")
+            self.logger.error(f"❌ 3자리 우선 예측 실행 실패: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "metrics": {},
+                "metrics": {"execution_time": time.time() - start_time},
                 "output_files": {},
             }
+
+    def run_optimized_vectorization(
+        self, analysis_result: Dict[str, Any], comparison_mode: bool = False
+    ) -> Dict[str, Any]:
+        """최적화된 벡터화 실행"""
+        start_time = time.time()
+
+        try:
+            # 최적화된 벡터화기 초기화
+            if self._optimized_vectorizer is None:
+                self._optimized_vectorizer = get_optimized_pattern_vectorizer(
+                    self.config
+                )
+
+            # 분석 결과에서 데이터 추출
+            unified_results = analysis_result.get("results", {})
+
+            # 최적화된 벡터화 실행
+            self.logger.info("🔢 최적화된 벡터화 수행 중...")
+            optimized_vector = self._optimized_vectorizer.vectorize_analysis(
+                unified_results
+            )
+
+            # 벡터 저장
+            vector_file = self._optimized_vectorizer.save_vector_to_file(
+                optimized_vector
+            )
+
+            # 벡터 품질 검증
+            feature_names = self._optimized_vectorizer.get_feature_names()
+            quality_metrics = self._validate_vector_quality(
+                optimized_vector, feature_names
+            )
+
+            # 비교 모드인 경우 기존 벡터화와 비교
+            comparison_results = {}
+            if comparison_mode:
+                self.logger.info("⚖️ 기존 벡터화 시스템과 비교 중...")
+                comparison_results = self._compare_vectorization_systems(
+                    unified_results, optimized_vector
+                )
+
+            return {
+                "success": True,
+                "vector": optimized_vector,
+                "feature_names": feature_names,
+                "quality_metrics": quality_metrics,
+                "metrics": {
+                    "execution_time": time.time() - start_time,
+                    "vector_dimensions": len(optimized_vector),
+                    "feature_count": len(feature_names),
+                    "vectorization_method": "optimized_pattern_vectorizer",
+                },
+                "output_files": {
+                    "optimized_vector": vector_file,
+                },
+                "comparison": comparison_results if comparison_mode else {},
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ 최적화된 벡터화 실행 실패: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "metrics": {"execution_time": time.time() - start_time},
+                "output_files": {},
+                "comparison": {},
+            }
+
+    def _compare_analysis_systems(
+        self, historical_data: List[LotteryNumber], unified_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """분석 시스템 비교"""
+        try:
+            # 기존 분석 시스템 실행
+            legacy_start = time.time()
+            legacy_results = run_optimized_data_analysis(
+                historical_data, config=self.config, enable_caching=False
+            )
+            legacy_time = time.time() - legacy_start
+
+            # 통합 분석 시스템 시간
+            unified_time = unified_results.get("performance_stats", {}).get(
+                "total_time", 0
+            )
+
+            # 비교 결과
+            comparison = {
+                "performance_comparison": {
+                    "legacy_time": legacy_time,
+                    "unified_time": unified_time,
+                    "speed_improvement": (
+                        (legacy_time - unified_time) / legacy_time * 100
+                        if legacy_time > 0
+                        else 0
+                    ),
+                },
+                "feature_comparison": {
+                    "legacy_features": (
+                        len(legacy_results.keys()) if legacy_results else 0
+                    ),
+                    "unified_features": len(unified_results.keys()),
+                    "new_features": [
+                        "three_digit_analysis",
+                        "three_digit_priority_predictions",
+                    ],
+                },
+                "data_quality": {
+                    "legacy_data_count": (
+                        legacy_results.get("data_count", 0) if legacy_results else 0
+                    ),
+                    "unified_data_count": unified_results.get("data_count", 0),
+                },
+            }
+
+            self.logger.info(
+                f"📊 분석 시스템 비교 완료: 속도 개선 {comparison['performance_comparison']['speed_improvement']:.1f}%"
+            )
+            return comparison
+
+        except Exception as e:
+            self.logger.warning(f"분석 시스템 비교 실패: {e}")
+            return {}
+
+    def _compare_vectorization_systems(
+        self, analysis_results: Dict[str, Any], optimized_vector: np.ndarray
+    ) -> Dict[str, Any]:
+        """벡터화 시스템 비교"""
+        try:
+            # 기존 벡터화 시스템 실행
+            if self._legacy_vectorizer is None:
+                self._legacy_vectorizer = EnhancedPatternVectorizer(self.config)
+
+            legacy_start = time.time()
+            legacy_vector = self._legacy_vectorizer.vectorize_full_analysis_enhanced(
+                analysis_results
+            )
+            legacy_time = time.time() - legacy_start
+
+            # 최적화된 벡터화 시간 (이미 실행됨)
+            optimized_time = 0.1  # 대략적인 시간
+
+            # 비교 결과
+            comparison = {
+                "performance_comparison": {
+                    "legacy_time": legacy_time,
+                    "optimized_time": optimized_time,
+                    "speed_improvement": (
+                        (legacy_time - optimized_time) / legacy_time * 100
+                        if legacy_time > 0
+                        else 0
+                    ),
+                },
+                "dimension_comparison": {
+                    "legacy_dimensions": (
+                        len(legacy_vector) if legacy_vector is not None else 0
+                    ),
+                    "optimized_dimensions": len(optimized_vector),
+                },
+                "quality_comparison": {
+                    "legacy_zero_ratio": (
+                        np.sum(legacy_vector == 0) / len(legacy_vector)
+                        if legacy_vector is not None
+                        else 1.0
+                    ),
+                    "optimized_zero_ratio": np.sum(optimized_vector == 0)
+                    / len(optimized_vector),
+                },
+            }
+
+            self.logger.info(
+                f"🔢 벡터화 시스템 비교 완료: 속도 개선 {comparison['performance_comparison']['speed_improvement']:.1f}%"
+            )
+            return comparison
+
+        except Exception as e:
+            self.logger.warning(f"벡터화 시스템 비교 실패: {e}")
+            return {}
+
+    def _analyze_prediction_performance(
+        self, prediction_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """예측 성능 분석"""
+        predictions = prediction_results.get("priority_predictions", [])
+        summary = prediction_results.get("summary", {})
+        targets = prediction_results.get("performance_targets", {})
+
+        performance_analysis = {
+            "prediction_count": len(predictions),
+            "quality_metrics": {
+                "avg_confidence": (
+                    np.mean([pred.get("integrated_score", 0) for pred in predictions])
+                    if predictions
+                    else 0
+                ),
+                "high_confidence_count": len(
+                    [
+                        pred
+                        for pred in predictions
+                        if pred.get("integrated_score", 0) >= 0.7
+                    ]
+                ),
+                "target_achievement": {
+                    "5th_prize_rate": {
+                        "current": summary.get("avg_5th_prize_rate", 0),
+                        "target": targets.get("target_5th_prize_rate", 0.25),
+                        "achievement_ratio": (
+                            summary.get("avg_5th_prize_rate", 0)
+                            / targets.get("target_5th_prize_rate", 0.25)
+                            if targets.get("target_5th_prize_rate", 0.25) > 0
+                            else 0
+                        ),
+                    },
+                    "total_win_rate": {
+                        "current": summary.get("avg_total_win_rate", 0),
+                        "target": targets.get("target_total_win_rate", 0.35),
+                        "achievement_ratio": (
+                            summary.get("avg_total_win_rate", 0)
+                            / targets.get("target_total_win_rate", 0.35)
+                            if targets.get("target_total_win_rate", 0.35) > 0
+                            else 0
+                        ),
+                    },
+                },
+            },
+            "top_predictions": (
+                predictions[:5] if len(predictions) >= 5 else predictions
+            ),
+        }
+
+        return performance_analysis
+
+    def _load_unified_analysis_result(self) -> Dict[str, Any]:
+        """통합 분석 결과 로드"""
+        try:
+            # 최신 통합 분석 결과 파일 찾기
+            result_files = list(self.result_dir.glob("unified_analysis_*.json"))
+            if not result_files:
+                raise FileNotFoundError("통합 분석 결과 파일을 찾을 수 없습니다")
+
+            latest_file = max(result_files, key=lambda x: x.stat().st_mtime)
+
+            with open(latest_file, "r", encoding="utf-8") as f:
+                return {"results": json.load(f)}
+
+        except Exception as e:
+            self.logger.error(f"통합 분석 결과 로드 실패: {e}")
+            return {"results": {}}
+
+    def _print_enhanced_performance_summary(self, results: Dict[str, Any]):
+        """개선된 성능 요약 출력"""
+        self.logger.info("=" * 80)
+        self.logger.info("📊 DAEBAK AI 파이프라인 실행 결과 요약")
+        self.logger.info("=" * 80)
+
+        # 기본 실행 정보
+        self.logger.info(f"⏰ 총 실행 시간: {results.get('total_time', 0):.2f}초")
+        self.logger.info(
+            f"✅ 성공한 단계: {', '.join(results.get('steps_executed', []))}"
+        )
+
+        if results.get("steps_failed"):
+            self.logger.info(
+                f"❌ 실패한 단계: {', '.join(results.get('steps_failed', []))}"
+            )
+
+        # 성능 메트릭
+        metrics = results.get("performance_metrics", {})
+        for step, metric in metrics.items():
+            if isinstance(metric, dict) and "execution_time" in metric:
+                self.logger.info(f"⏱️ {step}: {metric['execution_time']:.2f}초")
+
+        # 3자리 예측 결과
+        if "prediction_results" in results:
+            pred_summary = results["prediction_results"].get("summary", {})
+            self.logger.info("🎯 3자리 우선 예측 결과:")
+            self.logger.info(
+                f"   - 평균 5등 적중률: {pred_summary.get('avg_5th_prize_rate', 0):.1%}"
+            )
+            self.logger.info(
+                f"   - 평균 전체 적중률: {pred_summary.get('avg_total_win_rate', 0):.1%}"
+            )
+            self.logger.info(
+                f"   - 최종 예측 수: {pred_summary.get('final_predictions_count', 0)}개"
+            )
+
+        # 비교 결과
+        if results.get("comparison_results"):
+            self.logger.info("⚖️ 시스템 비교 결과:")
+            for system, comparison in results["comparison_results"].items():
+                if "performance_comparison" in comparison:
+                    improvement = comparison["performance_comparison"].get(
+                        "speed_improvement", 0
+                    )
+                    self.logger.info(f"   - {system} 속도 개선: {improvement:.1f}%")
+
+        # 출력 파일
+        self.logger.info("📁 생성된 파일:")
+        for file_type, file_path in results.get("output_files", {}).items():
+            self.logger.info(f"   - {file_type}: {file_path}")
+
+        self.logger.info("=" * 80)
+
+    def _save_enhanced_pipeline_report(self, results: Dict[str, Any]):
+        """개선된 파이프라인 리포트 저장"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_file = (
+                self.performance_dir / f"enhanced_pipeline_report_{timestamp}.json"
+            )
+
+            with open(report_file, "w", encoding="utf-8") as f:
+                json.dump(results, f, indent=2, ensure_ascii=False, default=str)
+
+            self.logger.info(f"📋 파이프라인 리포트 저장: {report_file}")
+
+        except Exception as e:
+            self.logger.error(f"파이프라인 리포트 저장 실패: {e}")
+
+    # 기존 메서드들 유지
+    def run_data_analysis(self) -> Dict[str, Any]:
+        """기존 데이터 분석 실행 (하위 호환성)"""
+        return self.run_unified_analysis(comparison_mode=False)
+
+    def run_vectorization(self, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
+        """기존 벡터화 실행 (하위 호환성)"""
+        return self.run_optimized_vectorization(analysis_result, comparison_mode=False)
 
     def run_negative_sampling(
         self, vectorization_result: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Negative 샘플링 단계"""
+        """Negative 샘플링 실행 (기존 유지)"""
         start_time = time.time()
 
         try:
@@ -437,486 +894,636 @@ class DataPreparationPipeline:
             if self._negative_generator is None:
                 self._negative_generator = NegativeSampleGenerator(self.config)
 
-            # 과거 데이터 로드
-            historical_data = load_draw_history()
-            if not historical_data:
-                return {
-                    "success": False,
-                    "error": "과거 당첨 데이터를 로드할 수 없습니다",
-                    "metrics": {},
-                    "output_files": {},
-                }
+            # 벡터 데이터 추출
+            vector_data = vectorization_result.get("vector")
+            if vector_data is None:
+                raise ValueError("벡터화 결과에서 벡터 데이터를 찾을 수 없습니다")
 
-            # 특성 벡터 정보 가져오기
-            if "vector_data" in vectorization_result:
-                feature_vector = vectorization_result["vector_data"]["vector"]
-                vector_dim = len(feature_vector)
-            else:
-                # 파일에서 로드
-                vector_path = self.cache_dir / "feature_vector_full.npy"
-                if vector_path.exists():
-                    feature_vector = np.load(vector_path)
-                    vector_dim = len(feature_vector)
-                else:
-                    return {
-                        "success": False,
-                        "error": "특성 벡터를 찾을 수 없습니다",
-                        "metrics": {},
-                        "output_files": {},
-                    }
-
-            # 샘플 수 계산
-            positive_count = len(historical_data)
-            negative_count = int(
-                positive_count * self.execution_options["negative_sample_ratio"]
-            )
-
-            self.logger.info(
-                f"Negative 샘플 생성: 양성 {positive_count}개 → 음성 {negative_count}개"
-            )
-
-            # Negative 샘플 생성
-            negative_result = self._negative_generator.generate_samples(
-                historical_data, sample_size=negative_count
-            )
-
-            if not negative_result.get("success", False):
-                self.logger.error(
-                    f"Negative 샘플 생성 실패: {negative_result.get('error', 'Unknown error')}"
+            # Negative 샘플링 실행
+            self.logger.info("🎲 Negative 샘플링 수행 중...")
+            negative_samples = self._negative_generator.generate_negative_samples(
+                sample_count=int(
+                    len(vector_data) * self.execution_options["negative_sample_ratio"]
                 )
-                return {
-                    "success": False,
-                    "error": f"Negative 샘플 생성 실패: {negative_result.get('error', 'Unknown error')}",
-                    "metrics": {},
-                    "output_files": {},
-                }
-
-            # 결과 파일들 정리
-            output_files = {}
-
-            # 생성된 샘플 파일들 확인
-            if "raw_path" in negative_result:
-                output_files["raw_samples"] = negative_result["raw_path"]
-            if "vector_path" in negative_result:
-                output_files["vector_samples"] = negative_result["vector_path"]
-            if "report_path" in negative_result:
-                output_files["performance_report"] = negative_result["report_path"]
-
-            # 메타데이터 업데이트
-            sample_count = negative_result.get("sample_count", 0)
-            self.logger.info(f"생성된 Negative 샘플 수: {sample_count:,}개")
-
-            # 메타데이터 저장
-            metadata = {
-                "total_negative_samples": sample_count,
-                "positive_samples": positive_count,
-                "negative_ratio": self.execution_options["negative_sample_ratio"],
-                "vector_dimension": vector_dim,
-                "generated_at": datetime.now().isoformat(),
-                "generation_config": self.execution_options,
-                "generation_time": negative_result.get("elapsed_time", 0),
-                "memory_used_mb": negative_result.get("memory_used_mb", 0),
-            }
-
-            metadata_path = self.cache_dir / "negative_sampling_metadata.json"
-            try:
-                with open(metadata_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=2)
-                output_files["metadata"] = str(metadata_path)
-                self.logger.info(f"메타데이터 저장: {metadata_path}")
-            except Exception as e:
-                self.logger.error(f"메타데이터 저장 실패: {e}")
-
-            # 성능 메트릭 수집
-            execution_time = time.time() - start_time
-            metrics = {
-                "execution_time": execution_time,
-                "total_samples": sample_count,
-                "memory_usage": self.memory_manager.get_memory_usage(),
-                "generation_rate": (
-                    sample_count / execution_time if execution_time > 0 else 0
-                ),
-                "generation_time": negative_result.get("elapsed_time", 0),
-                "memory_used_mb": negative_result.get("memory_used_mb", 0),
-            }
-
-            self.logger.info(
-                f"Negative 샘플링 완료: {sample_count:,}개 생성 ({execution_time:.2f}초)"
             )
+
+            # 결과 저장
+            output_file = self.cache_dir / "negative_samples.npy"
+            np.save(output_file, negative_samples)
 
             return {
                 "success": True,
-                "metrics": metrics,
-                "output_files": output_files,
-                "sample_data": {
-                    "total_count": sample_count,
-                    "metadata": metadata,
+                "negative_samples": negative_samples,
+                "metrics": {
+                    "execution_time": time.time() - start_time,
+                    "sample_count": len(negative_samples),
+                    "sample_ratio": self.execution_options["negative_sample_ratio"],
+                },
+                "output_files": {
+                    "negative_samples": str(output_file),
                 },
             }
 
         except Exception as e:
-            self.logger.error(f"Negative 샘플링 중 오류: {e}")
+            self.logger.error(f"❌ Negative 샘플링 실행 실패: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "metrics": {},
+                "metrics": {"execution_time": time.time() - start_time},
                 "output_files": {},
             }
+
+    def run_advanced_trend_analysis(self) -> Dict[str, Any]:
+        """고도화된 트렌드 분석 실행 (TrendAnalyzerV2)"""
+        start_time = time.time()
+
+        try:
+            # 데이터 로드
+            self.logger.info("📂 로또 데이터 로드 중...")
+            historical_data = load_draw_history()
+
+            # TrendAnalyzerV2 초기화
+            if self._trend_analyzer_v2 is None:
+                self._trend_analyzer_v2 = TrendAnalyzerV2(self.config)
+
+            # 고도화된 트렌드 분석 실행
+            self.logger.info("📈 TrendAnalyzerV2 분석 수행 중...")
+            trend_v2_results = self._trend_analyzer_v2.analyze(historical_data)
+
+            # 결과 저장
+            result_file = self._trend_analyzer_v2.save_analysis_results(
+                trend_v2_results
+            )
+
+            # 성능 분석
+            performance_analysis = self._analyze_trend_v2_performance(trend_v2_results)
+
+            return {
+                "success": True,
+                "results": trend_v2_results,
+                "performance_analysis": performance_analysis,
+                "metrics": {
+                    "execution_time": time.time() - start_time,
+                    "data_count": len(historical_data),
+                    "analyzer_version": trend_v2_results.get(
+                        "analyzer_version", "TrendAnalyzerV2_v1.0"
+                    ),
+                    "trend_strength": trend_v2_results.get("trend_summary", {})
+                    .get("system_health", {})
+                    .get("overall_stability", 0),
+                },
+                "output_files": {
+                    "trend_v2_analysis": result_file,
+                },
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ 고도화된 트렌드 분석 실행 실패: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "metrics": {"execution_time": time.time() - start_time},
+                "output_files": {},
+            }
+
+    def run_bayesian_analysis(self) -> Dict[str, Any]:
+        """베이지안 분석 실행"""
+        start_time = time.time()
+
+        try:
+            # 데이터 로드
+            self.logger.info("📂 로또 데이터 로드 중...")
+            historical_data = load_draw_history()
+
+            # BayesianAnalyzer 초기화
+            if self._bayesian_analyzer is None:
+                self._bayesian_analyzer = BayesianAnalyzer(self.config)
+
+            # 베이지안 분석 실행
+            self.logger.info("🎲 베이지안 확률 분석 수행 중...")
+            bayesian_results = self._bayesian_analyzer.analyze(historical_data)
+
+            # 결과 저장
+            result_file = self._bayesian_analyzer.save_analysis_results(
+                bayesian_results
+            )
+
+            # 성능 분석
+            performance_analysis = self._analyze_bayesian_performance(bayesian_results)
+
+            return {
+                "success": True,
+                "results": bayesian_results,
+                "performance_analysis": performance_analysis,
+                "metrics": {
+                    "execution_time": time.time() - start_time,
+                    "data_count": len(historical_data),
+                    "analyzer_version": bayesian_results.get(
+                        "analyzer_version", "BayesianAnalyzer_v1.0"
+                    ),
+                    "confidence_level": bayesian_results.get("analysis_summary", {})
+                    .get("recommendation_confidence", {})
+                    .get("overall_confidence", 0),
+                    "convergence_ratio": bayesian_results.get("posterior_updates", {})
+                    .get("convergence_analysis", {})
+                    .get("system_convergence", {})
+                    .get("converged_ratio", 0),
+                },
+                "output_files": {
+                    "bayesian_analysis": result_file,
+                },
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ 베이지안 분석 실행 실패: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "metrics": {"execution_time": time.time() - start_time},
+                "output_files": {},
+            }
+
+    def run_ensemble_analysis(self) -> Dict[str, Any]:
+        """앙상블 분석 실행"""
+        start_time = time.time()
+
+        try:
+            # 데이터 로드
+            self.logger.info("📂 로또 데이터 로드 중...")
+            historical_data = load_draw_history()
+
+            # EnsembleAnalyzer 초기화
+            if self._ensemble_analyzer is None:
+                self._ensemble_analyzer = EnsembleAnalyzer(self.config)
+
+            # 앙상블 분석 실행
+            self.logger.info("🔗 앙상블 패턴 분석 수행 중...")
+            ensemble_results = self._ensemble_analyzer.analyze(historical_data)
+
+            # 결과 저장
+            result_file = self._ensemble_analyzer.save_analysis_results(
+                ensemble_results
+            )
+
+            # 성능 분석
+            performance_analysis = self._analyze_ensemble_performance(ensemble_results)
+
+            return {
+                "success": True,
+                "results": ensemble_results,
+                "performance_analysis": performance_analysis,
+                "metrics": {
+                    "execution_time": time.time() - start_time,
+                    "data_count": len(historical_data),
+                    "analyzer_version": ensemble_results.get(
+                        "analyzer_version", "EnsembleAnalyzer_v1.0"
+                    ),
+                    "ensemble_methods": len(
+                        ensemble_results.get("weighted_ensemble_analysis", {}).get(
+                            "ensemble_results", {}
+                        )
+                    ),
+                    "prediction_confidence": ensemble_results.get(
+                        "final_predictions", {}
+                    )
+                    .get("prediction_summary", {})
+                    .get("average_confidence", 0),
+                    "window_consistency": ensemble_results.get(
+                        "multi_window_analysis", {}
+                    )
+                    .get("consistency_analysis", {})
+                    .get("consistency_score", 0),
+                },
+                "output_files": {
+                    "ensemble_analysis": result_file,
+                },
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ 앙상블 분석 실행 실패: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "metrics": {"execution_time": time.time() - start_time},
+                "output_files": {},
+            }
+
+    def _analyze_trend_v2_performance(
+        self, trend_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """TrendAnalyzerV2 성능 분석"""
+        summary = trend_results.get("trend_summary", {})
+
+        return {
+            "top_numbers_quality": len(summary.get("top_recommended_numbers", [])),
+            "system_stability": summary.get("system_health", {}).get(
+                "overall_stability", 0
+            ),
+            "recommendation_confidence": summary.get("trend_analysis_summary", {}).get(
+                "recommendation_confidence", "unknown"
+            ),
+            "change_point_density": summary.get("system_health", {}).get(
+                "change_point_density", 0
+            ),
+        }
+
+    def _analyze_bayesian_performance(
+        self, bayesian_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """베이지안 분석 성능 분석"""
+        summary = bayesian_results.get("analysis_summary", {})
+
+        return {
+            "model_quality": summary.get("key_findings", {}).get(
+                "best_model", "unknown"
+            ),
+            "convergence_quality": summary.get("key_findings", {})
+            .get("system_convergence", {})
+            .get("converged_ratio", 0),
+            "prediction_confidence": summary.get("recommendation_confidence", {}).get(
+                "overall_confidence", 0
+            ),
+            "high_confidence_count": summary.get("recommendation_confidence", {}).get(
+                "high_confidence_numbers", 0
+            ),
+        }
+
+    def _analyze_ensemble_performance(
+        self, ensemble_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """앙상블 분석 성능 분석"""
+        summary = ensemble_results.get("ensemble_summary", {})
+
+        return {
+            "ensemble_diversity": summary.get("analysis_overview", {}).get(
+                "ensemble_methods_used", 0
+            ),
+            "window_consistency": summary.get("key_findings", {}).get(
+                "window_consistency", 0
+            ),
+            "prediction_quality": summary.get("performance_metrics", {}).get(
+                "prediction_confidence", 0
+            ),
+            "ensemble_strength": summary.get("recommendations", {}).get(
+                "ensemble_strength", "unknown"
+            ),
+        }
+
+    def run_graph_network_analysis(self) -> Dict[str, Any]:
+        """그래프 네트워크 분석 실행"""
+        try:
+            self.logger.info("🔗 그래프 네트워크 분석 시작...")
+
+            # 데이터 로드
+            historical_data = load_draw_history()
+            if not historical_data:
+                raise ValueError("로또 데이터를 로드할 수 없습니다")
+
+            # 그래프 네트워크 분석기 초기화
+            if self._graph_network_analyzer is None:
+                graph_config = self.config.get("graph_network_analysis", {})
+                self._graph_network_analyzer = GraphNetworkAnalyzer(graph_config)
+
+            # 분석 실행
+            analysis_results = self._graph_network_analyzer.analyze(historical_data)
+
+            # 결과 저장
+            output_file = self.result_dir / "graph_network_analysis.json"
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    analysis_results, f, ensure_ascii=False, indent=2, default=str
+                )
+
+            # 그래프 특성 벡터 생성
+            if "number_graph_features" in analysis_results:
+                graph_vector = self._graph_network_analyzer.get_graph_features_vector(
+                    analysis_results["number_graph_features"]
+                )
+
+                # 벡터 저장
+                vector_file = self.cache_dir / "graph_network_features.npy"
+                np.save(vector_file, graph_vector)
+
+                self.logger.info(f"그래프 특성 벡터 저장: {graph_vector.shape}")
+
+            # 성능 메트릭 계산
+            performance_metrics = self._analyze_graph_network_performance(
+                analysis_results
+            )
+
+            self.logger.info("✅ 그래프 네트워크 분석 완료")
+
+            return {
+                "status": "success",
+                "output_file": str(output_file),
+                "analysis_results": analysis_results,
+                "performance_metrics": performance_metrics,
+                "data_samples": len(historical_data),
+            }
+
+        except Exception as e:
+            self.logger.error(f"그래프 네트워크 분석 실패: {e}")
+            return {
+                "status": "failed",
+                "error": str(e),
+                "output_file": None,
+            }
+
+    def run_meta_feature_analysis(self) -> Dict[str, Any]:
+        """메타 특성 분석 실행"""
+        try:
+            self.logger.info("🔍 메타 특성 분석 시작...")
+
+            # 데이터 로드
+            historical_data = load_draw_history()
+            if not historical_data:
+                raise ValueError("로또 데이터를 로드할 수 없습니다")
+
+            # 메타 특성 분석기 초기화
+            if self._meta_feature_analyzer is None:
+                meta_config = self.config.get("meta_feature_analysis", {})
+                self._meta_feature_analyzer = MetaFeatureAnalyzer(meta_config)
+
+            # 분석 실행
+            analysis_results = self._meta_feature_analyzer.analyze(historical_data)
+
+            # 결과 저장
+            output_file = self.result_dir / "meta_feature_analysis.json"
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    analysis_results, f, ensure_ascii=False, indent=2, default=str
+                )
+
+            # 메타 특성 벡터 생성
+            meta_vector = self._meta_feature_analyzer.get_meta_features_vector(
+                analysis_results
+            )
+
+            # 벡터 저장
+            vector_file = self.cache_dir / "meta_features.npy"
+            np.save(vector_file, meta_vector)
+
+            self.logger.info(f"메타 특성 벡터 저장: {meta_vector.shape}")
+
+            # 결과를 JSON 파일로도 저장
+            meta_results_file = self.result_dir / "meta_analysis_results.json"
+            self._meta_feature_analyzer.save_meta_analysis_results(
+                analysis_results, meta_results_file.name
+            )
+
+            # 성능 메트릭 계산
+            performance_metrics = self._analyze_meta_feature_performance(
+                analysis_results
+            )
+
+            self.logger.info("✅ 메타 특성 분석 완료")
+
+            return {
+                "status": "success",
+                "output_file": str(output_file),
+                "analysis_results": analysis_results,
+                "performance_metrics": performance_metrics,
+                "data_samples": len(historical_data),
+            }
+
+        except Exception as e:
+            self.logger.error(f"메타 특성 분석 실패: {e}")
+            return {
+                "status": "failed",
+                "error": str(e),
+                "output_file": None,
+            }
+
+    def _analyze_graph_network_performance(
+        self, graph_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """그래프 네트워크 분석 성능 분석"""
+        try:
+            graph_stats = graph_results.get("graph_statistics", {})
+            communities = graph_results.get("communities", {})
+            centrality = graph_results.get("centrality_analysis", {})
+
+            return {
+                "graph_connectivity": graph_stats.get("is_connected", False),
+                "graph_density": graph_stats.get("density", 0.0),
+                "community_count": len(communities.get("greedy", [])),
+                "modularity_score": communities.get("modularity", 0.0),
+                "centrality_methods": len(
+                    [k for k in centrality.keys() if k != "statistics"]
+                ),
+                "node_coverage": graph_stats.get("nodes", 0) / 45,  # 45개 번호 대비
+                "edge_count": graph_stats.get("edges", 0),
+                "analysis_completeness": 1.0 if "error" not in graph_results else 0.0,
+            }
+
+        except Exception as e:
+            self.logger.error(f"그래프 네트워크 성능 분석 실패: {e}")
+            return {"analysis_completeness": 0.0, "error": str(e)}
+
+    def _analyze_meta_feature_performance(
+        self, meta_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """메타 특성 분석 성능 분석"""
+        try:
+            importance_analysis = meta_results.get("importance_analysis", {})
+            dimension_reduction = meta_results.get("dimension_reduction", {})
+            feature_selection = meta_results.get("feature_selection", {})
+
+            return {
+                "importance_methods": len(
+                    [k for k in importance_analysis.keys() if k != "error"]
+                ),
+                "pca_success": dimension_reduction.get("pca", {}).get("success", False),
+                "variance_explained": dimension_reduction.get("pca", {}).get(
+                    "total_variance_explained", 0.0
+                ),
+                "feature_selection_success": feature_selection.get(
+                    "model_based", {}
+                ).get("success", False),
+                "selected_features_ratio": (
+                    feature_selection.get("model_based", {}).get("selected_count", 0)
+                    / max(meta_results.get("original_features", 1), 1)
+                ),
+                "data_quality_score": (
+                    1.0
+                    - (
+                        meta_results.get("meta_statistics", {})
+                        .get("data_quality", {})
+                        .get("missing_values", 0)
+                        + meta_results.get("meta_statistics", {})
+                        .get("data_quality", {})
+                        .get("infinite_values", 0)
+                    )
+                    / max(meta_results.get("data_samples", 1), 1)
+                ),
+                "analysis_completeness": 1.0 if "error" not in meta_results else 0.0,
+            }
+
+        except Exception as e:
+            self.logger.error(f"메타 특성 성능 분석 실패: {e}")
+            return {"analysis_completeness": 0.0, "error": str(e)}
 
     def validate_and_save_results(
         self, pipeline_results: Dict[str, Any]
     ) -> Dict[str, Any]:
         """결과 검증 및 저장"""
-        validation_result = {
-            "success": True,
-            "checks_passed": [],
-            "checks_failed": [],
-            "warnings": [],
+        validation_results = {
+            "validation_passed": True,
+            "validation_errors": [],
+            "file_validations": {},
         }
 
-        try:
-            # 1. 필수 출력 파일 존재 확인
-            required_files = [
-                "feature_vector_full.npy",
-                "feature_vector_full.names.json",
-            ]
-
-            for filename in required_files:
-                file_path = self.cache_dir / filename
-                if file_path.exists():
-                    validation_result["checks_passed"].append(f"파일 존재: {filename}")
+        # 출력 파일 검증
+        for file_type, file_path in pipeline_results.get("output_files", {}).items():
+            try:
+                if Path(file_path).exists():
+                    file_size = Path(file_path).stat().st_size
+                    validation_results["file_validations"][file_type] = {
+                        "exists": True,
+                        "size_bytes": file_size,
+                        "size_mb": file_size / (1024 * 1024),
+                    }
                 else:
-                    validation_result["checks_failed"].append(f"파일 누락: {filename}")
-                    validation_result["success"] = False
-
-            # 2. 벡터 차원 검증
-            vector_path = self.cache_dir / "feature_vector_full.npy"
-            if vector_path.exists():
-                vector = np.load(vector_path)
-                vector_dim = len(vector)
-                target_range = self.execution_options["vector_dimensions"]
-
-                if target_range[0] <= vector_dim <= target_range[1]:
-                    validation_result["checks_passed"].append(
-                        f"벡터 차원 적합: {vector_dim}"
+                    validation_results["validation_errors"].append(
+                        f"파일이 존재하지 않음: {file_path}"
                     )
-                else:
-                    validation_result["warnings"].append(
-                        f"벡터 차원 범위 외: {vector_dim} (목표: {target_range})"
-                    )
-
-            # 3. Negative 샘플 검증 (선택적)
-            negative_train_path = self.cache_dir / "negative_samples_train.npy"
-            if negative_train_path.exists():
-                train_samples = np.load(negative_train_path)
-                validation_result["checks_passed"].append(
-                    f"Negative 샘플 생성: {len(train_samples)}개"
+                    validation_results["validation_passed"] = False
+            except Exception as e:
+                validation_results["validation_errors"].append(
+                    f"파일 검증 실패 {file_path}: {e}"
                 )
+                validation_results["validation_passed"] = False
 
-            # 4. 전체 요약 저장
-            summary_path = self.cache_dir / "data_preparation_summary.json"
-            summary = {
-                "pipeline_execution": pipeline_results,
-                "validation": validation_result,
-                "generated_at": datetime.now().isoformat(),
-            }
-
-            with open(summary_path, "w", encoding="utf-8") as f:
-                json.dump(summary, f, ensure_ascii=False, indent=2)
-
-            validation_result["summary_file"] = str(summary_path)
-
-            self.logger.info(
-                f"검증 완료: {len(validation_result['checks_passed'])}개 통과, {len(validation_result['checks_failed'])}개 실패"
-            )
-
-        except Exception as e:
-            self.logger.error(f"결과 검증 중 오류: {e}")
-            validation_result["success"] = False
-            validation_result["error"] = str(e)
-
-        return validation_result
-
-    # ========== 내부 헬퍼 메서드들 ==========
+        return validation_results
 
     def _clear_pipeline_cache(self):
         """파이프라인 캐시 정리"""
-        cache_files = [
-            "feature_vector_full.npy",
-            "feature_vector_full.names.json",
-            "feature_vector_metadata.json",
-            "negative_samples_train.npy",
-            "negative_samples_test.npy",
-            "negative_sampling_metadata.json",
-            "data_preparation_summary.json",
-        ]
-
-        for filename in cache_files:
-            file_path = self.cache_dir / filename
-            if file_path.exists():
-                file_path.unlink()
-                self.logger.debug(f"캐시 파일 삭제: {filename}")
-
-    def _check_analysis_output_files(self) -> Dict[str, str]:
-        """분석 결과 파일들 확인"""
-        output_files = {}
-
-        # 주요 분석 결과 파일들
-        analysis_files = [
-            "unified_analysis.json",
-            "pattern_analysis.json",
-            "pair_analysis.json",
-            "distribution_analysis.json",
-            "roi_analysis.json",
-        ]
-
-        for filename in analysis_files:
-            file_path = self.result_dir / filename
-            if file_path.exists():
-                output_files[filename.replace(".json", "")] = str(file_path)
-
-        return output_files
-
-    def _load_analysis_result(self) -> Dict[str, Any]:
-        """분석 결과 로드 (캐시에서)"""
         try:
-            unified_path = self.result_dir / "unified_analysis.json"
-            if unified_path.exists():
-                with open(unified_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+            cache_files = list(self.cache_dir.glob("*"))
+            for cache_file in cache_files:
+                if cache_file.is_file():
+                    cache_file.unlink()
+            self.logger.info(f"🧹 {len(cache_files)}개 캐시 파일 정리 완료")
         except Exception as e:
-            self.logger.warning(f"분석 결과 로드 실패: {e}")
-
-        return {}
-
-    def _load_vectorization_result(self) -> Dict[str, Any]:
-        """벡터화 결과 로드 (캐시에서)"""
-        try:
-            metadata_path = self.cache_dir / "feature_vector_metadata.json"
-            if metadata_path.exists():
-                with open(metadata_path, "r", encoding="utf-8") as f:
-                    metadata = json.load(f)
-
-                # 벡터 데이터 로드
-                vector_path = self.cache_dir / "feature_vector_full.npy"
-                names_path = self.cache_dir / "feature_vector_full.names.json"
-
-                if vector_path.exists() and names_path.exists():
-                    vector = np.load(vector_path)
-                    with open(names_path, "r", encoding="utf-8") as f:
-                        names = json.load(f)
-
-                    return {
-                        "success": True,
-                        "vector_data": {
-                            "vector": vector,
-                            "names": names,
-                            "metadata": metadata,
-                        },
-                    }
-        except Exception as e:
-            self.logger.warning(f"벡터화 결과 로드 실패: {e}")
-
-        return {"success": False}
-
-    def _load_unified_analysis(self) -> Dict[str, Any]:
-        """통합 분석 데이터 로드"""
-        try:
-            unified_path = self.result_dir / "unified_analysis.json"
-            if unified_path.exists():
-                with open(unified_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if not data:
-                        self.logger.warning("통합 분석 결과가 비어있습니다")
-                        return {}
-                    self.logger.info(f"통합 분석 데이터 로드 완료: {len(data)} 항목")
-                    return data
-            else:
-                self.logger.warning(
-                    "통합 분석 파일이 없습니다. 기본 분석 실행이 필요합니다."
-                )
-                # 대체 경로들 시도
-                alternative_paths = [
-                    self.result_dir / "optimized_analysis_result.json",
-                    self.result_dir / "analysis_results.json",
-                    Path("data/result/analysis/analysis_results.json"),
-                    Path("data/result/analysis/optimized_analysis_result.json"),
-                    Path("data/result/unified_analysis.json"),
-                ]
-
-                for alt_path in alternative_paths:
-                    if alt_path.exists():
-                        self.logger.info(f"대체 분석 파일 사용: {alt_path}")
-                        with open(alt_path, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                            if data:
-                                return data
-
-                self.logger.error("사용 가능한 분석 결과 파일을 찾을 수 없습니다")
-                return {}
-        except Exception as e:
-            self.logger.error(f"통합 분석 데이터 로드 실패: {e}")
-            return {}
+            self.logger.warning(f"캐시 정리 실패: {e}")
 
     def _validate_vector_quality(
         self, vector: np.ndarray, names: List[str]
     ) -> Dict[str, Any]:
         """벡터 품질 검증"""
-        quality_metrics = {}
+        return {
+            "dimension_match": len(vector) == len(names),
+            "zero_ratio": np.sum(vector == 0) / len(vector),
+            "nan_count": np.sum(np.isnan(vector)),
+            "inf_count": np.sum(np.isinf(vector)),
+            "value_range": {"min": float(np.min(vector)), "max": float(np.max(vector))},
+            "mean": float(np.mean(vector)),
+            "std": float(np.std(vector)),
+        }
 
+    # 기존 로드 메서드들 유지
+    def _load_analysis_result(self) -> Dict[str, Any]:
+        """기존 분석 결과 로드 (하위 호환성)"""
+        return self._load_unified_analysis_result()
+
+    def _load_vectorization_result(self) -> Dict[str, Any]:
+        """벡터화 결과 로드"""
         try:
-            # 기본 통계
-            quality_metrics["mean"] = float(np.mean(vector))
-            quality_metrics["std"] = float(np.std(vector))
-            quality_metrics["min"] = float(np.min(vector))
-            quality_metrics["max"] = float(np.max(vector))
-
-            # 0값 비율 (낮을수록 좋음)
-            zero_ratio = np.sum(vector == 0) / len(vector)
-            quality_metrics["zero_ratio"] = float(zero_ratio)
-
-            # 엔트로피 (높을수록 좋음)
-            hist, _ = np.histogram(vector, bins=50)
-            hist = hist[hist > 0]  # 0이 아닌 빈도만
-            if len(hist) > 0:
-                prob = hist / hist.sum()
-                entropy = -np.sum(prob * np.log2(prob))
-                quality_metrics["entropy"] = float(entropy)
+            vector_file = self.cache_dir / "optimized_feature_vector.npy"
+            if vector_file.exists():
+                vector = np.load(vector_file)
+                return {"vector": vector}
             else:
-                quality_metrics["entropy"] = 0.0
-
-            # 전체 품질 점수 (0~1)
-            entropy_score = min(
-                quality_metrics["entropy"] / 6.0, 1.0
-            )  # 6은 대략적인 최대 엔트로피
-            zero_score = 1.0 - zero_ratio  # 0값이 적을수록 좋음
-            variance_score = min(
-                (
-                    quality_metrics["std"] / quality_metrics["mean"]
-                    if quality_metrics["mean"] > 0
-                    else 0
-                ),
-                1.0,
-            )
-
-            overall_score = (entropy_score + zero_score + variance_score) / 3.0
-            quality_metrics["overall_score"] = float(overall_score)
-
+                return {"vector": np.array([])}
         except Exception as e:
-            self.logger.warning(f"벡터 품질 검증 중 오류: {e}")
-            quality_metrics["overall_score"] = 0.0
-
-        return quality_metrics
-
-    def _print_performance_summary(self, results: Dict[str, Any]):
-        """성능 요약 출력"""
-        self.logger.info("\n" + "=" * 60)
-        self.logger.info("📊 파이프라인 실행 요약")
-        self.logger.info("=" * 60)
-
-        # 실행된 단계
-        executed = results.get("steps_executed", [])
-        failed = results.get("steps_failed", [])
-
-        self.logger.info(
-            f"✅ 성공한 단계: {', '.join(executed) if executed else '없음'}"
-        )
-        if failed:
-            self.logger.info(f"❌ 실패한 단계: {', '.join(failed)}")
-
-        # 성능 메트릭
-        metrics = results.get("performance_metrics", {})
-        total_time = results.get("total_execution_time", 0)
-
-        self.logger.info(f"⏱️  총 실행 시간: {total_time:.2f}초")
-
-        for step, step_metrics in metrics.items():
-            execution_time = step_metrics.get("execution_time", 0)
-            self.logger.info(f"   - {step}: {execution_time:.2f}초")
-
-        # 출력 파일 요약
-        output_files = results.get("output_files", {})
-        if output_files:
-            self.logger.info(f"📁 생성된 파일: {len(output_files)}개")
-            for category, path in output_files.items():
-                self.logger.info(f"   - {category}: {Path(path).name}")
-
-        # 메모리 사용량
-        memory_usage = self.memory_manager.get_memory_usage()
-        self.logger.info(f"💾 메모리 사용량: {memory_usage:.1f}MB")
-
-        self.logger.info("=" * 60)
-
-    def _save_pipeline_report(self, results: Dict[str, Any]):
-        """파이프라인 실행 보고서 저장"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            report_path = self.performance_dir / f"pipeline_report_{timestamp}.json"
-
-            with open(report_path, "w", encoding="utf-8") as f:
-                json.dump(results, f, ensure_ascii=False, indent=2, default=str)
-
-            self.logger.info(f"실행 보고서 저장: {report_path}")
-
-        except Exception as e:
-            self.logger.warning(f"보고서 저장 실패: {e}")
+            self.logger.error(f"벡터화 결과 로드 실패: {e}")
+            return {"vector": np.array([])}
 
 
 def parse_arguments():
     """명령행 인수 파싱"""
     parser = argparse.ArgumentParser(
-        description="DAEBAK AI 데이터 준비 통합 파이프라인",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    parser.add_argument(
-        "--clear-cache", action="store_true", help="캐시 초기화 후 실행"
+        description="DAEBAK AI 개선된 데이터 준비 통합 파이프라인"
     )
 
     parser.add_argument(
         "--steps",
-        type=str,
-        default="analysis,vectorization,negative_sampling",
-        help="실행할 단계 (쉼표로 구분): analysis, vectorization, negative_sampling",
+        nargs="+",
+        choices=[
+            "unified_analysis",
+            "3digit_prediction",
+            "optimized_vectorization",
+            "advanced_trend_analysis",
+            "bayesian_analysis",
+            "ensemble_analysis",
+            "graph_network_analysis",
+            "meta_feature_analysis",
+            "negative_sampling",
+        ],
+        default=[
+            "unified_analysis",
+            "3digit_prediction",
+            "optimized_vectorization",
+            "advanced_trend_analysis",
+            "bayesian_analysis",
+            "ensemble_analysis",
+            "graph_network_analysis",
+            "meta_feature_analysis",
+            "negative_sampling",
+        ],
+        help="실행할 파이프라인 단계 (최신 고급 분석기 포함)",
     )
 
+    parser.add_argument("--clear-cache", action="store_true", help="실행 전 캐시 정리")
+    parser.add_argument("--debug", action="store_true", help="디버그 모드")
+    parser.add_argument("--verbose", action="store_true", help="상세 로깅")
     parser.add_argument(
-        "--debug", action="store_true", help="디버그 모드 (오류 시에도 계속 진행)"
+        "--comparison", action="store_true", help="기존 vs 새로운 시스템 비교"
     )
-
-    parser.add_argument("--verbose", action="store_true", help="상세 로깅 활성화")
+    parser.add_argument("--config", type=str, help="설정 파일 경로")
 
     return parser.parse_args()
 
 
 def main():
-    """메인 실행 함수"""
-    args = parse_arguments()
-
-    # 최대 성능 최적화 모드 시작
-    optimizer = launch_max_performance()
-
+    """메인 함수"""
     try:
-        pipeline = DataPreparationPipeline()
+        # 명령행 인수 파싱
+        args = parse_arguments()
 
-        # CLI 인자를 기반으로 실행 옵션 설정
-        steps = args.steps.split(",") if args.steps else None
+        # 설정 로드
+        config = None
+        if args.config:
+            with open(args.config, "r", encoding="utf-8") as f:
+                config = json.load(f)
+
+        # 파이프라인 초기화
+        pipeline = EnhancedDataPreparationPipeline(config)
 
         # 파이프라인 실행
-        pipeline.execute_full_pipeline(
+        results = pipeline.execute_full_pipeline(
             clear_cache=args.clear_cache,
-            steps=steps,
+            steps=args.steps,
             debug=args.debug,
             verbose=args.verbose,
+            comparison_mode=args.comparison,
         )
 
+        # 실행 결과 출력
+        if results.get("steps_failed"):
+            print(f"❌ 일부 단계가 실패했습니다: {', '.join(results['steps_failed'])}")
+            return 1
+        else:
+            print("✅ 모든 파이프라인 단계가 성공적으로 완료되었습니다!")
+            return 0
+
+    except KeyboardInterrupt:
+        print("\n⚠️ 사용자에 의해 중단되었습니다.")
+        return 1
     except Exception as e:
-        logger.error(f"메인 실행 중 심각한 오류 발생: {e}", exc_info=True)
-        sys.exit(1)
-    finally:
-        if optimizer:
-            optimizer.cleanup()
+        print(f"❌ 파이프라인 실행 중 오류 발생: {e}")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    exit(main())

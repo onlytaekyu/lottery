@@ -47,12 +47,18 @@ class BaseModel(ABC):
         self.training_history = []
         self.model_name = self.__class__.__name__
 
+        # 3자리 예측 모드 지원
+        self.supports_3digit_mode = False
+        self.is_3digit_mode = False
+        self.three_digit_model = None
+
         # 모델 메타데이터
         self.metadata = {
             "model_type": self.model_name,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "version": "1.0.0",
+            "supports_3digit": self.supports_3digit_mode,
         }
 
         logger.info(f"{self.model_name} 초기화: 장치 {self.device}")
@@ -185,6 +191,294 @@ class BaseModel(ABC):
         except Exception as e:
             logger.error(f"특성 벡터 로드 중 오류: {e}")
             raise
+
+    # ===== 3자리 예측 모드 지원 메서드들 =====
+
+    def enable_3digit_mode(self) -> bool:
+        """
+        3자리 예측 모드 활성화
+
+        Returns:
+            bool: 활성화 성공 여부
+        """
+        if not self.supports_3digit_mode:
+            logger.warning(f"{self.model_name}은 3자리 모드를 지원하지 않습니다.")
+            return False
+
+        self.is_3digit_mode = True
+        logger.info(f"{self.model_name} 3자리 모드 활성화")
+        return True
+
+    def disable_3digit_mode(self) -> bool:
+        """
+        3자리 예측 모드 비활성화
+
+        Returns:
+            bool: 비활성화 성공 여부
+        """
+        self.is_3digit_mode = False
+        logger.info(f"{self.model_name} 3자리 모드 비활성화")
+        return True
+
+    def predict_3digit_combinations(
+        self, X: np.ndarray, top_k: int = 100, **kwargs
+    ) -> List[Tuple[Tuple[int, int, int], float]]:
+        """
+        3자리 조합 예측 (하위 클래스에서 구현)
+
+        Args:
+            X: 특성 벡터
+            top_k: 상위 k개 조합 반환
+            **kwargs: 추가 매개변수
+
+        Returns:
+            List[Tuple[Tuple[int, int, int], float]]: (3자리 조합, 신뢰도) 리스트
+        """
+        if not self.supports_3digit_mode:
+            logger.error(f"{self.model_name}은 3자리 모드를 지원하지 않습니다.")
+            return []
+
+        if not self.is_3digit_mode:
+            logger.error("3자리 모드가 활성화되지 않았습니다.")
+            return []
+
+        # 하위 클래스에서 구현해야 함
+        logger.warning(
+            f"{self.model_name}의 predict_3digit_combinations가 구현되지 않았습니다."
+        )
+        return []
+
+    def fit_3digit_mode(
+        self, X: np.ndarray, y_3digit: np.ndarray, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        3자리 모드 전용 훈련 (하위 클래스에서 구현)
+
+        Args:
+            X: 특성 벡터
+            y_3digit: 3자리 조합 레이블
+            **kwargs: 추가 매개변수
+
+        Returns:
+            Dict[str, Any]: 훈련 결과
+        """
+        if not self.supports_3digit_mode:
+            logger.error(f"{self.model_name}은 3자리 모드를 지원하지 않습니다.")
+            return {"error": "3자리 모드 미지원"}
+
+        # 하위 클래스에서 구현해야 함
+        logger.warning(f"{self.model_name}의 fit_3digit_mode가 구현되지 않았습니다.")
+        return {"error": "구현되지 않음"}
+
+    def get_3digit_feature_vector(
+        self,
+        feature_path: str = "data/cache/3digit_feature_vector.npy",
+        names_path: str = "data/cache/3digit_feature_vector.names.json",
+    ) -> Tuple[np.ndarray, List[str]]:
+        """
+        3자리 전용 특성 벡터와 특성 이름을 로드
+
+        Args:
+            feature_path: 3자리 특성 벡터 파일 경로
+            names_path: 3자리 특성 이름 파일 경로
+
+        Returns:
+            Tuple[np.ndarray, List[str]]: 특성 벡터와 특성 이름
+        """
+        try:
+            # 벡터 데이터 로드
+            if not os.path.exists(feature_path):
+                logger.warning(
+                    f"3자리 특성 벡터 파일이 없어 기본 벡터 사용: {feature_path}"
+                )
+                return self.get_feature_vector()
+
+            vector = np.load(feature_path)
+
+            # 특성 이름 로드
+            if not os.path.exists(names_path):
+                logger.warning(
+                    f"3자리 특성 이름 파일이 없어 기본 이름 생성: {names_path}"
+                )
+                feature_names = [f"3digit_feature_{i}" for i in range(vector.shape[-1])]
+            else:
+                with open(names_path, "r", encoding="utf-8") as f:
+                    feature_names = json.load(f)
+
+            logger.info(
+                f"3자리 특성 벡터 로드 완료: {vector.shape}, 특성 수={len(feature_names)}"
+            )
+            return vector, feature_names
+
+        except Exception as e:
+            logger.error(f"3자리 특성 벡터 로드 중 오류: {e}")
+            # 기본 벡터로 대체
+            return self.get_feature_vector()
+
+    def prepare_3digit_training_data(
+        self, historical_data: List[LotteryNumber], window_size: int = 50
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        3자리 모드 훈련 데이터 준비
+
+        Args:
+            historical_data: 과거 당첨 번호 데이터
+            window_size: 윈도우 크기
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: (특성 벡터, 3자리 조합 레이블)
+        """
+        try:
+            from itertools import combinations
+
+            # 3자리 조합 생성
+            all_3digit_combos = list(combinations(range(1, 46), 3))
+
+            X_samples = []
+            y_samples = []
+
+            # 슬라이딩 윈도우로 훈련 데이터 생성
+            for i in range(len(historical_data) - window_size):
+                window_data = historical_data[i : i + window_size]
+                target_draw = historical_data[i + window_size]
+
+                # 윈도우 데이터에서 특성 추출
+                window_features = self._extract_window_features(window_data)
+
+                # 타겟 당첨 번호에서 3자리 조합 추출
+                target_3digit_combos = list(combinations(target_draw.numbers, 3))
+
+                # 각 3자리 조합에 대한 레이블 생성 (원-핫 인코딩)
+                for combo in target_3digit_combos:
+                    combo_label = np.zeros(len(all_3digit_combos))
+                    if combo in all_3digit_combos:
+                        combo_idx = all_3digit_combos.index(combo)
+                        combo_label[combo_idx] = 1.0
+
+                    X_samples.append(window_features)
+                    y_samples.append(combo_label)
+
+            X = np.array(X_samples) if X_samples else np.array([])
+            y = np.array(y_samples) if y_samples else np.array([])
+
+            logger.info(f"3자리 훈련 데이터 준비 완료: X={X.shape}, y={y.shape}")
+            return X, y
+
+        except Exception as e:
+            logger.error(f"3자리 훈련 데이터 준비 중 오류: {e}")
+            return np.array([]), np.array([])
+
+    def _extract_window_features(self, window_data: List[LotteryNumber]) -> np.ndarray:
+        """
+        윈도우 데이터에서 특성 추출 (하위 클래스에서 재정의 가능)
+
+        Args:
+            window_data: 윈도우 당첨 번호 데이터
+
+        Returns:
+            np.ndarray: 추출된 특성 벡터
+        """
+        try:
+            # 기본 특성 추출: 번호 빈도, 간격 통계 등
+            all_numbers = []
+            for draw in window_data:
+                all_numbers.extend(draw.numbers)
+
+            # 번호별 빈도
+            freq_features = np.zeros(45)
+            for num in all_numbers:
+                if 1 <= num <= 45:
+                    freq_features[num - 1] += 1
+
+            # 정규화
+            freq_features = (
+                freq_features / len(window_data) if window_data else freq_features
+            )
+
+            # 추가 통계 특성
+            if all_numbers:
+                stats_features = np.array(
+                    [
+                        np.mean(all_numbers),
+                        np.std(all_numbers),
+                        np.max(all_numbers),
+                        np.min(all_numbers),
+                        len(set(all_numbers)),  # 고유 번호 수
+                    ]
+                )
+            else:
+                stats_features = np.zeros(5)
+
+            # 특성 결합
+            features = np.concatenate([freq_features, stats_features])
+
+            return features
+
+        except Exception as e:
+            logger.error(f"윈도우 특성 추출 중 오류: {e}")
+            return np.zeros(50)  # 기본 50차원 벡터
+
+    def evaluate_3digit_mode(
+        self, X: np.ndarray, y_3digit: np.ndarray, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        3자리 모드 평가
+
+        Args:
+            X: 특성 벡터
+            y_3digit: 3자리 조합 레이블
+            **kwargs: 추가 매개변수
+
+        Returns:
+            Dict[str, Any]: 평가 결과
+        """
+        if not self.supports_3digit_mode or not self.is_3digit_mode:
+            return {"error": "3자리 모드가 지원되지 않거나 활성화되지 않음"}
+
+        try:
+            # 예측 수행
+            predictions = self.predict_3digit_combinations(X, **kwargs)
+
+            if not predictions:
+                return {"error": "예측 결과 없음"}
+
+            # 평가 메트릭 계산
+            metrics = {
+                "total_predictions": len(predictions),
+                "avg_confidence": np.mean([conf for _, conf in predictions]),
+                "max_confidence": np.max([conf for _, conf in predictions]),
+                "min_confidence": np.min([conf for _, conf in predictions]),
+            }
+
+            return metrics
+
+        except Exception as e:
+            logger.error(f"3자리 모드 평가 중 오류: {e}")
+            return {"error": str(e)}
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """
+        모델 정보 반환 (3자리 모드 정보 포함)
+
+        Returns:
+            Dict[str, Any]: 모델 정보
+        """
+        info = {
+            "model_name": self.model_name,
+            "device": str(self.device),
+            "is_trained": self.is_trained,
+            "supports_3digit_mode": self.supports_3digit_mode,
+            "is_3digit_mode": self.is_3digit_mode,
+            "metadata": self.metadata,
+        }
+
+        if self.supports_3digit_mode:
+            info["3digit_model_info"] = {
+                "three_digit_model": self.three_digit_model is not None,
+                "mode_active": self.is_3digit_mode,
+            }
+
+        return info
 
 
 class ModelWithAMP(BaseModel):

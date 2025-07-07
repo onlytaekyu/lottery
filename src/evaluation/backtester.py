@@ -13,7 +13,7 @@ from collections import defaultdict, Counter
 # 상대 경로로 임포트 수정
 from ..shared.types import LotteryNumber, ModelPrediction
 from ..utils.cache_manager import CacheManager
-from ..utils.unified_performance import performance_monitor
+from ..utils.unified_performance_engine import get_auto_performance_monitor
 from ..utils.unified_logging import get_logger
 from ..utils.cache_paths import BACKTESTING_CACHE_DIR
 
@@ -179,7 +179,8 @@ class Backtester:
                 f"번호: {draw_numbers}, 날짜: {draw_date}"
             )
 
-            with performance_monitor(f"draw_{seq_num}_evaluation"):
+            monitor = get_auto_performance_monitor()
+            with monitor.track(f"draw_{seq_num}_evaluation"):
                 # 고정된 수의 추천 조합 생성
                 try:
                     recommendations = []
@@ -570,7 +571,8 @@ class Backtester:
                 logger.info(f"캐시된 백테스팅 결과 사용: {cache_key}")
                 return cached_result
 
-        with performance_monitor("backtesting"):
+        monitor = get_auto_performance_monitor()
+        with monitor.track("backtesting"):
             # 추천 엔진을 사용하여 추천 생성
             if engine and training_data and test_data:
                 # 추천 개수 설정 (테스트 데이터당 5개)

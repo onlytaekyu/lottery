@@ -11,9 +11,12 @@ from collections import Counter, defaultdict
 import math
 
 from .base_analyzer import BaseAnalyzer
-from src.shared.types import LotteryNumber
+from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
-from src.utils.unified_performance import performance_monitor
+from ..utils.unified_performance_engine import (
+    get_unified_performance_engine,
+    get_auto_performance_monitor,
+)
 
 logger = get_logger(__name__)
 
@@ -57,7 +60,7 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
         super().__init__(config or {}, "distribution")
 
         # 성능 최적화 시스템 초기화
-        from src.utils.memory_manager import get_memory_manager
+        from ..utils.memory_manager import get_memory_manager
 
         self.memory_manager = get_memory_manager()
 
@@ -67,7 +70,6 @@ class DistributionAnalyzer(BaseAnalyzer[Dict[str, List[DistributionPattern]]]):
 
         logger.info("DistributionAnalyzer 초기화 완료")
 
-    @performance_monitor
     def analyze(self, historical_data: List[LotteryNumber]) -> Dict[str, Any]:
         """
         다양한 분포 패턴을 분석합니다.
