@@ -1,8 +1,6 @@
-import os
-import sys
 import json
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import List
 
 from src.models.ml.lightgbm_model import LightGBMModel
 from src.models.ml.xgboost_model import XGBoostModel

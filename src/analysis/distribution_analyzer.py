@@ -4,19 +4,13 @@
 이 모듈은 로또 번호의 다양한 분포 패턴(홀짝, 고저, 범위 등)을 분석하는 기능을 제공합니다.
 """
 
-import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
-from collections import Counter, defaultdict
 import math
 
 from .base_analyzer import BaseAnalyzer
 from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
-from ..utils.unified_performance_engine import (
-    get_unified_performance_engine,
-    get_auto_performance_monitor,
-)
 
 logger = get_logger(__name__)
 

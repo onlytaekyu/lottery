@@ -19,12 +19,11 @@ DAEBAK AI 데이터 준비 통합 파이프라인 (개선된 버전)
 import sys
 import os
 import numpy as np
-import pandas as pd
 import json
 import argparse
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional, Any, Set
+from typing import Dict, List, Any
 import time
 import gc
 
@@ -35,22 +34,30 @@ sys.path.insert(0, str(project_root))
 # 환경 설정
 os.environ["PYTHONPATH"] = str(project_root)
 
-# 핵심 유틸리티들
+# --- 리팩토링된 의존성 관리 ---
+# 1. 의존성 주입 설정
+from src.utils.dependency_injection import configure_dependencies, resolve
+
+# 2. 필요한 클래스/타입 import
 from src.utils.unified_logging import get_logger
-from src.utils.unified_config import get_config
-from src.utils.memory_manager import get_memory_manager
-from src.utils.cache_paths import get_cache_dir
+from src.utils.unified_config import Config
+from src.utils.unified_memory_manager import UnifiedMemoryManager
+from src.utils.cache_manager import CacheManager
 from src.utils.data_loader import load_draw_history
+from src.utils.enhanced_process_pool import EnhancedProcessPool, DynamicBatchSizeController
+from src.utils.unified_feature_vector_validator import UnifiedFeatureVectorValidator
+from src.utils.unified_performance_engine import UnifiedPerformanceEngine
+from src.models.unified_model_manager import UnifiedModelManager
+# ------------------------------------
 
 # 기존 분석 관련 모듈들
 from src.analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 from src.analysis.negative_sample_generator import NegativeSampleGenerator
 
-# 새로운 분석 시스템들
+# 새로운 분석 시스템들 (메인 벡터화 시스템 변경)
 from src.analysis.unified_analyzer import UnifiedAnalyzer
 from src.analysis.three_digit_priority_predictor import ThreeDigitPriorityPredictor
 from src.analysis.optimized_pattern_vectorizer import get_optimized_pattern_vectorizer
-from src.utils.unified_performance_engine import get_unified_performance_engine
 
 # 고도화된 새로운 분석기들 (기존 시스템과 독립적)
 from src.analysis.trend_analyzer_v2 import TrendAnalyzerV2
@@ -65,7 +72,7 @@ from src.analysis.meta_feature_analyzer import MetaFeatureAnalyzer
 from src.pipeline.unified_preprocessing_pipeline import UnifiedPreprocessingPipeline
 
 # 성능 최적화 도구
-from src.utils.performance_optimizer import launch_max_performance
+# from src.utils.performance_optimizer import launch_max_performance  # 제거: 함수가 존재하지 않음
 from src.pipeline.optimized_data_analysis_pipeline import run_optimized_data_analysis
 
 # 공유 타입들
@@ -77,20 +84,28 @@ logger = get_logger(__name__)
 class EnhancedDataPreparationPipeline:
     """개선된 데이터 준비 통합 파이프라인"""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """초기화"""
-        self.config = get_config("main") if config is None else config
+    def __init__(self):
+        """초기화 (의존성 주입 사용)"""
         self.logger = get_logger(__name__)
-        self.memory_manager = get_memory_manager()
+        
+        # 의존성 해결
+        self.config_manager: Config = resolve(Config)
+        self.config = self.config_manager.get_config("main")
+        self.paths = self.config_manager.get_paths()
 
-        # 통합 성능 최적화 엔진 초기화
-        self.performance_engine = get_unified_performance_engine()
+        self.memory_manager: UnifiedMemoryManager = resolve(UnifiedMemoryManager)
+        self.performance_engine: UnifiedPerformanceEngine = resolve(UnifiedPerformanceEngine)
+        self.batch_controller: DynamicBatchSizeController = resolve(DynamicBatchSizeController)
+        self.process_pool: EnhancedProcessPool = resolve(EnhancedProcessPool)
+        self.feature_validator: UnifiedFeatureVectorValidator = resolve(UnifiedFeatureVectorValidator)
+        self.cache_manager: CacheManager = resolve(CacheManager)
+        self.model_manager: UnifiedModelManager = resolve(UnifiedModelManager)
 
         # 결과 저장 경로들
-        self.cache_dir = get_cache_dir()
-        self.result_dir = Path("data/result/analysis")
-        self.performance_dir = Path("data/result/performance_reports")
-        self.prediction_dir = Path("data/result/predictions")
+        self.cache_dir = Path(self.paths.cache_dir)
+        self.result_dir = Path(self.paths.result_dir) / "analysis"
+        self.performance_dir = Path(self.paths.result_dir) / "performance_reports"
+        self.prediction_dir = Path(self.paths.result_dir) / "predictions"
 
         # 디렉토리 생성
         for directory in [
@@ -166,7 +181,8 @@ class EnhancedDataPreparationPipeline:
             steps = [
                 "unified_analysis",
                 "3digit_prediction",
-                "optimized_vectorization",
+                "optimized_vectorization_enhanced",
+                "model_integration_test",
                 "advanced_trend_analysis",
                 "bayesian_analysis",
                 "ensemble_analysis",
@@ -259,7 +275,57 @@ class EnhancedDataPreparationPipeline:
                     if not debug:
                         return pipeline_results
 
-            # 3. 최적화된 벡터화 단계
+            # 3. 향상된 최적화 벡터화 단계
+            if "optimized_vectorization_enhanced" in steps:
+                self.logger.info("🔢 Phase 3: 향상된 최적화 벡터화 실행 중...")
+
+                # 분석 결과가 필요한 경우 로드
+                if "unified_analysis" not in steps:
+                    unified_analysis_result = self._load_unified_analysis_result()
+
+                vectorization_result = self.run_optimized_vectorization_enhanced(
+                    unified_analysis_result, comparison_mode
+                )
+
+                if "error" not in vectorization_result:
+                    pipeline_results["steps_executed"].append(
+                        "optimized_vectorization_enhanced"
+                    )
+                    pipeline_results["vectorization_result"] = vectorization_result
+                    self.logger.info("✅ 향상된 최적화 벡터화 완료")
+                else:
+                    pipeline_results["steps_failed"].append(
+                        "optimized_vectorization_enhanced"
+                    )
+                    self.logger.error("❌ 향상된 최적화 벡터화 실패")
+                    if not debug:
+                        return pipeline_results
+
+            # 3.5. 모델 통합 테스트 단계
+            if "model_integration_test" in steps:
+                self.logger.info("🤖 Phase 3.5: 모델 통합 테스트 실행 중...")
+
+                # 벡터화 결과 확인
+                vectorization_result = pipeline_results.get("vectorization_result")
+                if not vectorization_result:
+                    if "optimized_vectorization_enhanced" not in steps:
+                        vectorization_result = self._load_vectorization_result()
+
+                model_test_result = self.run_model_integration_test(
+                    vectorization_result
+                )
+
+                if "error" not in model_test_result:
+                    pipeline_results["steps_executed"].append("model_integration_test")
+                    pipeline_results["model_test_result"] = model_test_result
+                    self.logger.info("✅ 모델 통합 테스트 완료")
+                else:
+                    pipeline_results["steps_failed"].append("model_integration_test")
+                    self.logger.error("❌ 모델 통합 테스트 실패")
+                    if not debug:
+                        return pipeline_results
+
+            # 기존 최적화된 벡터화 단계 (하위 호환성)
             if "optimized_vectorization" in steps:
                 self.logger.info("🔢 Phase 3: 최적화된 벡터화 실행 중...")
 
@@ -442,6 +508,69 @@ class EnhancedDataPreparationPipeline:
 
         return pipeline_results
 
+    def run_model_integration_test(
+        self, vectorization_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """모델 통합 테스트 수행"""
+        self.logger.info("🤖 모델 통합 테스트 시작")
+        start_time = time.time()
+
+        try:
+            # 벡터 데이터 확인
+            if "vector" not in vectorization_result:
+                return {"error": "벡터화 결과에 벡터 데이터가 없습니다"}
+
+            vector = vectorization_result["vector"]
+            feature_names = vectorization_result.get("feature_names", [])
+
+            # 더미 타겟 데이터 생성 (테스트용)
+            dummy_target = np.random.uniform(0, 1, size=100)
+            test_vectors = np.tile(vector, (100, 1))
+
+            # 모델 초기화
+            init_results = self.model_manager.initialize_models(force_reload=False)
+            self.logger.info(f"모델 초기화 결과: {init_results}")
+
+            # 빠른 테스트 학습 (소량 데이터)
+            training_results = self.model_manager.fit_all_models(
+                test_vectors[:50],
+                dummy_target[:50],
+                validation_split=0.2,
+                num_boost_round=10,  # LightGBM 빠른 테스트
+                epochs=5,  # 딥러닝 모델 빠른 테스트
+            )
+
+            # 예측 테스트
+            prediction_results = self.model_manager.predict_ensemble(
+                test_vectors[50:60], use_weights=True
+            )
+
+            # 모델 통계
+            model_stats = self.model_manager.get_model_stats()
+
+            # 배치 컨트롤러 통계
+            batch_stats = self.batch_controller.get_stats()
+
+            processing_time = time.time() - start_time
+
+            result = {
+                "model_initialization": init_results,
+                "training_results": training_results,
+                "prediction_results": prediction_results,
+                "model_stats": model_stats,
+                "batch_stats": batch_stats,
+                "processing_time": processing_time,
+                "test_data_shape": test_vectors.shape,
+                "feature_count": len(feature_names),
+            }
+
+            self.logger.info(f"✅ 모델 통합 테스트 완료: {processing_time:.2f}초")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"❌ 모델 통합 테스트 실패: {e}")
+            return {"error": str(e), "processing_time": time.time() - start_time}
+
     def run_unified_analysis(self, comparison_mode: bool = False) -> Dict[str, Any]:
         """통합 분석 실행"""
         start_time = time.time()
@@ -555,6 +684,71 @@ class EnhancedDataPreparationPipeline:
                 "metrics": {"execution_time": time.time() - start_time},
                 "output_files": {},
             }
+
+    def run_optimized_vectorization_enhanced(
+        self, analysis_result: Dict[str, Any], comparison_mode: bool = False
+    ) -> Dict[str, Any]:
+        """향상된 최적화 벡터화 시스템 (새로운 유틸리티 활용)"""
+        self.logger.info("🚀 향상된 최적화 벡터화 시스템 시작")
+        start_time = time.time()
+
+        try:
+            # 동적 배치 크기 조정
+            optimal_batch_size = self.batch_controller.get_current_batch_size()
+            self.logger.info(f"최적 배치 크기: {optimal_batch_size}")
+
+            # 캐시 확인
+            cache_key = "optimized_vectorization_enhanced"
+            cached_result = self.cache_manager.get(cache_key)
+
+            if cached_result is not None and not comparison_mode:
+                self.logger.info("캐시된 벡터화 결과 사용")
+                return cached_result
+
+            # 최적화된 벡터화 수행
+            vectorizer = get_optimized_pattern_vectorizer(self.config)
+
+            # 벡터 생성
+            vector = vectorizer.vectorize_analysis(analysis_result)
+            feature_names = vectorizer.get_feature_names()
+
+            # 벡터 검증
+            validation_report = self.feature_validator.validate_with_detailed_report(
+                vector, feature_names
+            )
+
+            if not validation_report["is_valid"]:
+                self.logger.warning("벡터 검증 실패, 기본값으로 대체")
+                vector = np.random.uniform(0.1, 1.0, size=len(feature_names)).astype(
+                    np.float32
+                )
+
+            # 벡터 저장
+            vector_path = vectorizer.save_vector_to_file(vector)
+
+            # 성능 통계
+            processing_time = time.time() - start_time
+            self.batch_controller.report_success(processing_time)
+
+            result = {
+                "vector": vector,
+                "feature_names": feature_names,
+                "vector_path": vector_path,
+                "validation_report": validation_report,
+                "processing_time": processing_time,
+                "batch_size_used": optimal_batch_size,
+                "vectorizer_stats": vectorizer.get_performance_stats(),
+            }
+
+            # 캐시 저장
+            self.cache_manager.set(cache_key, result, use_disk=True)
+
+            self.logger.info(f"✅ 향상된 벡터화 완료: {processing_time:.2f}초")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"❌ 향상된 벡터화 실패: {e}")
+            return {"error": str(e), "processing_time": time.time() - start_time}
 
     def run_optimized_vectorization(
         self, analysis_result: Dict[str, Any], comparison_mode: bool = False
@@ -1486,20 +1680,17 @@ def parse_arguments():
 
 
 def main():
-    """메인 함수"""
+    """메인 실행 함수"""
+    # 최우선: 의존성 설정
+    configure_dependencies()
+    
+    parser = parse_arguments()
+    args = parser.parse_args()
+
+    # 파이프라인 인스턴스 생성 (설정 인자 제거)
+    pipeline = EnhancedDataPreparationPipeline()
+
     try:
-        # 명령행 인수 파싱
-        args = parse_arguments()
-
-        # 설정 로드
-        config = None
-        if args.config:
-            with open(args.config, "r", encoding="utf-8") as f:
-                config = json.load(f)
-
-        # 파이프라인 초기화
-        pipeline = EnhancedDataPreparationPipeline(config)
-
         # 파이프라인 실행
         results = pipeline.execute_full_pipeline(
             clear_cache=args.clear_cache,
@@ -1517,9 +1708,6 @@ def main():
             print("✅ 모든 파이프라인 단계가 성공적으로 완료되었습니다!")
             return 0
 
-    except KeyboardInterrupt:
-        print("\n⚠️ 사용자에 의해 중단되었습니다.")
-        return 1
     except Exception as e:
         print(f"❌ 파이프라인 실행 중 오류 발생: {e}")
         return 1

@@ -9,9 +9,8 @@ import numpy as np
 
 # logging 제거 - unified_logging 사용
 from collections import Counter, defaultdict
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Optional
 from ..shared.types import LotteryNumber
-from ..utils.unified_logging import get_logger
 
 
 # =============================================================================

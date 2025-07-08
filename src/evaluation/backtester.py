@@ -1,21 +1,24 @@
-import os
+# 1. 표준 라이브러리
 import json
-import time
-from typing import List, Dict, Set, Tuple, Optional, Any, Union, cast, TypeVar
-import numpy as np
+import asyncio
+from typing import List, Dict, Tuple, Optional, Any
 from pathlib import Path
-from datetime import datetime, timedelta
-import logging
-import pandas as pd
+from datetime import datetime
 import hashlib
-from collections import defaultdict, Counter
+from dataclasses import dataclass
 
-# 상대 경로로 임포트 수정
+# 2. 서드파티
+import numpy as np
+
+# 3. 프로젝트 내부
 from ..shared.types import LotteryNumber, ModelPrediction
 from ..utils.cache_manager import CacheManager
 from ..utils.unified_performance_engine import get_auto_performance_monitor
 from ..utils.unified_logging import get_logger
-from ..utils.cache_paths import BACKTESTING_CACHE_DIR
+from ..utils.unified_memory_manager import get_unified_memory_manager
+from ..utils.cuda_optimizers import get_cuda_optimizer
+from ..utils.enhanced_process_pool import get_enhanced_process_pool
+from ..utils.unified_async_manager import get_unified_async_manager
 
 # 순환 참조 방지를 위해 타입 힌트에서만 사용
 from typing import TYPE_CHECKING
@@ -25,6 +28,32 @@ if TYPE_CHECKING:
     from ..core.recommendation_engine import RecommendationEngine
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class BacktesterOptimizationConfig:
+    """백테스터 최적화 설정"""
+    # 병렬 처리 설정
+    enable_parallel_evaluation: bool = True
+    max_parallel_workers: int = 8
+    batch_size: int = 100
+    
+    # 비동기 처리
+    enable_async: bool = True
+    async_chunk_size: int = 50
+    
+    # 메모리 관리
+    enable_memory_optimization: bool = True
+    max_memory_usage: float = 0.8
+    
+    # 캐시 설정
+    enable_advanced_cache: bool = True
+    cache_ttl: int = 7200  # 2시간
+    max_cache_entries: int = 10000
+    
+    # 성능 모니터링
+    enable_detailed_monitoring: bool = True
+    profiling_enabled: bool = True
 
 # 경로 설정
 BASE_DIR = Path(__file__).parent.parent.parent  # 프로젝트 루트 디렉토리
@@ -39,28 +68,51 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class Backtester:
-    """백테스팅 시스템: 추천 조합의 성능을 평가하고 점수를 부여합니다"""
+    """백테스팅 시스템 v2.0 (통합 최적화): 추천 조합의 성능을 평가하고 점수를 부여합니다"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        백테스터 초기화
+        백테스터 초기화 (통합 최적화)
 
         Args:
             config: 설정 딕셔너리
         """
         self.config = config or {}
-        # 통합 성능 모니터링 사용
 
-        # 캐시 매니저 설정 - 캐시 경로 통합
+        # 최적화 설정
+        self.opt_config = BacktesterOptimizationConfig()
+        if "backtester_optimization" in self.config:
+            opt_params = self.config["backtester_optimization"]
+            for key, value in opt_params.items():
+                if hasattr(self.opt_config, key):
+                    setattr(self.opt_config, key, value)
+
+        # 통합 시스템 초기화
+        self.memory_manager = get_unified_memory_manager()
+        self.cuda_optimizer = get_cuda_optimizer()
+        self.process_pool = get_enhanced_process_pool()
+        self.async_manager = get_unified_async_manager()
+
+        # 향상된 캐시 매니저 설정
         cache_dir = self.config.get("cache_dir", str(CACHE_DIR))
         self.cache_manager = CacheManager(
             pattern_analyzer=self,  # 자기 자신을 pattern_analyzer로 전달
             cache_dir=cache_dir,
-            max_memory_size=50 * 1024 * 1024,  # 50MB
-            max_disk_size=200 * 1024 * 1024,  # 200MB
+            max_memory_size=100 * 1024 * 1024,  # 100MB (증가)
+            max_disk_size=500 * 1024 * 1024,   # 500MB (증가)
             enable_compression=True,
-            default_ttl=30 * 24 * 60 * 60,  # 30일(초 단위)
+            default_ttl=self.opt_config.cache_ttl,
         )
+
+        # 성능 통계 초기화
+        self.performance_stats = {
+            "total_evaluations": 0,
+            "total_recommendations_tested": 0,
+            "cache_hits": 0,
+            "parallel_evaluations": 0,
+            "avg_evaluation_time": 0.0,
+            "memory_efficiency": 0.0
+        }
 
         # 기본 스코어링 파라미터 설정
         self.scoring_params = {
@@ -156,14 +208,13 @@ class Backtester:
         low_pattern_matches = []
 
         # 반복적으로 실패하는 패턴 추적
-        repeated_failures = {}
 
         # 패턴 실패 추적을 위한 카운터
         pattern_failures = {}
 
         # 기존 로우 패턴 매치 로그 로드
         persistent_low_matches = self._load_low_match_log()
-        new_persistent_low_matches = persistent_low_matches.copy()
+        persistent_low_matches.copy()
 
         # 각 추첨에 대해 평가
         for draw_index, draw in enumerate(validation_draws):
@@ -258,7 +309,7 @@ class Backtester:
                     # 패턴 정보 추출
                     even_odd_pattern = self._get_even_odd_pattern(numbers)
                     low_high_pattern = self._get_low_high_pattern(numbers)
-                    sum_value = sum(numbers)
+                    sum(numbers)
 
                     # 패턴 해시 생성 (고유 식별자로 사용)
                     pattern_hash = self._create_pattern_hash(numbers)
@@ -1155,3 +1206,495 @@ class Backtester:
 
     # 레거시 메서드 별칭 (호환성 유지)
     run_backtesting = run
+
+    # ========================================
+    # 새로운 통합 최적화 메서드들 (v2.0)
+    # ========================================
+
+    async def evaluate_patterns_async(
+        self,
+        recommender: "RecommendationEngine",
+        validation_draws: List[LotteryNumber],
+        count_per_draw: int = 50,
+        save_summary: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        비동기 패턴 평가 (병렬 처리)
+
+        Args:
+            recommender: 추천 엔진
+            validation_draws: 검증 데이터
+            count_per_draw: 추첨당 조합 수
+            save_summary: 결과 저장 여부
+
+        Returns:
+            평가 결과
+        """
+        logger.info(f"비동기 패턴 평가 시작: {len(validation_draws)}개 추첨")
+
+        # 메모리 최적화된 평가
+        with self.memory_manager.optimize_context():
+            start_time = datetime.now()
+
+            # 비동기 청크 처리
+            chunk_size = self.opt_config.async_chunk_size
+            chunks = [validation_draws[i:i + chunk_size] for i in range(0, len(validation_draws), chunk_size)]
+
+            # 병렬 평가 태스크 생성
+            tasks = []
+            for i, chunk in enumerate(chunks):
+                task = self.async_manager.create_task(
+                    self._evaluate_chunk_async(recommender, chunk, count_per_draw, i)
+                )
+                tasks.append(task)
+
+            # 모든 청크 평가 완료 대기
+            chunk_results = await asyncio.gather(*tasks)
+
+            # 결과 통합
+            evaluation_results = self._merge_evaluation_results(chunk_results)
+
+            evaluation_time = (datetime.now() - start_time).total_seconds()
+
+        # 성능 통계 업데이트
+        self.performance_stats["total_evaluations"] += 1
+        self.performance_stats["avg_evaluation_time"] = (
+            (self.performance_stats["avg_evaluation_time"] * (self.performance_stats["total_evaluations"] - 1) + evaluation_time) /
+            self.performance_stats["total_evaluations"]
+        )
+
+        # 결과 저장
+        if save_summary:
+            self._save_evaluation_summary(evaluation_results)
+
+        logger.info(f"비동기 패턴 평가 완료: 소요 시간={evaluation_time:.2f}초")
+        return evaluation_results
+
+    async def _evaluate_chunk_async(
+        self,
+        recommender: "RecommendationEngine",
+        validation_chunk: List[LotteryNumber],
+        count_per_draw: int,
+        chunk_idx: int
+    ) -> Dict[str, Any]:
+        """비동기 청크 평가"""
+        logger.debug(f"청크 {chunk_idx} 평가 시작: {len(validation_chunk)}개 추첨")
+
+        chunk_results = {
+            "chunk_idx": chunk_idx,
+            "draw_results": {},
+            "summary": {
+                "total_draws": len(validation_chunk),
+                "best_scores": [],
+                "avg_scores": []
+            }
+        }
+
+        for draw_index, draw in enumerate(validation_chunk):
+            draw_id = getattr(draw, "id", draw_index + 1)
+            seq_num = getattr(draw, "seq_num", draw_id)
+
+            # 추천 생성 (캐시 활용)
+            cache_key = f"recommendations_{seq_num}_{count_per_draw}"
+            recommendations = None
+
+            if self.cache_manager:
+                recommendations = self.cache_manager.get(cache_key)
+                if recommendations:
+                    self.performance_stats["cache_hits"] += 1
+
+            if not recommendations:
+                recommendations = await self._generate_recommendations_async(recommender, count_per_draw)
+                if self.cache_manager:
+                    self.cache_manager.set(cache_key, recommendations)
+
+            # 조합 평가
+            scores = []
+            for combo in recommendations:
+                numbers = combo.get("numbers", []) if isinstance(combo, dict) else getattr(combo, "numbers", [])
+                if numbers and len(numbers) == 6:
+                    hit_count = len(set(numbers) & set(draw.numbers))
+                    score = self._calculate_score(hit_count)
+                    scores.append(score)
+
+            # 청크 결과 저장
+            best_score = max(scores) if scores else 0
+            avg_score = sum(scores) / len(scores) if scores else 0
+
+            chunk_results["draw_results"][seq_num] = {
+                "best_score": best_score,
+                "avg_score": avg_score,
+                "total_combinations": len(scores)
+            }
+
+            chunk_results["summary"]["best_scores"].append(best_score)
+            chunk_results["summary"]["avg_scores"].append(avg_score)
+
+        logger.debug(f"청크 {chunk_idx} 평가 완료")
+        return chunk_results
+
+    async def _generate_recommendations_async(self, recommender: "RecommendationEngine", count: int) -> List[Dict[str, Any]]:
+        """비동기 추천 생성"""
+        try:
+            # 비동기 추천 생성 (추천 엔진이 지원하는 경우)
+            if hasattr(recommender, 'recommend_async'):
+                recommendations = await recommender.recommend_async(count=count, strategy="hybrid")
+            else:
+                # 동기 방식으로 대체
+                recommendations = recommender.recommend(count=count, strategy="hybrid")
+
+            # 통일된 형식으로 변환
+            normalized_recommendations = []
+            for rec in recommendations:
+                if hasattr(rec, "numbers"):
+                    normalized_recommendations.append({
+                        "numbers": rec.numbers,
+                        "confidence": getattr(rec, "confidence", 0.5),
+                        "model_type": getattr(rec, "model_type", "unknown")
+                    })
+                elif isinstance(rec, dict):
+                    normalized_recommendations.append(rec)
+
+            return normalized_recommendations
+
+        except Exception as e:
+            logger.error(f"비동기 추천 생성 실패: {e}")
+            return []
+
+    def _merge_evaluation_results(self, chunk_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """청크 결과 통합"""
+        merged_results = {
+            "summary": {
+                "total_draws": 0,
+                "avg_best_score": 0.0,
+                "avg_avg_score": 0.0,
+                "low_match_draws": []
+            },
+            "per_draw_scores": {}
+        }
+
+        all_best_scores = []
+        all_avg_scores = []
+
+        for chunk_result in chunk_results:
+            # 개별 추첨 결과 통합
+            merged_results["per_draw_scores"].update(chunk_result["draw_results"])
+
+            # 점수 리스트 통합
+            all_best_scores.extend(chunk_result["summary"]["best_scores"])
+            all_avg_scores.extend(chunk_result["summary"]["avg_scores"])
+
+            # 총 추첨 수 누적
+            merged_results["summary"]["total_draws"] += chunk_result["summary"]["total_draws"]
+
+        # 평균 점수 계산
+        merged_results["summary"]["avg_best_score"] = (
+            sum(all_best_scores) / len(all_best_scores) if all_best_scores else 0
+        )
+        merged_results["summary"]["avg_avg_score"] = (
+            sum(all_avg_scores) / len(all_avg_scores) if all_avg_scores else 0
+        )
+
+        # 저성능 추첨 찾기
+        for seq_num, result in merged_results["per_draw_scores"].items():
+            if result["best_score"] < 1:
+                merged_results["summary"]["low_match_draws"].append(seq_num)
+
+        return merged_results
+
+    def run_parallel_backtesting(
+        self,
+        engine: "RecommendationEngine",
+        training_data: List[LotteryNumber],
+        test_data: List[LotteryNumber],
+        model_types: Optional[List[str]] = None,
+        parallel_workers: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        병렬 백테스팅 실행
+
+        Args:
+            engine: 추천 엔진
+            training_data: 학습 데이터
+            test_data: 테스트 데이터
+            model_types: 테스트할 모델 유형들
+            parallel_workers: 병렬 워커 수
+
+        Returns:
+            백테스팅 결과
+        """
+        logger.info(f"병렬 백테스팅 시작: {len(test_data)}개 테스트 데이터")
+
+        if parallel_workers is None:
+            parallel_workers = self.opt_config.max_parallel_workers
+
+        # 메모리 최적화
+        with self.memory_manager.optimize_context():
+            start_time = datetime.now()
+
+            # 데이터 청크 분할
+            chunk_size = max(1, len(test_data) // parallel_workers)
+            data_chunks = [test_data[i:i + chunk_size] for i in range(0, len(test_data), chunk_size)]
+
+            # 병렬 처리 함수 정의
+            def process_chunk(args):
+                chunk, worker_id = args
+                logger.info(f"워커 {worker_id} 시작: {len(chunk)}개 데이터")
+
+                chunk_results = {
+                    "worker_id": worker_id,
+                    "processed_count": 0,
+                    "total_score": 0,
+                    "total_hits": 0,
+                    "model_results": {}
+                }
+
+                for test_draw in chunk:
+                    # 각 모델 유형별로 테스트
+                    for model_type in (model_types or ["hybrid"]):
+                        try:
+                            # 추천 생성
+                            recommendations = engine.recommend(
+                                count=10,
+                                data=training_data,
+                                model_types=[model_type]
+                            )
+
+                            # 평가 수행
+                            for rec in recommendations:
+                                numbers = rec.numbers if hasattr(rec, "numbers") else []
+                                if numbers and len(numbers) == 6:
+                                    hit_count = len(set(numbers) & set(test_draw.numbers))
+                                    score = self._calculate_score(hit_count)
+
+                                    chunk_results["total_score"] += score
+                                    chunk_results["total_hits"] += hit_count
+                                    chunk_results["processed_count"] += 1
+
+                                    # 모델별 결과 저장
+                                    if model_type not in chunk_results["model_results"]:
+                                        chunk_results["model_results"][model_type] = {
+                                            "score": 0, "hits": 0, "count": 0
+                                        }
+
+                                    chunk_results["model_results"][model_type]["score"] += score
+                                    chunk_results["model_results"][model_type]["hits"] += hit_count
+                                    chunk_results["model_results"][model_type]["count"] += 1
+
+                        except Exception as e:
+                            logger.error(f"워커 {worker_id} 처리 중 오류: {e}")
+
+                logger.info(f"워커 {worker_id} 완료: {chunk_results['processed_count']}개 처리")
+                return chunk_results
+
+            # 병렬 실행
+            worker_args = [(chunk, i) for i, chunk in enumerate(data_chunks)]
+            results = self.process_pool.map(process_chunk, worker_args)
+
+            # 결과 통합
+            final_results = self._merge_parallel_results(results)
+            evaluation_time = (datetime.now() - start_time).total_seconds()
+
+        # 성능 통계 업데이트
+        self.performance_stats["parallel_evaluations"] += 1
+        self.performance_stats["total_recommendations_tested"] += final_results.get("total_processed", 0)
+
+        final_results["evaluation_time"] = evaluation_time
+        final_results["parallel_workers"] = len(results)
+
+        logger.info(f"병렬 백테스팅 완료: 소요 시간={evaluation_time:.2f}초, 워커={len(results)}개")
+        return final_results
+
+    def _merge_parallel_results(self, worker_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """병렬 처리 결과 통합"""
+        merged = {
+            "total_processed": 0,
+            "total_score": 0,
+            "total_hits": 0,
+            "avg_score": 0.0,
+            "avg_hits": 0.0,
+            "model_performance": {},
+            "worker_stats": []
+        }
+
+        for result in worker_results:
+            merged["total_processed"] += result["processed_count"]
+            merged["total_score"] += result["total_score"]
+            merged["total_hits"] += result["total_hits"]
+
+            # 워커별 통계
+            merged["worker_stats"].append({
+                "worker_id": result["worker_id"],
+                "processed": result["processed_count"],
+                "avg_score": result["total_score"] / max(1, result["processed_count"]),
+                "avg_hits": result["total_hits"] / max(1, result["processed_count"])
+            })
+
+            # 모델별 성능 통합
+            for model_type, model_result in result["model_results"].items():
+                if model_type not in merged["model_performance"]:
+                    merged["model_performance"][model_type] = {
+                        "total_score": 0, "total_hits": 0, "total_count": 0
+                    }
+
+                merged["model_performance"][model_type]["total_score"] += model_result["score"]
+                merged["model_performance"][model_type]["total_hits"] += model_result["hits"]
+                merged["model_performance"][model_type]["total_count"] += model_result["count"]
+
+        # 평균 계산
+        if merged["total_processed"] > 0:
+            merged["avg_score"] = merged["total_score"] / merged["total_processed"]
+            merged["avg_hits"] = merged["total_hits"] / merged["total_processed"]
+
+        # 모델별 평균 계산
+        for model_type, perf in merged["model_performance"].items():
+            if perf["total_count"] > 0:
+                perf["avg_score"] = perf["total_score"] / perf["total_count"]
+                perf["avg_hits"] = perf["total_hits"] / perf["total_count"]
+
+        return merged
+
+    def _calculate_score(self, hit_count: int) -> int:
+        """히트 카운트에 따른 점수 계산"""
+        if hit_count == 3:
+            return 1    # 5등
+        elif hit_count == 4:
+            return 10   # 4등
+        elif hit_count == 5:
+            return 40   # 3등
+        elif hit_count == 6:
+            return 100  # 1등
+        else:
+            return 0    # 미당첨
+
+    def get_performance_report(self) -> Dict[str, Any]:
+        """성능 보고서 생성"""
+        return {
+            "backtester_name": "Backtester_v2.0",
+            "optimization_config": {
+                "parallel_evaluation": self.opt_config.enable_parallel_evaluation,
+                "async_enabled": self.opt_config.enable_async,
+                "memory_optimization": self.opt_config.enable_memory_optimization,
+                "advanced_cache": self.opt_config.enable_advanced_cache,
+                "detailed_monitoring": self.opt_config.enable_detailed_monitoring
+            },
+            "performance_stats": self.performance_stats,
+            "cache_info": self.cache_manager.get_cache_info() if self.cache_manager else {},
+            "memory_info": self.memory_manager.get_memory_info() if self.memory_manager else {},
+            "process_pool_info": {
+                "available_workers": self.process_pool.get_worker_count() if self.process_pool else 0,
+                "active_tasks": getattr(self.process_pool, 'active_tasks', 0)
+            }
+        }
+
+    def optimize_memory_usage(self) -> Dict[str, Any]:
+        """메모리 사용량 최적화"""
+        logger.info("백테스터 메모리 최적화 시작")
+
+        optimization_results = {
+            "before": {},
+            "after": {},
+            "optimizations_applied": []
+        }
+
+        # 현재 메모리 상태
+        if self.memory_manager:
+            optimization_results["before"] = self.memory_manager.get_memory_info()
+
+        optimizations_applied = []
+
+        # 1. 캐시 정리
+        if self.cache_manager:
+            cache_info = self.cache_manager.get_cache_info()
+            if cache_info.get("memory_usage", 0) > 200 * 1024 * 1024:  # 200MB 이상
+                self.cache_manager.clear_cache()
+                optimizations_applied.append("cache_cleared")
+
+        # 2. 지속 실패 패턴 정리
+        if hasattr(self, 'persistent_failures') and len(self.persistent_failures) > 10000:
+            # 최근 실패만 유지
+            sorted_failures = sorted(self.persistent_failures.items(), key=lambda x: x[1], reverse=True)
+            self.persistent_failures = dict(sorted_failures[:5000])
+            optimizations_applied.append("persistent_failures_cleaned")
+
+        # 3. 성능 통계 리셋 (필요시)
+        if self.performance_stats["total_evaluations"] > 100000:
+            # 통계 요약 후 리셋
+            self.performance_stats = {
+                "total_evaluations": 0,
+                "total_recommendations_tested": 0,
+                "cache_hits": 0,
+                "parallel_evaluations": 0,
+                "avg_evaluation_time": self.performance_stats["avg_evaluation_time"],
+                "memory_efficiency": 0.0
+            }
+            optimizations_applied.append("performance_stats_reset")
+
+        # 최적화 후 메모리 상태
+        if self.memory_manager:
+            optimization_results["after"] = self.memory_manager.get_memory_info()
+
+        optimization_results["optimizations_applied"] = optimizations_applied
+
+        logger.info(f"백테스터 메모리 최적화 완료: {len(optimizations_applied)}개 최적화 적용")
+        return optimization_results
+
+    def benchmark_performance(
+        self,
+        engine: "RecommendationEngine",
+        test_data: List[LotteryNumber],
+        n_runs: int = 5
+    ) -> Dict[str, Any]:
+        """성능 벤치마크"""
+        logger.info(f"백테스터 성능 벤치마크 시작: {n_runs}회 실행")
+
+        benchmark_results = {
+            "standard_evaluation": [],
+            "async_evaluation": [],
+            "parallel_evaluation": []
+        }
+
+        # 테스트 데이터 샘플링 (벤치마크용)
+        sample_data = test_data[:min(10, len(test_data))]
+
+        # 1. 표준 평가 벤치마크
+        for i in range(n_runs):
+            start_time = datetime.now()
+            _ = self.evaluate_patterns(engine, sample_data, count_per_draw=20, save_summary=False)
+            elapsed = (datetime.now() - start_time).total_seconds()
+            benchmark_results["standard_evaluation"].append(elapsed)
+
+        # 2. 비동기 평가 벤치마크
+        if self.opt_config.enable_async:
+            for i in range(n_runs):
+                start_time = datetime.now()
+                _ = asyncio.run(self.evaluate_patterns_async(engine, sample_data, count_per_draw=20, save_summary=False))
+                elapsed = (datetime.now() - start_time).total_seconds()
+                benchmark_results["async_evaluation"].append(elapsed)
+
+        # 3. 병렬 평가 벤치마크
+        if self.opt_config.enable_parallel_evaluation:
+            for i in range(n_runs):
+                start_time = datetime.now()
+                _ = self.run_parallel_backtesting(engine, sample_data[:5], sample_data[5:], parallel_workers=4)
+                elapsed = (datetime.now() - start_time).total_seconds()
+                benchmark_results["parallel_evaluation"].append(elapsed)
+
+        # 결과 요약
+        summary = {}
+        for method, times in benchmark_results.items():
+            if times:
+                summary[method] = {
+                    "avg_time": np.mean(times),
+                    "min_time": np.min(times),
+                    "max_time": np.max(times),
+                    "std_time": np.std(times)
+                }
+
+        logger.info("백테스터 성능 벤치마크 완료")
+        return {
+            "benchmark_results": benchmark_results,
+            "summary": summary,
+            "test_data_size": len(sample_data),
+            "n_runs": n_runs
+        }

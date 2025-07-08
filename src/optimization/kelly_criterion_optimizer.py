@@ -10,8 +10,9 @@ from dataclasses import dataclass
 from enum import Enum
 
 from ..utils.unified_logging import get_logger
-from ..utils.cache_paths import get_cache_dir
-from ..utils.memory_manager import get_memory_manager
+from ..utils.cache_manager import UnifiedCachePathManager
+from ..utils.unified_config import get_paths
+from ..utils.unified_memory_manager import get_unified_memory_manager
 from ..models.realistic_lottery_predictor import PrizeGrade, PredictionResult
 
 logger = get_logger(__name__)
@@ -53,8 +54,13 @@ class KellyCriterionOptimizer:
 
     def __init__(self, config_path: str = "config/realistic_lottery_config.yaml"):
         self.logger = get_logger(__name__)
-        self.memory_manager = get_memory_manager()
-        self.cache_dir = get_cache_dir("kelly_optimization")
+        
+        self.memory_manager = get_unified_memory_manager()
+        
+        paths = get_paths()
+        cache_path_manager = UnifiedCachePathManager(paths)
+        self.cache_dir = cache_path_manager.get_path("kelly_optimization")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         # 설정 로드
         self.config = self._load_config(config_path)

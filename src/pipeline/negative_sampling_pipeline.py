@@ -5,20 +5,18 @@
 네거티브 샘플링 파이프라인 모듈
 """
 
-import os
-import sys
 import time
 import random
 import numpy as np
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Set, Tuple
+from typing import Dict, List, Any, Set, Tuple
 
 from src.utils.data_loader import load_draw_history
 from src.utils.unified_config import load_config
 from src.utils.unified_logging import get_logger
-from src.utils.unified_performance import get_profiler
+from src.utils.unified_performance_engine import get_auto_performance_monitor
 from src.analysis.pattern_analyzer import PatternAnalyzer
 from src.analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 
@@ -54,11 +52,11 @@ def run_negative_sampling(
     config = load_config()
 
     # 프로파일러 초기화
-    profiler = get_profiler()
+    profiler = get_auto_performance_monitor()
 
     try:
         # 1. 데이터 로드
-        with profiler.profile("데이터 로드"):
+        with profiler.track("데이터 로드"):
             logger.info("3단계: 과거 당첨 번호 데이터 로드 중...")
             historical_data = load_draw_history()
 
@@ -88,13 +86,13 @@ def run_negative_sampling(
             logger.info(f"당첨 번호 세트 생성 완료: {len(winning_combinations)}개")
 
         # 2. 패턴 분석기 초기화
-        with profiler.profile("패턴 분석기 초기화"):
+        with profiler.track("패턴 분석기 초기화"):
             pattern_analyzer = PatternAnalyzer(config.to_dict())
             pattern_vectorizer = EnhancedPatternVectorizer(config.to_dict())
             logger.info("패턴 분석기 초기화 완료")
 
         # 3. 네거티브 샘플 생성
-        with profiler.profile("네거티브 샘플 생성"):
+        with profiler.track("네거티브 샘플 생성"):
             logger.info(f"네거티브 샘플 {negative_count}개 생성 중...")
 
             if balanced_sampling:
@@ -131,7 +129,7 @@ def run_negative_sampling(
             logger.info(f"네거티브 샘플 생성 완료: {len(negative_samples)}개")
 
         # 4. 샘플 벡터화
-        with profiler.profile("샘플 벡터화"):
+        with profiler.track("샘플 벡터화"):
             logger.info("네거티브 샘플 벡터화 중...")
 
             # 샘플 데이터 준비
@@ -164,7 +162,7 @@ def run_negative_sampling(
 
         # 5. 결과 저장
         if save_results:
-            with profiler.profile("결과 저장"):
+            with profiler.track("결과 저장"):
                 # 현재 시간을 파일명에 포함
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -205,7 +203,7 @@ def run_negative_sampling(
 
         # 6. 네거티브 샘플 분석 및 보고서 생성
         if generate_report:
-            with profiler.profile("네거티브 샘플 분석"):
+            with profiler.track("네거티브 샘플 분석"):
                 logger.info("네거티브 샘플 분석 중...")
 
                 # 샘플 분석 수행
@@ -253,7 +251,8 @@ def run_negative_sampling(
         logger.info(f"네거티브 샘플링 완료 (소요시간: {execution_time:.2f}초)")
 
         # 프로파일링 결과 출력
-        profiler.log_report()
+        performance_summary = profiler.get_performance_summary()
+        logger.info(f"성능 요약: {performance_summary}")
 
         return True
 

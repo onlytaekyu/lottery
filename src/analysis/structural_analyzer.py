@@ -6,7 +6,7 @@
 
 import numpy as np
 import networkx as nx
-from typing import Dict, Any, List, Set, Tuple, Optional
+from typing import Dict, Any, List, Optional
 from collections import Counter, defaultdict
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.metrics import silhouette_score
@@ -16,7 +16,6 @@ from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
 from ..shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality
 from ..utils.unified_performance_engine import (
-    get_unified_performance_engine,
     get_auto_performance_monitor,
 )
 

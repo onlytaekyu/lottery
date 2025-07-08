@@ -6,10 +6,8 @@
 
 import networkx as nx
 import numpy as np
-from typing import Dict, Any, List, Tuple, Optional
-from collections import defaultdict, Counter
-import json
-from datetime import datetime
+from typing import Dict, Any, List, Optional
+from collections import defaultdict
 
 # 기존 시스템 import (순환 참조 방지)
 from ..utils.unified_logging import get_logger

@@ -6,11 +6,10 @@ GPU 가속 CUDA 커널 - 패턴 분석 및 벡터화 가속
 
 import torch
 import torch.nn.functional as F
-import numpy as np
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, Any
 from ..utils.unified_logging import get_logger
-from ..utils.cuda_singleton_manager import get_singleton_cuda_optimizer
-from ..utils.gpu_memory_pool import get_gpu_memory_pool
+from ..utils.cuda_optimizers import get_cuda_optimizer, CudaConfig
+from ..utils.unified_memory_manager import get_unified_memory_manager
 
 logger = get_logger(__name__)
 
@@ -24,10 +23,8 @@ class GPUPatternKernels:
         self.logger = get_logger(__name__)
 
         # CUDA 최적화기 및 메모리 풀 초기화
-        self.cuda_optimizer = get_singleton_cuda_optimizer(
-            requester_name="gpu_pattern_kernels"
-        )
-        self.memory_pool = get_gpu_memory_pool(device_id)
+        self.cuda_optimizer = get_cuda_optimizer(config=CudaConfig())
+        self.memory_manager = get_unified_memory_manager()
 
         # 커널 캐시
         self.kernel_cache = {}
@@ -50,7 +47,7 @@ class GPUPatternKernels:
         try:
             with self.cuda_optimizer.device_context():
                 # 메모리 풀에서 할당
-                with self.memory_pool.allocate(
+                with self.memory_manager.allocate(
                     max_number * 4, torch.float32
                 ) as freq_tensor:
 
@@ -259,7 +256,7 @@ class GPUPatternKernels:
         try:
             with self.cuda_optimizer.device_context():
                 lottery_numbers = lottery_numbers.to(self.device)
-                batch_size = lottery_numbers.size(0)
+                lottery_numbers.size(0)
 
                 # 다양한 특성 계산
                 features = []
@@ -532,7 +529,7 @@ class GPUPatternKernels:
                 if torch.cuda.is_available()
                 else "CPU"
             ),
-            "memory_pool_stats": self.memory_pool.get_stats(),
+            "memory_manager_stats": self.memory_manager.get_stats(),
             "kernel_cache_size": len(self.kernel_cache),
             "cuda_available": torch.cuda.is_available(),
         }
@@ -557,5 +554,5 @@ def cleanup_gpu_kernels():
     global _gpu_kernels
 
     if _gpu_kernels is not None:
-        _gpu_kernels.memory_pool.shutdown()
+        _gpu_kernels.memory_manager.shutdown()
         _gpu_kernels = None

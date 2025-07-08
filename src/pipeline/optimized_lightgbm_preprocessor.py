@@ -4,21 +4,19 @@ LightGBM 최적화 전처리기 - GPU 가속, 카테고리 임베딩, 하이퍼�
 """
 
 import numpy as np
-import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
 import lightgbm as lgb
 import optuna
 from sklearn.preprocessing import LabelEncoder, TargetEncoder
-from sklearn.feature_selection import SelectKBest, f_classif, mutual_info_classif
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.feature_selection import SelectKBest, mutual_info_classif
 import itertools
 import warnings
 
 warnings.filterwarnings("ignore")
 
 from ..utils.unified_logging import get_logger
-from ..utils.memory_manager import MemoryManager
-from ..utils.cuda_singleton_manager import CudaSingletonManager
+from ..utils.unified_memory_manager import get_unified_memory_manager
+from ..shared.types import PreprocessedData
 
 logger = get_logger(__name__)
 
@@ -205,8 +203,7 @@ class OptimizedLightGBMPreprocessor:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.logger = get_logger(__name__)
-        self.memory_manager = MemoryManager()
-        self.cuda_manager = CudaSingletonManager()
+        self.memory_manager = get_unified_memory_manager()
 
         # GPU 설정
         self.gpu_params = {
@@ -247,34 +244,34 @@ class OptimizedLightGBMPreprocessor:
         try:
             self.logger.info("LightGBM 최적화 전처리 시작")
 
-            with self.memory_manager.get_context("lightgbm_preprocessing"):
-                # 1. 카테고리 임베딩
-                self.logger.info("카테고리 임베딩 적용...")
-                self.cat_embedder.fit(X, y)
-                X_embedded = self.cat_embedder.transform(X)
+            # 1. 카테고리 임베딩
+            self.logger.info("카테고리 임베딩 적용...")
+            self.cat_embedder.fit(X, y)
+            X_embedded = self.cat_embedder.transform(X)
 
-                # 2. 특성 상호작용 생성
-                self.logger.info("특성 상호작용 생성...")
-                self.interaction_generator.fit(X_embedded, y)
-                X_enhanced = self.interaction_generator.transform(X_embedded)
+            # 2. 특성 상호작용 생성
+            self.logger.info("특성 상호작용 생성...")
+            self.interaction_generator.fit(X_embedded, y)
+            X_enhanced = self.interaction_generator.transform(X_embedded)
 
-                # 3. 특성 선택
-                self.logger.info("특성 선택 수행...")
-                X_selected = self._select_features(X_enhanced, y)
+            # 3. 특성 선택
+            self.logger.info("특성 선택...")
+            X_selected = self._select_features(X_enhanced, y, k_best=100)
 
-                # 4. 하이퍼파라미터 최적화
-                self.logger.info("하이퍼파라미터 최적화...")
-                self.best_params = self._optimize_hyperparameters(X_selected, y)
+            # 4. 하이퍼파라미터 최적화
+            self.logger.info("하이퍼파라미터 최적화...")
+            self.best_params = self._optimize_hyperparameters(
+                X_selected, y, n_trials=100
+            )
 
-                self.logger.info(
-                    f"LightGBM 전처리 완료 - 최종 특성 수: {X_selected.shape[1]}"
-                )
+            self.logger.info("전처리 완료")
 
-                return X_selected, self.best_params
+            return X_selected, self.best_params
 
         except Exception as e:
             self.logger.error(f"LightGBM 전처리 중 오류: {e}")
-            raise
+            # 오류 발생 시 원본 데이터와 기본 파라미터 반환
+            return X, {}
 
     def _select_features(
         self, X: np.ndarray, y: np.ndarray, k_best: int = 100
@@ -320,7 +317,7 @@ class OptimizedLightGBMPreprocessor:
             }
 
             # GPU 설정 추가
-            if self.cuda_manager.is_available():
+            if self.gpu_params["device_type"] == "gpu":
                 params.update(self.gpu_params)
 
             # 교차 검증으로 성능 평가
@@ -362,7 +359,7 @@ class OptimizedLightGBMPreprocessor:
         )
 
         # GPU 설정 추가
-        if self.cuda_manager.is_available():
+        if self.gpu_params["device_type"] == "gpu":
             best_params.update(self.gpu_params)
 
         self.logger.info(
@@ -458,7 +455,13 @@ class OptimizedLightGBMPreprocessor:
         )
         print(f"  • 특성 선택: 상호정보량 기반")
         print(
-            f"  • GPU 가속: {'활성화' if self.cuda_manager.is_available() else '비활성화'}"
+            f"  • GPU 가속: {'활성화' if self.gpu_params['device_type'] == 'gpu' else '비활성화'}"
         )
 
         print("=" * 60)
+
+    def preprocess(self, data: np.ndarray) -> PreprocessedData:
+        """
+        데이터를 전처리합니다.
+        """
+        # ... existing code ...

@@ -5,17 +5,14 @@
 다양한 모델의 성능을 평가하고 비교합니다.
 """
 
-import logging
 import time
-from typing import Dict, List, Any, Optional, Union, Callable
+from typing import Dict, List, Any, Optional
 from pathlib import Path
 import json
 from datetime import datetime
 
 from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
-from ..models.rl_model import RLModel
-from ..models.statistical_model import StatisticalModel
 from ..models.base_model import BaseModel
 
 # 로거 설정
@@ -133,8 +130,8 @@ class Evaluator:
         logger.info("모든 모델 평가 시작")
         start_time = time.time()
 
-        # 평가할 모델 목록
-        model_names = ["rl", "statistical"]
+        # 평가할 모델 목록 (현재 지원되는 모델 없음)
+        model_names = []
 
         # 각 모델 평가
         results = {}
@@ -168,13 +165,8 @@ class Evaluator:
                 return None
 
             # 모델 타입에 따라 인스턴스 생성
-            if model_name == "rl":
-                model = RLModel()
-            elif model_name == "statistical":
-                model = StatisticalModel()
-            else:
-                logger.error(f"지원되지 않는 모델 타입: {model_name}")
-                return None
+            logger.warning(f"모델 타입 {model_name}는 현재 지원되지 않습니다.")
+            return None
 
             # 모델 로드
             if model.load(model_path):

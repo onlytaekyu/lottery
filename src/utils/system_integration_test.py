@@ -6,23 +6,24 @@
 
 import time
 import gc
-import threading
 import psutil
 import torch
-from typing import Dict, List, Any, Optional, Tuple, Callable
+from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 from contextlib import contextmanager
 from ..utils.unified_logging import get_logger
-from ..utils.cuda_singleton_manager import (
-    get_singleton_cuda_optimizer,
-    cleanup_cuda_resources,
+from ..utils.unified_config import load_config
+from ..utils.cuda_optimizers import get_cuda_optimizer, CudaConfig
+from ..utils.unified_memory_manager import get_unified_memory_manager
+from ..utils.unified_performance_engine import (
+    get_unified_performance_engine,
 )
-from ..utils.gpu_memory_pool import get_gpu_memory_pool, cleanup_all_memory_pools
 from ..utils.enhanced_process_pool import (
     get_enhanced_process_pool,
     cleanup_process_pool,
 )
 from ..utils.gpu_accelerated_kernels import get_gpu_pattern_kernels, cleanup_gpu_kernels
+import argparse
 
 logger = get_logger(__name__)
 
@@ -54,28 +55,47 @@ class TestResult:
     details: Dict[str, Any] = field(default_factory=dict)
 
 
-class SystemIntegrationTester:
-    """시스템 통합 테스터"""
+class FullTestSuite:
+    """전체 테스트 스위트 래퍼"""
+    def __init__(self, config, logger, memory_manager, performance_engine, process_pool):
+        self.config = config
+        self.logger = logger
+        self.memory_manager = memory_manager
+        self.performance_engine = performance_engine
+        self.process_pool = process_pool
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {}
-        self.logger = get_logger(__name__)
+    @contextmanager
+    def _performance_monitor(self, test_name: str):
+        """성능 모니터링 컨텍스트"""
+        # 초기 상태
+        start_time = time.time()
+        initial_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
 
-        # 테스트 결과 저장
-        self.test_results: List[TestResult] = []
-        self.overall_metrics = PerformanceMetrics()
+        if torch.cuda.is_available():
+            initial_gpu_memory = torch.cuda.memory_allocated() / 1024 / 1024  # MB
+        else:
+            initial_gpu_memory = 0
 
-        # 성능 목표값
-        self.performance_targets = {
-            "max_execution_time": 30.0,  # 30초
-            "max_memory_usage_mb": 1024,  # 1GB
-            "min_gpu_utilization": 15.0,  # 15%
-            "min_cpu_utilization": 20.0,  # 20%
-            "max_error_rate": 0.01,  # 1%
-            "min_throughput": 10.0,  # 10 operations/sec
-        }
+        metrics = PerformanceMetrics()
 
-        self.logger.info("✅ 시스템 통합 테스터 초기화 완료")
+        try:
+            yield metrics
+        finally:
+            # 최종 상태
+            end_time = time.time()
+            final_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+
+            if torch.cuda.is_available():
+                final_gpu_memory = torch.cuda.memory_allocated() / 1024 / 1024  # MB
+            else:
+                final_gpu_memory = 0
+
+            # 메트릭 계산
+            metrics.execution_time = end_time - start_time
+            metrics.memory_usage_mb = final_memory - initial_memory
+            metrics.peak_memory_mb = final_memory
+            metrics.gpu_memory_mb = final_gpu_memory - initial_gpu_memory
+            metrics.cpu_utilization = psutil.cpu_percent()
 
     def run_full_integration_test(self) -> Dict[str, Any]:
         """전체 통합 테스트 실행"""
@@ -141,7 +161,7 @@ class SystemIntegrationTester:
         try:
             with self._performance_monitor("memory_management") as metrics:
                 # 메모리 풀 테스트
-                memory_pool = get_gpu_memory_pool()
+                memory_pool = get_unified_memory_manager()
 
                 # 메모리 할당/해제 테스트
                 allocations = []
@@ -184,8 +204,8 @@ class SystemIntegrationTester:
         try:
             with self._performance_monitor("cuda_optimization") as metrics:
                 # CUDA 최적화기 테스트
-                cuda_optimizer = get_singleton_cuda_optimizer(
-                    requester_name="integration_test"
+                cuda_optimizer = get_cuda_optimizer(
+                    config=CudaConfig(use_amp=False)
                 )
 
                 if cuda_optimizer.is_available():
@@ -289,7 +309,7 @@ class SystemIntegrationTester:
 
                 # 순차 처리와 비교
                 start_time = time.time()
-                sequential_results = [test_function(data) for data in test_data]
+                [test_function(data) for data in test_data]
                 sequential_time = time.time() - start_time
 
                 # 성능 개선 계산
@@ -434,9 +454,9 @@ class SystemIntegrationTester:
                 gpu_kernels = get_gpu_pattern_kernels()
 
                 start_time = time.time()
-                freq_result = gpu_kernels.frequency_analysis_kernel(large_data)
-                gap_result = gpu_kernels.gap_analysis_kernel(large_data)
-                consecutive_result = gpu_kernels.consecutive_analysis_kernel(large_data)
+                gpu_kernels.frequency_analysis_kernel(large_data)
+                gpu_kernels.gap_analysis_kernel(large_data)
+                gpu_kernels.consecutive_analysis_kernel(large_data)
                 processing_time = time.time() - start_time
 
                 # 처리량 계산
@@ -535,7 +555,7 @@ class SystemIntegrationTester:
                 # 반복적인 할당/해제 테스트
                 for i in range(100):
                     # GPU 메모리 할당/해제
-                    memory_pool = get_gpu_memory_pool()
+                    memory_pool = get_unified_memory_manager()
                     with memory_pool.allocate(10 * 1024 * 1024) as tensor:  # 10MB
                         if tensor is not None:
                             # 간단한 연산
@@ -577,8 +597,7 @@ class SystemIntegrationTester:
         try:
             with self._performance_monitor("resource_cleanup") as metrics:
                 # 모든 리소스 정리
-                cleanup_cuda_resources()
-                cleanup_all_memory_pools()
+                self.memory_manager.cleanup()
                 cleanup_process_pool()
                 cleanup_gpu_kernels()
 
@@ -608,39 +627,6 @@ class SystemIntegrationTester:
                 metrics=PerformanceMetrics(),
                 error_message=str(e),
             )
-
-    @contextmanager
-    def _performance_monitor(self, test_name: str):
-        """성능 모니터링 컨텍스트"""
-        # 초기 상태
-        start_time = time.time()
-        initial_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
-
-        if torch.cuda.is_available():
-            initial_gpu_memory = torch.cuda.memory_allocated() / 1024 / 1024  # MB
-        else:
-            initial_gpu_memory = 0
-
-        metrics = PerformanceMetrics()
-
-        try:
-            yield metrics
-        finally:
-            # 최종 상태
-            end_time = time.time()
-            final_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
-
-            if torch.cuda.is_available():
-                final_gpu_memory = torch.cuda.memory_allocated() / 1024 / 1024  # MB
-            else:
-                final_gpu_memory = 0
-
-            # 메트릭 계산
-            metrics.execution_time = end_time - start_time
-            metrics.memory_usage_mb = final_memory - initial_memory
-            metrics.peak_memory_mb = final_memory
-            metrics.gpu_memory_mb = final_gpu_memory - initial_gpu_memory
-            metrics.cpu_utilization = psutil.cpu_percent()
 
     def _cleanup_between_tests(self):
         """테스트 간 정리"""
@@ -762,20 +748,67 @@ class SystemIntegrationTester:
         return recommendations
 
 
-# 편의 함수
-def run_quick_integration_test() -> Dict[str, Any]:
-    """빠른 통합 테스트 실행"""
-    tester = SystemIntegrationTester()
-    return tester.run_full_integration_test()
+def run_full_integration_test():
+    """전체 통합 테스트 실행"""
+    # 초기화
+    config = load_config()
+    logger = get_logger(__name__)
+    memory_manager = get_unified_memory_manager()
+    performance_engine = get_unified_performance_engine()
+    process_pool = get_enhanced_process_pool()
+
+    # 테스트 스위트
+    suite = FullTestSuite(
+        config=config,
+        logger=logger,
+        memory_manager=memory_manager,
+        performance_engine=performance_engine,
+        process_pool=process_pool,
+    )
+
+    # 테스트 실행
+    result = suite.run_full_integration_test()
+
+    # 결과 반환
+    return result
 
 
-def run_performance_benchmark() -> Dict[str, Any]:
-    """성능 벤치마크만 실행"""
-    tester = SystemIntegrationTester()
-    result = tester.test_performance_benchmark()
-    return {
-        "benchmark_result": result,
-        "success": result.success,
-        "metrics": result.metrics.__dict__,
-        "details": result.details,
-    }
+def print_test_summary(result: Dict[str, Any]):
+    """테스트 결과 요약 출력"""
+    summary = result.get("summary", {})
+    details = result.get("details", [])
+    
+    print("\n" + "="*25 + " 통합 테스트 결과 " + "="*25)
+    print(f"✅ 전체 성공률: {summary.get('success_rate', 0):.2%}")
+    print(f"⏱️ 총 실행 시간: {summary.get('total_time', 0):.2f}초")
+    print(f"📈 평균 CPU 사용률: {summary.get('avg_cpu_utilization', 0):.2f}%")
+    print(f"📉 평균 메모리 사용량 (MB): {summary.get('avg_memory_usage_mb', 0):.2f}")
+    print("\n" + "-"*60)
+    
+    for detail in details:
+        status = "✅ 성공" if detail['success'] else "❌ 실패"
+        print(f"[{status}] {detail['test_name']} (시간: {detail['metrics'].execution_time:.2f}초, 메모리: {detail['metrics'].memory_usage_mb:.2f}MB)")
+
+    print("="*64)
+
+
+def main():
+    """메인 실행 함수"""
+    parser = argparse.ArgumentParser(description="시스템 통합 테스트 실행기")
+    parser.add_argument(
+        "--test_type",
+        type=str,
+        default="full",
+        choices=["full"],
+        help="실행할 테스트 유형 (full만 지원)",
+    )
+    parser.parse_args()
+
+    result = run_full_integration_test()
+
+    # 테스트 결과 출력
+    print_test_summary(result)
+
+
+if __name__ == "__main__":
+    main()

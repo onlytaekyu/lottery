@@ -5,21 +5,15 @@ ROI 기반 분석기 모듈
 """
 
 import numpy as np
-from typing import Dict, Any, List, Set, Tuple, Optional
+from typing import Dict, Any, List
 from collections import Counter, defaultdict
-import math
-from datetime import datetime
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans, AgglomerativeClustering
 
 from .base_analyzer import BaseAnalyzer
 from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
 from ..utils.unified_performance_engine import (
-    get_unified_performance_engine,
     get_auto_performance_monitor,
 )
-from ..utils.unified_config import ConfigProxy
 
 logger = get_logger(__name__)
 

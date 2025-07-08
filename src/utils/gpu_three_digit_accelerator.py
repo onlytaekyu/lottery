@@ -11,12 +11,8 @@ import torch
 import torch.nn.functional as F
 from typing import Dict, List, Tuple, Any, Optional
 from itertools import combinations
-from concurrent.futures import ThreadPoolExecutor
-import threading
 
 from .unified_logging import get_logger
-from .compute_strategy import ComputeExecutor, TaskType
-from .memory_manager import MemoryManager
 from .cache_manager import get_cache_manager
 
 logger = get_logger(__name__)
@@ -40,7 +36,6 @@ class GPUThreeDigitAccelerator:
         self.use_gpu = torch.cuda.is_available() and self.config.get("use_gpu", True)
 
         # 메모리 관리
-        self.memory_manager = MemoryManager()
         self.cache_manager = get_cache_manager()
 
         # 3자리 조합 미리 계산
@@ -416,7 +411,7 @@ class GPUThreeDigitAccelerator:
             times = []
             for i in range(num_iterations):
                 start_time = time.time()
-                results = self.process_combinations_batch(dummy_features)
+                self.process_combinations_batch(dummy_features)
                 elapsed = time.time() - start_time
                 times.append(elapsed)
 

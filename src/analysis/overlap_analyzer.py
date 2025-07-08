@@ -4,8 +4,8 @@
 이 모듈은 로또 번호 조합의 과거 당첨 번호와의 유사도, 중복성 등을 분석하는 기능을 제공합니다.
 """
 
-from typing import Dict, Any, List, Set, Tuple, Optional
-from collections import Counter, defaultdict
+from typing import Dict, Any, List, Optional
+from collections import Counter
 import numpy as np
 
 from ..analysis.base_analyzer import BaseAnalyzer

@@ -12,12 +12,15 @@
 import numpy as np
 import json
 import threading
-import hashlib
-import time
-from typing import Dict, Any, List, Optional, Tuple
-from pathlib import Path
+from typing import Dict, Any, List, Tuple
 from ..utils.unified_logging import get_logger
 from datetime import datetime
+
+# GPU 및 메모리 최적화
+import torch
+from ..utils.unified_memory_manager import get_unified_memory_manager
+from ..utils.dependency_injection import resolve
+from ..utils.cache_manager import UnifiedCachePathManager
 
 logger = get_logger(__name__)
 
@@ -38,6 +41,20 @@ class EnhancedPatternVectorizer:
         # 기본 설정
         self.config = config if config is not None else {}
         self.logger = get_logger(__name__)
+
+        try:
+            self.path_manager = resolve(UnifiedCachePathManager)
+        except Exception as e:
+            logger.warning(f"UnifiedCachePathManager 주입 실패: {e}. 캐시 기능이 비활성화될 수 있습니다.")
+            self.path_manager = None
+
+        # GPU 및 메모리 관리자 초기화
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.memory_manager = get_unified_memory_manager()
+        if torch.cuda.is_available():
+            logger.info(f"🚀 Vectorizer에서 GPU 가속 활성화. 사용 장치: {torch.cuda.get_device_name(0)}")
+        else:
+            logger.info("⚠️ Vectorizer에서 CPU 모드로 동작합니다.")
 
         # 벡터화 관련 속성
         self.feature_names = []
@@ -68,6 +85,7 @@ class EnhancedPatternVectorizer:
     ) -> np.ndarray:
         """
         🔧 완전히 재구축된 벡터 결합 시스템 - 벡터와 이름의 완벽한 동시 생성
+           v2.1 - GPU 가속 지원
 
         Args:
             vector_features: 특성 그룹별 벡터 사전
@@ -75,7 +93,15 @@ class EnhancedPatternVectorizer:
         Returns:
             결합된 벡터 (차원과 이름이 100% 일치 보장)
         """
-        logger.debug("🚀 벡터-이름 동시 생성 시스템 시작")
+        # GPU 사용 가능 시 GPU 버전 호출
+        if self.device.type == 'cuda':
+            try:
+                return self._combine_vectors_enhanced_gpu(vector_features)
+            except Exception as e:
+                logger.error(f"GPU 벡터 결합 실패, CPU로 폴백: {e}")
+                # CPU 폴백 로직은 아래에 이미 구현되어 있음
+
+        logger.debug("🚀 벡터-이름 동시 생성 시스템 시작 (CPU)")
 
         # 🎯 Step 1: 순서 보장된 벡터+이름 동시 생성
         combined_vector = []
@@ -162,6 +188,92 @@ class EnhancedPatternVectorizer:
             f"✅ 벡터-이름 동시 생성 완료: {len(combined_vector)}차원 (100% 일치)"
         )
         return np.array(combined_vector, dtype=np.float32)
+
+    def _combine_vectors_enhanced_gpu(
+        self, vector_features: Dict[str, np.ndarray]
+    ) -> np.ndarray:
+        """
+        🚀 GPU 가속을 사용한 벡터 결합 시스템
+
+        Args:
+            vector_features: 특성 그룹별 벡터 사전 (Numpy 배열)
+
+        Returns:
+            결합된 벡터 (np.ndarray)
+        """
+        logger.debug("🚀 벡터-이름 동시 생성 시스템 시작 (GPU 가속)")
+
+        # 🎯 Step 1 & 2: 벡터와 이름 동시 생성 (GPU에서)
+        combined_tensors = []
+        combined_names = []
+
+        with self.memory_manager.temporary_allocation(size=168 * 4, prefer_device='gpu') as (buffer, _):
+            for group_name in self.vector_blueprint.keys():
+                vector = vector_features.get(group_name)
+                if vector is None or vector.size == 0:
+                    continue
+
+                if vector.ndim > 1:
+                    vector = vector.flatten()
+
+                # NumPy 배열을 GPU 텐서로 변환
+                tensor = torch.from_numpy(vector).to(self.device, non_blocking=True)
+                group_names = self._get_group_feature_names_enhanced(group_name, len(tensor))
+
+                combined_tensors.append(tensor)
+                combined_names.extend(group_names)
+
+            if not combined_tensors:
+                 return np.zeros(168, dtype=np.float32)
+
+            # 모든 텐서를 한 번에 결합
+            combined_tensor = torch.cat(combined_tensors)
+
+            # 🎯 Step 3: 필수 특성 추가
+            essential_features = self._get_essential_features_calculated()
+            essential_values = []
+            for feature_name, feature_value in essential_features.items():
+                if feature_name not in combined_names:
+                    essential_values.append(feature_value)
+                    combined_names.append(feature_name)
+            
+            if essential_values:
+                essential_tensor = torch.tensor(essential_values, device=self.device, dtype=torch.float32)
+                combined_tensor = torch.cat((combined_tensor, essential_tensor))
+
+            # 🔧 Step 4: 특성 품질 개선 (GPU에서 수행하도록 수정 필요)
+            # 현재는 CPU로 복사 후 처리하고 다시 GPU로 이동. 추후 최적화.
+            temp_vector = combined_tensor.cpu().numpy().tolist()
+            temp_vector = self._improve_feature_diversity_complete(temp_vector, combined_names)
+            combined_tensor = torch.tensor(temp_vector, device=self.device, dtype=torch.float32)
+
+
+            # 🚨 Step 5: 168차원으로 동기화
+            target_dim = 168
+            current_dim = combined_tensor.shape[0]
+
+            if current_dim != target_dim:
+                if current_dim > target_dim:
+                    combined_tensor = combined_tensor[:target_dim]
+                    combined_names = combined_names[:target_dim]
+                else:
+                    padding_size = target_dim - current_dim
+                    # 0.1 ~ 1.0 사이의 랜덤 값으로 패딩
+                    padding = torch.rand(padding_size, device=self.device) * 0.9 + 0.1
+                    combined_tensor = torch.cat((combined_tensor, padding))
+                    padding_names = [f"extended_feature_{len(combined_names) + i + 1}" for i in range(padding_size)]
+                    combined_names.extend(padding_names)
+            
+            # 최종 검증
+            assert combined_tensor.shape[0] == len(combined_names), f"GPU 최종 검증 실패"
+            assert combined_tensor.shape[0] == target_dim, f"GPU 차원 불일치"
+
+            self.feature_names = combined_names
+            
+            logger.info(f"✅ GPU 벡터 결합 완료: {combined_tensor.shape[0]}차원")
+            
+            # 최종 결과를 CPU로 복사하여 NumPy 배열로 반환
+            return combined_tensor.cpu().numpy()
 
     def _get_group_feature_names_enhanced(
         self, group_name: str, vector_length: int
@@ -1375,39 +1487,32 @@ class EnhancedPatternVectorizer:
         self, vector: np.ndarray, filename: str = "feature_vector_full.npy"
     ) -> str:
         """향상된 벡터 저장 (완전한 검증 포함)"""
+        if self.path_manager is None:
+            self.logger.error("Path manager가 없어 벡터를 저장할 수 없습니다.")
+            raise RuntimeError("Path manager not initialized")
+
+        cache_dir = self.path_manager.get_path("feature_vectors")
+        cache_dir / filename
+
         try:
             # 벡터 저장 (독립적인 구현)
             saved_path = self.save_vector_to_file(vector, self.feature_names, filename)
 
             # 추가 검증 수행
             try:
-                from ..utils.feature_vector_validator import (
-                    check_vector_dimensions,
-                    analyze_vector_quality,
+                from ..utils.unified_feature_vector_validator import UnifiedFeatureVectorValidator
+                validator = UnifiedFeatureVectorValidator()
+                is_valid = validator.validate(vector, self.feature_names)
+                if not is_valid:
+                    logger.error("❌ 벡터 차원 검증 실패")
+                    logger.error(f"품질 지표: 0값비율={validator.get_zero_ratio()*100:.1f}%, 엔트로피={validator.get_entropy():.3f}")
+                    raise ValueError("벡터 차원 불일치 또는 품질 검증 실패")
+
+                logger.info("✅ 벡터 차원 검증 완료 - 완벽한 일치!")
+                logger.info(
+                    f"품질 지표: 0값비율={validator.get_zero_ratio()*100:.1f}%, "
+                    f"엔트로피={validator.get_entropy():.3f}"
                 )
-
-                names_file = (
-                    Path(saved_path).parent / f"{Path(filename).stem}.names.json"
-                )
-
-                if names_file.exists():
-                    # 차원 검증
-                    is_valid = check_vector_dimensions(
-                        saved_path, str(names_file), raise_on_mismatch=False
-                    )
-
-                    # 품질 분석
-                    quality_metrics = analyze_vector_quality(saved_path)
-
-                    if is_valid:
-                        logger.info("✅ 벡터 차원 검증 완료 - 완벽한 일치!")
-                        logger.info(
-                            f"품질 지표: 0값비율={quality_metrics.get('zero_ratio', 0)*100:.1f}%, "
-                            f"엔트로피={quality_metrics.get('entropy', 0):.3f}"
-                        )
-                    else:
-                        logger.error("❌ 벡터 차원 검증 실패")
-
             except ImportError:
                 logger.debug("검증 모듈 없음 - 기본 저장만 수행")
 
@@ -1423,19 +1528,25 @@ class EnhancedPatternVectorizer:
         feature_names: List[str],
         filename: str = "feature_vector_full.npy",
     ) -> str:
-        """벡터를 파일로 저장 (독립적인 구현)"""
-        try:
-            cache_path = Path("data/cache")
-            cache_path.mkdir(parents=True, exist_ok=True)
+        """
+        벡터와 특성 이름을 파일에 저장합니다.
+        ✅ v2.1 업데이트: get_cache_dir 대신 UnifiedCachePathManager 사용
+        """
+        if self.path_manager is None:
+            self.logger.error("Path manager가 없어 벡터를 저장할 수 없습니다.")
+            raise RuntimeError("Path manager not initialized")
 
+        cache_dir = self.path_manager.get_path("feature_vectors")
+        vector_file_path = cache_dir / filename
+        names_file_path = cache_dir / filename.replace(".npy", "_names.json")
+
+        try:
             # 벡터 저장
-            vector_path = cache_path / filename
-            np.save(vector_path, vector)
+            vector_file_path.parent.mkdir(parents=True, exist_ok=True)
+            np.save(vector_file_path, vector)
 
             # 특성 이름 저장
-            names_filename = filename.replace(".npy", ".names.json")
-            names_path = cache_path / names_filename
-            with open(names_path, "w", encoding="utf-8") as f:
+            with open(names_file_path, "w", encoding="utf-8") as f:
                 json.dump(feature_names, f, ensure_ascii=False, indent=2)
 
             # 벡터 품질 정보
@@ -1460,12 +1571,12 @@ class EnhancedPatternVectorizer:
                 entropy = 0.0
 
             self.logger.info(
-                f"✅ 벡터 저장 완료: {vector_path} ({vector_path.stat().st_size:,} bytes)"
+                f"✅ 벡터 저장 완료: {vector_file_path} ({vector_file_path.stat().st_size:,} bytes)"
             )
             self.logger.info(f"   - 벡터 차원: {vector.shape}")
             self.logger.info(f"   - 데이터 타입: {vector.dtype}")
             self.logger.info(f"   - 특성 이름 수: {len(feature_names)}")
-            self.logger.info(f"✅ 특성 이름 저장 완료: {names_path}")
+            self.logger.info(f"✅ 특성 이름 저장 완료: {names_file_path}")
             self.logger.info(f"📊 벡터 품질:")
             self.logger.info(f"   - 0값 비율: {zero_ratio:.1f}%")
             self.logger.info(f"   - 엔트로피: {entropy:.3f}")
@@ -1473,7 +1584,7 @@ class EnhancedPatternVectorizer:
             self.logger.info(f"   - 최댓값: {vector.max():.3f}")
             self.logger.info(f"   - 평균값: {vector.mean():.3f}")
 
-            return str(vector_path)
+            return str(vector_file_path)
 
         except Exception as e:
             self.logger.error(f"벡터 저장 실패: {e}")
@@ -2239,22 +2350,19 @@ class EnhancedPatternVectorizer:
         self, samples: np.ndarray, filename: str = "training_samples.npy"
     ) -> str:
         """
-        훈련 샘플을 파일로 저장
-
-        Args:
-            samples: 훈련 샘플 배열
-            filename: 저장할 파일명
-
-        Returns:
-            저장된 파일 경로
+        생성된 학습 샘플을 파일에 저장합니다.
+        ✅ v2.1 업데이트: get_cache_dir 대신 UnifiedCachePathManager 사용
         """
-        try:
-            cache_path = Path("data/cache")
-            cache_path.mkdir(parents=True, exist_ok=True)
+        if self.path_manager is None:
+            self.logger.error("Path manager가 없어 샘플을 저장할 수 없습니다.")
+            raise RuntimeError("Path manager not initialized")
 
+        cache_dir = self.path_manager.get_path("training_samples")
+        file_path = cache_dir / filename
+
+        try:
             # 샘플 저장
-            samples_path = cache_path / filename
-            np.save(samples_path, samples)
+            np.save(file_path, samples)
 
             # 메타데이터 저장
             metadata = {
@@ -2266,16 +2374,16 @@ class EnhancedPatternVectorizer:
                 "sample_count": samples.shape[0] if len(samples.shape) > 0 else 0,
             }
 
-            metadata_path = cache_path / filename.replace(".npy", "_metadata.json")
+            metadata_path = cache_dir / filename.replace(".npy", "_metadata.json")
             with open(metadata_path, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
 
             logger.info(f"✅ 훈련 샘플 저장 완료:")
-            logger.info(f"   - 샘플 파일: {samples_path}")
+            logger.info(f"   - 샘플 파일: {file_path}")
             logger.info(f"   - 메타데이터: {metadata_path}")
-            logger.info(f"   - 파일 크기: {samples_path.stat().st_size:,} bytes")
+            logger.info(f"   - 파일 크기: {file_path.stat().st_size:,} bytes")
 
-            return str(samples_path)
+            return str(file_path)
 
         except Exception as e:
             logger.error(f"훈련 샘플 저장 실패: {e}")
@@ -2734,22 +2842,19 @@ class EnhancedPatternVectorizer:
         self, vector: np.ndarray, filename: str = "3digit_feature_vector.npy"
     ) -> str:
         """
-        3자리 특성 벡터를 파일로 저장
-
-        Args:
-            vector: 저장할 벡터
-            filename: 파일명
-
-        Returns:
-            str: 저장된 파일 경로
+        3자리 시스템의 특성 벡터를 파일에 저장합니다.
+        ✅ v2.1 업데이트: get_cache_dir 대신 UnifiedCachePathManager 사용
         """
+        if self.path_manager is None:
+            self.logger.error("Path manager가 없어 벡터를 저장할 수 없습니다.")
+            raise RuntimeError("Path manager not initialized")
+
+        cache_dir = self.path_manager.get_path("feature_vectors_3digit")
+        file_path = cache_dir / filename
+
         try:
-            from ..utils.cache_paths import get_cache_dir
-
-            cache_dir = get_cache_dir()
-            cache_dir.mkdir(parents=True, exist_ok=True)
-
-            file_path = cache_dir / filename
+            # 벡터 저장
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             np.save(file_path, vector)
 
             self.logger.info(f"3자리 벡터 저장 완료: {file_path}")

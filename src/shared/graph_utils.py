@@ -13,14 +13,22 @@ import networkx as nx
 import numpy as np
 from collections import Counter, defaultdict
 from itertools import combinations
-from typing import Dict, List, Tuple, Any, Optional, Union
-from functools import lru_cache, wraps
+from typing import Dict, List, Tuple, Any, Optional
+from functools import wraps
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 from sklearn.metrics import silhouette_score
 from sklearn.cluster import KMeans
 from sklearn.manifold import TSNE
+
+# GPU 지원 추가 (선택적 CuPy 사용)
+try:
+    import cupy as cp
+    GPU_AVAILABLE = True
+except ImportError:
+    import numpy as cp
+    GPU_AVAILABLE = False
 
 # 타입 힌트
 LotteryNumber = Any  # 실제 LotteryNumber 클래스 가져오기가 어려울 수 있어 Any로 대체
@@ -682,3 +690,23 @@ def get_cache_stats() -> Dict[str, Any]:
         "cache_limit": _CACHE_SIZE_LIMIT,
         "memory_pool_size": len(_MEMORY_POOL),
     }
+
+
+def _use_gpu_if_available(arr):
+    """GPU가 사용 가능한 경우 CuPy 배열로 변환, 그렇지 않으면 NumPy 배열 유지"""
+    if GPU_AVAILABLE and hasattr(arr, '__array__'):
+        try:
+            return cp.asarray(arr)
+        except:
+            return arr
+    return arr
+
+
+def _calculate_optimal_chunk_size(data_size: int) -> int:
+    """대용량 데이터 처리시 청크 크기 동적 조정"""
+    if data_size < 1000:
+        return 100
+    elif data_size < 10000:
+        return 500
+    else:
+        return 1000

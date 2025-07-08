@@ -8,25 +8,17 @@ CUDA 최적화 및 비동기 I/O를 활용하여 벡터를 고속으로 처리�
 파일 크기와 복잡성을 대폭 줄여 유지보수성을 극대화했습니다.
 """
 
-import os
-import json
 import numpy as np
 import torch
-import torch.nn.functional as F
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import math
-import gc
 from pathlib import Path
-import mmap
-import weakref
 import asyncio
 
 from .unified_logging import get_logger
-from .async_io import get_gpu_async_io_manager
+from .unified_async_manager import get_unified_async_manager
 
 logger = get_logger(__name__)
 
@@ -40,8 +32,8 @@ else:
     logger.warning("⚠️ GPU 없음 - CPU 전용 벡터 처리 모드")
 
 
-class GPUMemoryPool:
-    """GPU 메모리 풀 (완전 자동 관리)"""
+class VectorMemoryPool:
+    """벡터 전용 메모리 풀 (완전 자동 관리)"""
 
     def __init__(self, max_pool_size: int = 50):
         self.pools = {}  # {shape_dtype: [tensors]}
@@ -130,8 +122,9 @@ class GPUVectorExporter:
 
     def __init__(self):
         self.device = torch.device("cuda" if GPU_AVAILABLE else "cpu")
-        self.async_io = get_gpu_async_io_manager()
+        self.async_io = get_unified_async_manager()
         self.max_batch_size = 1024  # 한 번에 처리할 최대 벡터 수
+        self.memory_pool = VectorMemoryPool()  # 벡터 전용 메모리 풀 사용
 
         if GPU_AVAILABLE:
             logger.info(f"✅ GPU 벡터 내보내기 시스템 초기화 (Device: {self.device})")
@@ -255,11 +248,14 @@ class GPUVectorExporter:
         tasks = []
         for tensor, path in zip(transformed_tensors, batch_paths):
             # 텐서를 numpy 배열로 변환 (CPU로 이동) 후 바이트로 변환
-            # .cpu()는 동기 연산이므로, I/O 작업 전에 수행
             data_bytes = tensor.cpu().numpy().tobytes()
-            tasks.append(self.async_io.smart_write_file(Path(path), data_bytes))
+            
+            # 디렉토리 생성
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            tasks.append(self.async_io.file_manager.write_binary_file(str(path), data_bytes))
 
-        await asyncio.gather(*tasks)
+        if tasks:
+            await asyncio.gather(*tasks)
 
     async def _process_batch_cpu(self, batch_vectors, batch_paths, transform):
         """CPU를 사용하여 배치 처리 및 비동기 저장"""
@@ -272,11 +268,25 @@ class GPUVectorExporter:
             else:
                 transformed_vectors.append(v)
 
-        write_tasks = [
-            self.async_io.smart_write_file(Path(path), vec.tobytes())
-            for vec, path in zip(transformed_vectors, batch_paths)
-        ]
-        await asyncio.gather(*write_tasks)
+        tasks = []
+        for vec, path in zip(transformed_vectors, batch_paths):
+            if isinstance(vec, torch.Tensor):
+                vec = vec.numpy()
+
+            # 데이터 변환 적용
+            if transform == "normalize":
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
+            
+            data_bytes = vec.tobytes()
+            
+            # 디렉토리 생성
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            tasks.append(self.async_io.file_manager.write_binary_file(str(path), data_bytes))
+
+        if tasks:
+            await asyncio.gather(*tasks)
 
     def cleanup(self):
         """리소스 정리"""

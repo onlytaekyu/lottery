@@ -4,13 +4,11 @@ Model Performance Benchmark System
 """
 
 import numpy as np
-import pandas as pd
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
 import time
 import psutil
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -19,17 +17,16 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import cross_val_score, StratifiedKFold
-import matplotlib.pyplot as plt
-import seaborn as sns
 from datetime import datetime
 import json
 import warnings
+from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
 from ..utils.unified_logging import get_logger
-from ..utils.memory_manager import MemoryManager
-from ..utils.cuda_singleton_manager import CudaSingletonManager
+from ..utils.unified_config import load_config
+from ..shared.types import ModelPerformanceMetrics
 
 logger = get_logger(__name__)
 
@@ -383,24 +380,26 @@ class ModelPerformanceBenchmark:
     """모델 성능 벤치마킹 시스템"""
 
     def __init__(self, config: Dict[str, Any]):
-        self.config = config
+        self.config = config if config else load_config()
+        self.output_dir = Path(
+            self.config.get_nested("data.result.performance_reports", "data/result/performance_reports")
+        )
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.logger = get_logger(__name__)
-        self.memory_manager = MemoryManager()
-        self.cuda_manager = CudaSingletonManager()
 
         # 벤치마크 결과 저장
         self.benchmark_results = []
         self.comparison_results = []
 
         # A/B 테스터 초기화
-        self.ab_tester = ABTester(confidence_level=config.get("confidence_level", 0.95))
+        self.ab_tester = ABTester(confidence_level=self.config.get("confidence_level", 0.95))
 
         # 성능 임계값 설정
         self.performance_thresholds = {
-            "accuracy_threshold": config.get("accuracy_threshold", 0.7),
-            "processing_time_threshold": config.get("processing_time_threshold", 30.0),
-            "memory_threshold": config.get("memory_threshold", 80.0),
-            "throughput_threshold": config.get("throughput_threshold", 100.0),
+            "accuracy_threshold": self.config.get("accuracy_threshold", 0.7),
+            "processing_time_threshold": self.config.get("processing_time_threshold", 30.0),
+            "memory_threshold": self.config.get("memory_threshold", 80.0),
+            "throughput_threshold": self.config.get("throughput_threshold", 100.0),
         }
 
     def benchmark_preprocessing(
@@ -842,3 +841,7 @@ class ModelPerformanceBenchmark:
             print(f"  {i}. {recommendation}")
 
         print("=" * 80)
+
+    def run_all_benchmarks(self) -> Dict[str, ModelPerformanceMetrics]:
+        """모든 모델에 대한 벤치마크를 실행합니다."""
+        # ... existing code ...

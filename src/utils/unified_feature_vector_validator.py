@@ -6,13 +6,13 @@ GPU를 활용하여 대규모 특성 벡터의 차원, 값 범위, 이상치 등
 """
 
 import json
+import time
 import numpy as np
 import torch
 from typing import Dict, Any, List, Optional, Tuple, Union
 from pathlib import Path
 from .unified_logging import get_logger
-from .cuda_optimizers import get_cuda_optimizer
-from .memory_manager import get_memory_manager
+from .unified_memory_manager import get_unified_memory_manager
 import threading
 
 logger = get_logger(__name__)
@@ -28,7 +28,7 @@ class GPUFeatureValidator:
     def __init__(self, gpu_threshold: int = 10000):
         self.device = torch.device("cuda" if GPU_AVAILABLE else "cpu")
         self.gpu_threshold = gpu_threshold
-        self.memory_manager = get_memory_manager()
+        self.memory_manager = get_unified_memory_manager()
 
         if GPU_AVAILABLE:
             logger.info(f"✅ GPU 피처 검증기 초기화 (GPU 임계값: {self.gpu_threshold})")
@@ -91,35 +91,60 @@ class UnifiedFeatureVectorValidator:
         self.config = config or {}
         self.gpu_validator = GPUFeatureValidator() if GPU_AVAILABLE else None
 
+        # 검증 통계
+        self.validation_stats = {
+            "total_validations": 0,
+            "successful_validations": 0,
+            "failed_validations": 0,
+            "gpu_validations": 0,
+            "cpu_validations": 0,
+        }
+
     def validate_all(
         self, vectors: Union[np.ndarray, torch.Tensor], feature_names: List[str]
     ) -> bool:
         """모든 검증을 수행합니다."""
+        self.validation_stats["total_validations"] += 1
+
         if not self.check_essential_features(feature_names):
+            self.validation_stats["failed_validations"] += 1
             return False
 
-        if self.gpu_validator:
-            if isinstance(vectors, np.ndarray):
-                vectors = torch.from_numpy(vectors).to(
-                    self.gpu_validator.device, non_blocking=True
-                )
+        try:
+            if self.gpu_validator:
+                if isinstance(vectors, np.ndarray):
+                    vectors = torch.from_numpy(vectors).to(
+                        self.gpu_validator.device, non_blocking=True
+                    )
 
-            results = self.gpu_validator.validate_vectors(vectors, feature_names)
-            if not results:
-                logger.error("GPU 벡터 검증 실패")
-                return False
-            logger.info("GPU 벡터 검증 완료")
-        else:
-            # CPU Fallback
-            if isinstance(vectors, torch.Tensor):
-                vectors = vectors.cpu().numpy()
+                results = self.gpu_validator.validate_vectors(vectors, feature_names)
+                self.validation_stats["gpu_validations"] += 1
 
-            if np.isnan(vectors).any() or np.isinf(vectors).any():
-                logger.error("CPU 벡터 검증 실패: NaN 또는 Inf 값이 존재합니다.")
-                return False
-            logger.info("CPU 벡터 검증 완료.")
+                if not results:
+                    logger.error("GPU 벡터 검증 실패")
+                    self.validation_stats["failed_validations"] += 1
+                    return False
+                logger.info("GPU 벡터 검증 완료")
+            else:
+                # CPU Fallback
+                if isinstance(vectors, torch.Tensor):
+                    vectors = vectors.cpu().numpy()
 
-        return True
+                if np.isnan(vectors).any() or np.isinf(vectors).any():
+                    logger.error("CPU 벡터 검증 실패: NaN 또는 Inf 값이 존재합니다.")
+                    self.validation_stats["failed_validations"] += 1
+                    return False
+
+                self.validation_stats["cpu_validations"] += 1
+                logger.info("CPU 벡터 검증 완료.")
+
+            self.validation_stats["successful_validations"] += 1
+            return True
+
+        except Exception as e:
+            logger.error(f"벡터 검증 중 오류 발생: {e}")
+            self.validation_stats["failed_validations"] += 1
+            return False
 
     def check_essential_features(self, feature_names: List[str]) -> bool:
         """필수 특성 존재 여부 확인"""
@@ -128,6 +153,57 @@ class UnifiedFeatureVectorValidator:
             logger.error(f"필수 특성 누락: {missing}")
             return False
         return True
+
+    def get_validation_stats(self) -> Dict[str, Any]:
+        """검증 통계 반환"""
+        total = max(1, self.validation_stats["total_validations"])
+        success_rate = (self.validation_stats["successful_validations"] / total) * 100
+
+        return {
+            **self.validation_stats,
+            "success_rate": success_rate,
+            "gpu_usage_rate": (self.validation_stats["gpu_validations"] / total) * 100,
+            "cpu_usage_rate": (self.validation_stats["cpu_validations"] / total) * 100,
+        }
+
+    def validate_with_detailed_report(
+        self, vectors: Union[np.ndarray, torch.Tensor], feature_names: List[str]
+    ) -> Dict[str, Any]:
+        """상세한 검증 보고서와 함께 검증 수행"""
+        start_time = time.time()
+
+        # 기본 정보 수집
+        if isinstance(vectors, torch.Tensor):
+            shape = vectors.shape
+            device = str(vectors.device)
+            dtype = str(vectors.dtype)
+        else:
+            shape = vectors.shape
+            device = "cpu"
+            dtype = str(vectors.dtype)
+
+        # 검증 수행
+        is_valid = self.validate_all(vectors, feature_names)
+
+        validation_time = time.time() - start_time
+
+        report = {
+            "is_valid": is_valid,
+            "validation_time": validation_time,
+            "vector_info": {
+                "shape": shape,
+                "device": device,
+                "dtype": dtype,
+                "feature_count": len(feature_names),
+            },
+            "essential_features_check": self.check_essential_features(feature_names),
+            "missing_features": [
+                f for f in ESSENTIAL_FEATURES if f not in feature_names
+            ],
+            "stats": self.get_validation_stats(),
+        }
+
+        return report
 
 
 # 기존 함수들은 필요시 이 클래스를 사용하도록 리팩토링하거나, 유지/제거
@@ -308,3 +384,8 @@ def analyze_vector_statistics(vector_path: str, names_path: str) -> Dict[str, An
     except Exception as e:
         logger.error(f"통계 분석 실패: {e}")
         return {}
+
+
+def get_unified_feature_validator() -> UnifiedFeatureVectorValidator:
+    """통합 특성 벡터 검증기의 싱글톤 인스턴스를 반환합니다."""
+    return UnifiedFeatureVectorValidator()

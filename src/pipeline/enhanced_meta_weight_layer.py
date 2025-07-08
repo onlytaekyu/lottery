@@ -9,14 +9,14 @@ import torch.nn as nn
 import torch.optim as optim
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score
 import warnings
 
 warnings.filterwarnings("ignore")
 
 from ..utils.unified_logging import get_logger
-from ..utils.memory_manager import MemoryManager
-from ..utils.cuda_singleton_manager import CudaSingletonManager
+from ..utils.memory_manager import get_memory_manager
+from ..shared.types import MetaWeightConfig
 
 logger = get_logger(__name__)
 
@@ -283,39 +283,33 @@ class EnhancedMetaWeightLayer:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.logger = get_logger(__name__)
-        self.memory_manager = MemoryManager()
-        self.cuda_manager = CudaSingletonManager()
+        self.model_name = self.config.model_name
+        self.meta_weight_config = MetaWeightConfig.from_dict(
+            self.config.get_nested(f"models.{self.model_name}.meta_weight_config")
+        )
+        self.logger.info(
+            f"EnhancedMetaWeightLayer for {self.model_name} initialized."
+        )
+
+        self.memory_manager = get_memory_manager()
 
         # 디바이스 설정
         self.device = torch.device(
-            "cuda" if self.cuda_manager.is_available() else "cpu"
-        )
-
-        # 메타 가중치 설정
-        self.meta_config = MetaWeightConfig(
-            num_models=config.get("num_models", 4),
-            adaptation_rate=config.get("adaptation_rate", 0.01),
-            momentum=config.get("momentum", 0.9),
-            confidence_threshold=config.get("confidence_threshold", 0.7),
-            roi_weight=config.get("roi_weight", 0.3),
-            diversity_weight=config.get("diversity_weight", 0.2),
-            performance_weight=config.get("performance_weight", 0.5),
-            device=str(self.device),
+            "cuda" if self.meta_weight_config.device == "cuda" else "cpu"
         )
 
         # 컴포넌트 초기화
-        self.dynamic_weights = DynamicWeightLearner(self.meta_config).to(self.device)
+        self.dynamic_weights = DynamicWeightLearner(self.meta_weight_config).to(self.device)
         self.confidence_estimator = ConfidenceEstimator(
-            uncertainty_method=config.get("uncertainty_method", "monte_carlo_dropout")
+            uncertainty_method=self.meta_weight_config.uncertainty_method
         )
         self.roi_adjuster = ROIBasedWeightAdjuster(
-            target_metric=config.get("target_metric", "profit_ratio")
+            target_metric=self.meta_weight_config.target_metric
         )
 
         # 옵티마이저
         self.optimizer = optim.Adam(
-            self.dynamic_weights.parameters(), lr=self.meta_config.adaptation_rate
+            self.dynamic_weights.parameters(), lr=self.meta_weight_config.adaptation_rate
         )
 
         # 성능 메트릭 저장
@@ -643,9 +637,9 @@ class EnhancedMetaWeightLayer:
             print(f"  • {model_name}: {confidence:.4f}")
 
         print(f"\n🔧 적용된 최적화 기법:")
-        print(f"  • 동적 가중치 학습: 적응률 {self.meta_config.adaptation_rate}")
+        print(f"  • 동적 가중치 학습: 적응률 {self.meta_weight_config.adaptation_rate}")
         print(f"  • 신뢰도 기반 앙상블: {self.confidence_estimator.uncertainty_method}")
-        print(f"  • ROI 기반 조정: {self.roi_adjuster.target_metric}")
+        print(f"  • ROI 기반 조정: {self.meta_weight_config.target_metric}")
         print(f"  • GPU 가속: {'활성화' if self.device.type == 'cuda' else '비활성화'}")
 
         print(f"\n📊 앙상블 메트릭:")
@@ -653,3 +647,14 @@ class EnhancedMetaWeightLayer:
         print(f"  • 가중치 엔트로피: {metadata['weight_entropy']:.4f}")
 
         print("=" * 60)
+
+    def build_layer(self, input_features: int) -> nn.Module:
+        """
+        Args:
+            input_features: 입력 특성의 수
+        Returns:
+            nn.Module: 빌드된 레이어
+        """
+        # 이 메서드는 이전 코드에서 사용되었으나 현재 코드에서는 사용되지 않습니다.
+        # 이 메서드의 구현은 필요에 따라 추가할 수 있습니다.
+        raise NotImplementedError("This method is not implemented in the current version.")

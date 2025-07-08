@@ -17,21 +17,17 @@ import json
 import time
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Tuple, Union, Callable
-from pathlib import Path
+from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 from collections import deque, defaultdict
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 from queue import Queue
-import logging
 
 from ..shared.types import LotteryNumber, ModelPrediction
 from ..utils.unified_logging import get_logger
-from ..utils.cache_paths import get_cache_dir
-from ..utils.unified_performance import performance_monitor
+from ..utils.unified_config import get_config
+from ..utils.cache_manager import UnifiedCachePathManager
 
 logger = get_logger(__name__)
 
@@ -84,6 +80,8 @@ class SystemHealth:
     cpu_usage: float
     memory_usage: float
     disk_usage: float
+    gpu_usage: float        # 추가
+    gpu_memory: float       # 추가
     prediction_latency: float
     error_count: int
     last_update: datetime
@@ -190,7 +188,6 @@ class AlertManager:
     def _send_email_alert(self, message: str) -> None:
         """이메일 알림 전송 (구현 필요)"""
         # 이메일 전송 로직 구현
-        pass
 
 
 class PerformanceTracker:
@@ -222,11 +219,23 @@ class PerformanceTracker:
         self.update_interval = self.config.get("update_interval", 5)  # 5초마다 업데이트
 
         # 데이터 저장 설정
-        self.cache_dir = Path(get_cache_dir()) / "performance_tracking"
+        paths = get_config()
+        cache_path_manager = UnifiedCachePathManager(paths)
+        self.cache_dir = cache_path_manager.get_path("performance_tracking")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         # 시스템 상태 모니터링
-        self.system_health = SystemHealth(0, 0, 0, 0, 0, datetime.now(), "healthy")
+        self.system_health = SystemHealth(
+            cpu_usage=0, 
+            memory_usage=0, 
+            disk_usage=0, 
+            gpu_usage=0,
+            gpu_memory=0,
+            prediction_latency=0, 
+            error_count=0, 
+            last_update=datetime.now(), 
+            status="healthy"
+        )
 
         # 대시보드 설정
         self.dashboard_data = {
@@ -329,7 +338,7 @@ class PerformanceTracker:
             # 결과 저장
             self.game_results[strategy].append(game_result)
 
-            # 오래된 결과 제거 (최근 1000개만 유지)
+            # 메모리 누수 방지: 오래된 결과 제거 (최근 1000개만 유지)
             if len(self.game_results[strategy]) > 1000:
                 self.game_results[strategy] = self.game_results[strategy][-1000:]
 
@@ -448,12 +457,15 @@ class PerformanceTracker:
             # 현재 지표 업데이트
             self.current_metrics[strategy] = metrics
 
-            # 이력에 추가
+            # 성능 이력 저장
             self.performance_history[strategy].append(metrics)
 
-            # 이력 크기 제한 (최근 1000개만 유지)
-            if len(self.performance_history[strategy]) > 1000:
-                self.performance_history[strategy].popleft()
+            # 메모리 누수 방지: 성능 이력 크기 제한 (최근 500개만 유지)
+            if len(self.performance_history[strategy]) > 500:
+                self.performance_history[strategy] = deque(
+                    list(self.performance_history[strategy])[-500:], 
+                    maxlen=500
+                )
 
         except Exception as e:
             self.logger.error(f"전략별 성능 지표 업데이트 중 오류: {str(e)}")
@@ -537,6 +549,7 @@ class PerformanceTracker:
         """시스템 상태 업데이트"""
         try:
             import psutil
+            import torch  # 추가
 
             # CPU 사용률
             cpu_usage = psutil.cpu_percent(interval=1)
@@ -549,23 +562,44 @@ class PerformanceTracker:
             disk = psutil.disk_usage("/")
             disk_usage = disk.percent
 
+            # GPU 모니터링 추가 (간단)
+            gpu_usage = 0
+            gpu_memory = 0
+            if torch.cuda.is_available():
+                try:
+                    # GPU 사용률 (nvidia-ml-py 없이는 0으로 설정)
+                    gpu_usage = 0  # torch.cuda.utilization()은 nvidia-ml-py 필요
+                    
+                    # GPU 메모리 사용률 계산 (간단한 방식)
+                    gpu_memory_used = torch.cuda.memory_allocated()
+                    gpu_memory_reserved = torch.cuda.memory_reserved()
+                    if gpu_memory_reserved > 0:
+                        gpu_memory = (gpu_memory_used / gpu_memory_reserved) * 100
+                    else:
+                        gpu_memory = 0
+                except:
+                    gpu_usage = 0
+                    gpu_memory = 0
+
             # 예측 지연시간 (더미 데이터)
             prediction_latency = 0.1  # 실제 구현에서는 측정값 사용
 
             # 오류 개수 (로그 기반)
             error_count = 0  # 실제 구현에서는 로그 파싱
 
-            # 상태 판정
+            # 상태 판정 (GPU 포함)
             status = "healthy"
-            if cpu_usage > 80 or memory_usage > 80 or disk_usage > 90:
+            if cpu_usage > 80 or memory_usage > 80 or disk_usage > 90 or gpu_usage > 90:
                 status = "critical"
-            elif cpu_usage > 60 or memory_usage > 60 or disk_usage > 80:
+            elif cpu_usage > 60 or memory_usage > 60 or disk_usage > 80 or gpu_usage > 70:
                 status = "warning"
 
             self.system_health = SystemHealth(
                 cpu_usage=cpu_usage,
                 memory_usage=memory_usage,
                 disk_usage=disk_usage,
+                gpu_usage=gpu_usage,        # 추가
+                gpu_memory=gpu_memory,      # 추가
                 prediction_latency=prediction_latency,
                 error_count=error_count,
                 last_update=datetime.now(),
@@ -1072,3 +1106,53 @@ class PerformanceTracker:
         except Exception as e:
             self.logger.error(f"성능 데이터 CSV 내보내기 중 오류: {str(e)}")
             return ""
+
+
+def test_gpu_monitoring():
+    """GPU 모니터링 기능 테스트"""
+    try:
+        import torch
+        
+        print("=== GPU 모니터링 테스트 ===")
+        print(f"CUDA 사용 가능: {torch.cuda.is_available()}")
+        
+        if torch.cuda.is_available():
+            print(f"GPU 개수: {torch.cuda.device_count()}")
+            print(f"현재 GPU: {torch.cuda.current_device()}")
+            
+            # GPU 사용률 테스트
+            try:
+                # GPU 사용률 (nvidia-ml-py 없이는 0으로 설정)
+                gpu_usage = 0  # torch.cuda.utilization()은 nvidia-ml-py 필요
+                
+                # GPU 메모리 사용률 계산 (간단한 방식)
+                gpu_memory_used = torch.cuda.memory_allocated()
+                gpu_memory_reserved = torch.cuda.memory_reserved()
+                if gpu_memory_reserved > 0:
+                    gpu_memory = (gpu_memory_used / gpu_memory_reserved) * 100
+                else:
+                    gpu_memory = 0
+                print(f"GPU 사용률: {gpu_usage}%")
+                print(f"GPU 메모리: {gpu_memory:.1f}%")
+                print(f"GPU 메모리 사용: {gpu_memory_used / 1024**2:.1f} MB")
+                print(f"GPU 메모리 예약: {gpu_memory_reserved / 1024**2:.1f} MB")
+            except Exception as e:
+                print(f"GPU 모니터링 오류: {e}")
+        else:
+            print("GPU를 사용할 수 없습니다")
+            
+        # PerformanceTracker 테스트
+        tracker = PerformanceTracker()
+        tracker._update_system_health()
+        
+        print(f"시스템 상태: {tracker.system_health.status}")
+        print(f"GPU 사용률: {tracker.system_health.gpu_usage}%")
+        print(f"GPU 메모리: {tracker.system_health.gpu_memory}%")
+        print("테스트 완료!")
+        
+    except Exception as e:
+        print(f"테스트 중 오류: {e}")
+
+
+if __name__ == "__main__":
+    test_gpu_monitoring()

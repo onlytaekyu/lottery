@@ -12,17 +12,25 @@ from typing import (
     Optional,
     Set,
     Any,
-    NamedTuple,
-    Union,
     TYPE_CHECKING,
     TypedDict,
+    Protocol,
+    runtime_checkable,
 )
 import numpy as np
 from datetime import datetime
 
 # 타입 호환성을 위한 조건부 임포트
 if TYPE_CHECKING:
-    from ..utils.data_loader import LotteryNumber as DataLoaderLotteryNumber
+    pass
+
+
+@runtime_checkable
+class LotteryDataProtocol(Protocol):
+    """로또 데이터 프로토콜 - 타입 검증용"""
+    draw_no: int
+    numbers: List[int]
+    date: Optional[str]
 
 
 @dataclass

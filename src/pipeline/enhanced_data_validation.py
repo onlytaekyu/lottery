@@ -8,13 +8,11 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 from scipy import stats
-import warnings
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.impute import SimpleImputer, KNNImputer
 
 from ..utils.unified_logging import get_logger
-from ..utils.memory_manager import MemoryManager
-from ..shared.types import LotteryNumber
+from ..utils.unified_memory_manager import get_unified_memory_manager
 
 logger = get_logger(__name__)
 
@@ -41,7 +39,7 @@ class EnhancedDataValidator:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.logger = get_logger(__name__)
-        self.memory_manager = MemoryManager()
+        self.memory_manager = get_unified_memory_manager()
 
         # 검증 임계값 설정
         self.thresholds = {
@@ -83,67 +81,66 @@ class EnhancedDataValidator:
         try:
             self.logger.info("강화된 데이터 검증 시작")
 
-            with self.memory_manager.get_context("data_validation"):
-                # 1. 기본 데이터 품질 체크
-                nan_ratio = self._check_nan_values(X)
-                inf_ratio = self._check_inf_values(X)
-                zero_ratio = self._check_zero_values(X)
+            # 1. 기본 데이터 품질 체크
+            nan_ratio = self._check_nan_values(X)
+            inf_ratio = self._check_inf_values(X)
+            zero_ratio = self._check_zero_values(X)
 
-                # 2. 피처 스케일 불균형 체크
-                scale_imbalance = self._check_scale_imbalance(X)
+            # 2. 피처 스케일 불균형 체크
+            scale_imbalance = self._check_scale_imbalance(X)
 
-                # 3. 이상값 검출
-                outlier_ratio = self._detect_outliers(X)
+            # 3. 이상값 검출
+            outlier_ratio = self._detect_outliers(X)
 
-                # 4. 타겟 분포 분석
-                class_imbalance_ratio = None
-                if y is not None:
-                    class_imbalance_ratio = self._analyze_target_distribution(y)
+            # 4. 타겟 분포 분석
+            class_imbalance_ratio = None
+            if y is not None:
+                class_imbalance_ratio = self._analyze_target_distribution(y)
 
-                # 5. 피처 상관관계 분석
-                correlation_issues = self._check_feature_correlation(X, feature_names)
+            # 5. 피처 상관관계 분석
+            correlation_issues = self._check_feature_correlation(X, feature_names)
 
-                # 6. 데이터 드리프트 검출
-                drift_score = self._detect_data_drift(X)
+            # 6. 데이터 드리프트 검출
+            drift_score = self._detect_data_drift(X)
 
-                # 7. 전체 품질 점수 계산
-                quality_score = self._calculate_quality_score(
-                    nan_ratio,
-                    inf_ratio,
-                    scale_imbalance,
-                    outlier_ratio,
-                    class_imbalance_ratio,
-                    len(correlation_issues),
-                    drift_score,
-                )
+            # 7. 전체 품질 점수 계산
+            quality_score = self._calculate_quality_score(
+                nan_ratio,
+                inf_ratio,
+                scale_imbalance,
+                outlier_ratio,
+                class_imbalance_ratio,
+                len(correlation_issues),
+                drift_score,
+            )
 
-                # 8. 개선 권장사항 생성
-                recommendations = self._generate_recommendations(
-                    nan_ratio,
-                    inf_ratio,
-                    scale_imbalance,
-                    outlier_ratio,
-                    class_imbalance_ratio,
-                    correlation_issues,
-                    drift_score,
-                )
+            # 8. 개선 권장사항 생성
+            recommendations = self._generate_recommendations(
+                nan_ratio,
+                inf_ratio,
+                scale_imbalance,
+                outlier_ratio,
+                class_imbalance_ratio,
+                correlation_issues,
+                drift_score,
+            )
 
-                # 보고서 생성
-                report = DataQualityReport(
-                    nan_ratio=nan_ratio,
-                    inf_ratio=inf_ratio,
-                    zero_ratio=zero_ratio,
-                    scale_imbalance=scale_imbalance,
-                    outlier_ratio=outlier_ratio,
-                    class_imbalance_ratio=class_imbalance_ratio,
-                    feature_correlation_issues=correlation_issues,
-                    data_drift_score=drift_score,
-                    quality_score=quality_score,
-                    recommendations=recommendations,
-                )
+            # 보고서 생성
+            report = DataQualityReport(
+                nan_ratio=nan_ratio,
+                inf_ratio=inf_ratio,
+                zero_ratio=zero_ratio,
+                scale_imbalance=scale_imbalance,
+                outlier_ratio=outlier_ratio,
+                class_imbalance_ratio=class_imbalance_ratio,
+                feature_correlation_issues=correlation_issues,
+                data_drift_score=drift_score,
+                quality_score=quality_score,
+                recommendations=recommendations,
+            )
 
-                self.logger.info(f"데이터 검증 완료 - 품질 점수: {quality_score:.3f}")
-                return report
+            self.logger.info(f"데이터 검증 완료 - 품질 점수: {quality_score:.3f}")
+            return report
 
         except Exception as e:
             self.logger.error(f"데이터 검증 중 오류: {e}")

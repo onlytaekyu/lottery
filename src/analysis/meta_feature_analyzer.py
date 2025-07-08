@@ -6,16 +6,13 @@
 """
 
 import numpy as np
-import pandas as pd
 from typing import Dict, Any, List, Tuple, Optional
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.feature_selection import SelectKBest, f_regression, mutual_info_regression
-from sklearn.model_selection import cross_val_score
 import json
-from datetime import datetime
 
 # 기존 시스템 import
 from ..utils.unified_logging import get_logger

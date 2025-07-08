@@ -10,16 +10,13 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
-import math
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 import warnings
 
 warnings.filterwarnings("ignore")
 
 from ..utils.unified_logging import get_logger
-from ..utils.memory_manager import MemoryManager
-from ..utils.cuda_singleton_manager import CudaSingletonManager
+from ..shared.types import PreprocessedData
 
 logger = get_logger(__name__)
 
@@ -179,12 +176,10 @@ class OptimizedAutoEncoderPreprocessor:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.logger = get_logger(__name__)
-        self.memory_manager = MemoryManager()
-        self.cuda_manager = CudaSingletonManager()
 
         # 디바이스 설정
         self.device = torch.device(
-            "cuda" if self.cuda_manager.is_available() else "cpu"
+            "cuda" if torch.cuda.is_available() else "cpu"
         )
 
         # VAE 설정
@@ -399,7 +394,7 @@ class OptimizedAutoEncoderPreprocessor:
         # 실제 구현에서는 네트워크 구조를 동적으로 조정할 수 있음
         return vae
 
-        def _extract_latent_representation(self, X: np.ndarray) -> np.ndarray:
+    def _extract_latent_representation(self, X: np.ndarray) -> np.ndarray:
         """잠재 표현 추출"""
         
         if self.vae is None:
@@ -534,3 +529,58 @@ class OptimizedAutoEncoderPreprocessor:
         print(f"  • GPU 가속: {'활성화' if self.device.type == 'cuda' else '비활성화'}")
 
         print("=" * 60)
+
+    def preprocess(self, data: np.ndarray) -> PreprocessedData:
+        """
+        데이터를 전처리합니다.
+
+        Args:
+            data: 입력 데이터
+
+        Returns:
+            PreprocessedData: 전처리된 데이터와 메타데이터
+        """
+
+        try:
+            self.logger.info("AutoEncoder 최적화 전처리 시작")
+
+            with self.memory_manager.get_context("autoencoder_preprocessing"):
+                # 1. 데이터 정규화
+                self.logger.info("데이터 정규화...")
+                X_scaled = self.scaler.fit_transform(data)
+
+                # 2. VAE 학습
+                self.logger.info("VAE 학습...")
+                self.vae = self._train_vae(X_scaled)
+
+                # 3. 잠재 표현 추출
+                self.logger.info("잠재 표현 추출...")
+                X_encoded = self._extract_latent_representation(X_scaled)
+
+                # 4. 재구성 품질 평가
+                reconstruction_quality = self._evaluate_reconstruction_quality(X_scaled)
+
+                # 메타데이터 생성
+                metadata = {
+                    "latent_dim": self.vae_config.latent_dim,
+                    "reconstruction_loss": reconstruction_quality[
+                        "reconstruction_loss"
+                    ],
+                    "kl_divergence": reconstruction_quality["kl_divergence"],
+                    "total_loss": reconstruction_quality["total_loss"],
+                    "compression_ratio": data.shape[1] / X_encoded.shape[1],
+                }
+
+                self.fitted = True
+                self.logger.info(
+                    f"AutoEncoder 전처리 완료 - 압축률: {metadata['compression_ratio']:.2f}x"
+                )
+
+                return PreprocessedData(
+                    data=X_encoded,
+                    metadata=metadata
+                )
+
+        except Exception as e:
+            self.logger.error(f"AutoEncoder 전처리 중 오류: {e}")
+            raise

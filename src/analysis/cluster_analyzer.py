@@ -9,13 +9,23 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Dict, Tuple, Set, Optional, Any
-from pathlib import Path
+from typing import List, Dict, Tuple, Optional, Any
 from ..utils.unified_logging import get_logger
 from sklearn.metrics import silhouette_score
 from sklearn.cluster import KMeans, DBSCAN
-import json
 from .base_analyzer import BaseAnalyzer
+
+# GPU 가속 라이브러리 (cuML, CuPy)
+try:
+    import cuml
+    from cuml.cluster import KMeans as cuKMeans
+    import cupy as cp
+    CUML_AVAILABLE = True
+except ImportError:
+    cuml = None
+    cuKMeans = None
+    cp = None
+    CUML_AVAILABLE = False
 
 logger = get_logger(__name__)
 
@@ -103,6 +113,14 @@ class ClusterAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         config = config or {}
         super().__init__(config, name="cluster")
 
+        # GPU 장치 설정
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.gpu_enabled = self.device.type == 'cuda' and CUML_AVAILABLE
+        if self.gpu_enabled:
+            logger.info("🚀 cuML 및 CuPy 사용 가능. 클러스터 분석에 GPU 가속을 사용합니다.")
+        elif self.device.type == 'cuda' and not CUML_AVAILABLE:
+            logger.warning("cuML 또는 CuPy를 찾을 수 없습니다. GPU 가속을 사용할 수 없습니다.")
+
         # DBSCAN 사용 여부
         self.use_dbscan = False
         if "clustering" in config and "use_dbscan" in config["clustering"]:
@@ -173,6 +191,38 @@ class ClusterAnalyzer(BaseAnalyzer[Dict[str, Any]]):
                 "cluster_embedding_quality": {},
                 "cluster_groups": {},
             }
+
+    def _gpu_clustering(self, embeddings: np.ndarray, n_clusters: int) -> np.ndarray:
+        """
+        GPU(cuML)를 사용하여 K-Means 클러스터링을 수행합니다.
+
+        Args:
+            embeddings: 임베딩 벡터 (NumPy)
+            n_clusters: 클러스터 수
+
+        Returns:
+            클러스터 레이블 (NumPy)
+        """
+        if not self.gpu_enabled:
+            raise RuntimeError("cuML이 설치되지 않았거나 GPU를 사용할 수 없습니다.")
+
+        try:
+            # NumPy 배열을 CuPy 배열로 변환
+            gpu_embeddings = cp.asarray(embeddings, dtype=cp.float32)
+
+            # cuML K-Means 모델 초기화 및 학습
+            gpu_kmeans = cuKMeans(n_clusters=n_clusters, random_state=42)
+            labels_gpu = gpu_kmeans.fit_predict(gpu_embeddings)
+
+            # CuPy 배열을 NumPy 배열로 변환하여 반환
+            return cp.asnumpy(labels_gpu)
+
+        except Exception as e:
+            logger.error(f"GPU 클러스터링 실패: {e}. CPU로 폴백합니다.")
+            # 실패 시 CPU KMeans 사용
+            kmeans = KMeans(n_clusters=n_clusters, n_init="auto", random_state=42)
+            labels = kmeans.fit_predict(embeddings)
+            return labels
 
     def _compute_cluster_quality(
         self, embeddings: np.ndarray, labels: np.ndarray
@@ -363,178 +413,86 @@ class ClusterAnalyzer(BaseAnalyzer[Dict[str, Any]]):
         Returns:
             Dict[str, Any]: 클러스터 분석 결과
         """
-        # 결과 초기화
-        result = {
-            "clusters": [],
-            "adjacency_matrix": None,
-            "embedding": None,
-            "cluster_embedding_quality": {},
-            "cluster_groups": {},
-        }
+        self.logger.info(f"{len(draw_history)}개의 데이터를 사용하여 클러스터 분석을 시작합니다.")
 
-        # 충분한 데이터가 있는지 확인
-        if not draw_history or len(draw_history) < 5:
-            self.logger.warning("분석할 충분한 데이터가 없습니다.")
-            return result
+        # 번호 임베딩 생성
+        embeddings = self._create_number_embeddings(draw_history)
+        if embeddings is None or len(embeddings) < 2:
+            self.logger.warning("유효한 임베딩을 생성할 수 없어 분석을 중단합니다.")
+            return {
+                "clusters": [],
+                "error": "임베딩 생성 실패",
+            }
 
-        # 동시 출현 그래프 구성
-        adjacency_matrix = build_pair_graph(draw_history)
-        result["adjacency_matrix"] = adjacency_matrix.tolist()
+        labels = None
+        cluster_count = self.n_clusters
 
-        # 그래프 특성 추출 (연결 중심성)
-        graph_features = np.sum(adjacency_matrix, axis=1)
-
-        # 번호별 출현 빈도 계산
-        number_counts = np.zeros(45)
-        for draw in draw_history:
-            for num in draw:
-                if 1 <= num <= 45:
-                    number_counts[num - 1] += 1
-
-        # 빈도 정규화
-        if len(draw_history) > 0:
-            node_features = number_counts / len(draw_history)
-        else:
-            node_features = number_counts
-
-        # 그래프 임베딩을 위한 특성 행렬 구성
-        # 빈도와 연결성을 결합한 특성
-        embeddings = np.column_stack((node_features, graph_features))
-        result["embedding"] = embeddings.tolist()
-
-        # 클러스터링 수행
-        cluster_labels = np.zeros(len(embeddings), dtype=np.int32)
-
-        # 자동 클러스터 수 조정 기능 강화
-        if self.auto_adjust_clusters and not self.use_dbscan:
-            # 최적의 클러스터 수 탐색 (min_clusters ~ max_clusters)
+        # 자동 클러스터 수 조정
+        if self.auto_adjust_clusters:
+            self.logger.info("최적의 클러스터 수를 자동으로 탐색합니다...")
             best_score = -1
-            best_labels = np.zeros(len(embeddings), dtype=np.int32)
-            best_n_clusters = self.n_clusters  # 기본값
+            best_k = self.n_clusters
 
-            for n_clusters in range(
-                self.min_clusters, min(self.max_clusters + 1, len(embeddings))
-            ):
-                try:
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    labels = kmeans.fit_predict(embeddings)
+            for k in range(self.min_clusters, self.max_clusters + 1):
+                if self.gpu_enabled:
+                    # GPU 클러스터링
+                    current_labels = self._gpu_clustering(embeddings, k)
+                else:
+                    # CPU 클러스터링
+                    kmeans = KMeans(n_clusters=k, n_init='auto', random_state=42)
+                    current_labels = kmeans.fit_predict(embeddings)
 
-                    # 클러스터가 2개 이상일 때만 실루엣 점수 계산
-                    if len(np.unique(labels)) > 1:
-                        try:
-                            score = silhouette_score(embeddings, labels)
-                            self.logger.info(
-                                f"클러스터 수 {n_clusters}의 실루엣 점수: {score:.3f}"
-                            )
+                # 실루엣 점수 계산 (데이터 일부 샘플링)
+                sample_size = min(len(embeddings), 1000)
+                score = silhouette_score(embeddings, current_labels, sample_size=sample_size)
+                self.logger.debug(f"k={k}일 때 실루엣 점수: {score:.4f}")
 
-                            if score > best_score:
-                                best_score = score
-                                best_labels = labels
-                                best_n_clusters = n_clusters
-                        except:
-                            pass
-                except Exception as e:
-                    self.logger.warning(f"클러스터 수 {n_clusters} 시도 중 오류: {e}")
+                if score > best_score:
+                    best_score = score
+                    best_k = k
 
-            # 최적의 클러스터 수를 발견했으면 사용
-            if best_score > 0:
-                self.logger.info(
-                    f"최적의 클러스터 수: {best_n_clusters} (실루엣 점수: {best_score:.3f})"
-                )
-                cluster_labels = best_labels
-            else:
-                # 기본 클러스터 수 사용
-                self.logger.warning(
-                    f"최적의 클러스터 수를 찾지 못했습니다. 기본값 {self.n_clusters} 사용"
-                )
-                kmeans = KMeans(n_clusters=self.n_clusters, random_state=42, n_init=10)
-                cluster_labels = kmeans.fit_predict(embeddings)
-        elif self.use_dbscan:
-            # DBSCAN 사용 (밀도 기반 클러스터링)
-            try:
-                dbscan = DBSCAN(eps=self.eps, min_samples=self.min_samples)
-                cluster_labels = dbscan.fit_predict(embeddings)
-                self.logger.info(
-                    f"DBSCAN 클러스터링 결과: {len(np.unique(cluster_labels))}개 클러스터 (노이즈 포함)"
-                )
-            except Exception as e:
-                self.logger.error(f"DBSCAN 클러스터링 실패: {e}")
+            cluster_count = best_k
+            self.logger.info(f"최적의 클러스터 수: {cluster_count} (실루엣 점수: {best_score:.4f})")
+
+        # 최종 클러스터링 수행
+        if self.use_dbscan:
+            self.logger.info("DBSCAN 클러스터링을 수행합니다...")
+            dbscan = DBSCAN(eps=self.eps, min_samples=self.min_samples)
+            labels = dbscan.fit_predict(embeddings)
         else:
-            # 자동 조정 없이 기본 KMeans 사용
-            try:
-                kmeans = KMeans(n_clusters=self.n_clusters, random_state=42, n_init=10)
-                cluster_labels = kmeans.fit_predict(embeddings)
-            except Exception as e:
-                self.logger.error(f"KMeans 클러스터링 실패: {e}")
+            self.logger.info(f"K-Means 클러스터링을 수행합니다 (k={cluster_count})...")
+            if self.gpu_enabled:
+                labels = self._gpu_clustering(embeddings, cluster_count)
+            else:
+                kmeans = KMeans(n_clusters=cluster_count, n_init='auto', random_state=42)
+                labels = kmeans.fit_predict(embeddings)
 
-        # 클러스터 품질 계산
-        quality_metrics = self._compute_cluster_quality(embeddings, cluster_labels)
-        result["cluster_embedding_quality"] = quality_metrics
+        if labels is None:
+            self.logger.error("클러스터링 레이블을 생성하지 못했습니다.")
+            return {"clusters": [], "error": "레이블 생성 실패"}
 
-        # 클러스터 품질 확인 및 경고
-        silhouette = quality_metrics.get("silhouette_score", 0.0)
-        cluster_count = quality_metrics.get("cluster_count", 0)
+        # 클러스터 품질 평가
+        self.logger.info("클러스터 품질을 평가합니다...")
+        quality_metrics = self._compute_cluster_quality(embeddings, labels)
+        self.logger.info(f"클러스터 품질: {quality_metrics}")
 
-        if silhouette < self.min_silhouette_score:
-            self.logger.warning(
-                f"낮은 클러스터 품질: 실루엣 점수 {silhouette:.3f} < {self.min_silhouette_score}"
-            )
-            if not self.use_dbscan:
-                self.logger.info(f"DBSCAN으로 클러스터링 재시도")
-                try:
-                    # DBSCAN으로 재시도
-                    dbscan = DBSCAN(eps=0.4, min_samples=3)  # 더 관대한 파라미터
-                    new_labels = dbscan.fit_predict(embeddings)
-                    new_quality = self._compute_cluster_quality(embeddings, new_labels)
-
-                    if new_quality.get("silhouette_score", 0.0) > silhouette:
-                        self.logger.info(
-                            f"DBSCAN 결과가 더 좋음: {new_quality.get('silhouette_score', 0.0):.3f} > {silhouette:.3f}"
-                        )
-                        cluster_labels = new_labels
-                        result["cluster_embedding_quality"] = new_quality
-                except Exception as e:
-                    self.logger.error(f"DBSCAN 재시도 실패: {e}")
-
-        if cluster_count <= 1:
-            self.logger.warning(
-                f"클러스터가 하나뿐입니다. 클러스터 기반 특성이 유용하지 않을 수 있습니다."
-            )
-
-        # 클러스터 결과 저장
-        for i in range(1, 46):  # 로또 번호 1-45
-            cluster_id = int(cluster_labels[i - 1])
-            result["clusters"].append(
-                {
-                    "number": i,
-                    "cluster": cluster_id,
-                    "frequency": float(node_features[i - 1]),
-                    "connections": float(graph_features[i - 1]),
-                }
-            )
-
-        # 클러스터별 번호 그룹화
+        # 결과 정리 및 반환
         cluster_groups = {}
-        for i, label in enumerate(cluster_labels):
-            label_str = str(label)
-            if label_str not in cluster_groups:
-                cluster_groups[label_str] = []
-            cluster_groups[label_str].append(i + 1)  # 인덱스를 로또 번호(1-45)로 변환
+        unique_labels = np.unique(labels)
+        for label in unique_labels:
+            if label == -1:  # DBSCAN의 노이즈
+                continue
+            cluster_groups[int(label)] = (
+                np.where(labels == label)[0] + 1
+            ).tolist()
 
-        # 클러스터 그룹 정보 추가
-        result["cluster_groups"] = cluster_groups
-
-        # 클러스터 품질 메트릭스를 특성 벡터로 변환하여 저장
-        try:
-            cluster_feature_vector = self.create_cluster_feature_vector(
-                result["cluster_embedding_quality"]
-            )
-            result["cluster_feature_vector"] = cluster_feature_vector.tolist()
-        except Exception as e:
-            self.logger.error(f"클러스터 특성 벡터 생성 실패: {e}")
-            result["cluster_feature_vector"] = []
-
-        return result
+        return {
+            "clusters": labels.tolist(),
+            "adjacency_matrix": None,  # 필요 시 생성 로직 추가
+            "embedding": embeddings.tolist(),
+            "cluster_embedding_quality": quality_metrics,
+            "cluster_groups": cluster_groups,
+        }
 
     def create_cluster_feature_vector(
         self, quality_metrics: Dict[str, Any]

@@ -5,18 +5,11 @@
 """
 
 import numpy as np
-import pandas as pd
-from typing import Dict, Any, List, Set, Tuple, Optional, Union
-from collections import Counter, defaultdict
-from scipy import stats
-from statsmodels.tsa.stattools import adfuller
-from statsmodels.tsa.seasonal import seasonal_decompose
-from pathlib import Path
-import json
+from typing import Dict, Any, List, Optional, Union
+from collections import Counter
 
 # logging 제거 - unified_logging 사용
 import time
-from datetime import datetime
 
 from ..utils.unified_logging import get_logger
 from ..shared.types import LotteryNumber
@@ -44,6 +37,8 @@ class TrendAnalyzer(BaseAnalyzer):
         super().__init__(config, analyzer_type="trend")
         self.trend_window = 50
         self.segment_window = 20
+        
+        logger.info("TrendAnalyzer가 CPU 모드로 초기화되었습니다.")
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
@@ -117,7 +112,7 @@ class TrendAnalyzer(BaseAnalyzer):
         self, draw_numbers: List[List[int]]
     ) -> Dict[str, float]:
         """
-        번호별 출현 빈도 추세 분석
+        번호별 출현 빈도의 추세를 분석합니다.
 
         Args:
             draw_numbers: 회차별 당첨 번호

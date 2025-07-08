@@ -7,17 +7,14 @@ import asyncio
 import torch
 import numpy as np
 import time
-import threading
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from .unified_logging import get_logger
-from .unified_config import get_config
-from .compute_strategy import (
+from .unified_performance_engine import (
     get_compute_executor,
     get_optimal_compute_selector,
     smart_execute,
     TaskType,
-    ComputeStrategy,
 )
 from .unified_memory_manager import (
     get_unified_memory_manager,
@@ -89,7 +86,7 @@ class IntegratedSystemTester:
 
         try:
             # 1. 전략 선택 테스트
-            selector = get_optimal_compute_selector()
+            get_optimal_compute_selector()
 
             # 작은 데이터 (CPU 선택 예상)
             small_data = np.random.rand(100)
@@ -462,7 +459,7 @@ class IntegratedSystemTester:
         try:
             # 1. 시스템 통합 테스트
             memory_manager = get_unified_memory_manager()
-            compute_executor = get_compute_executor()
+            get_compute_executor()
 
             # 대용량 데이터 처리 테스트
             large_data = np.random.rand(5000, 1000)

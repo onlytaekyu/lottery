@@ -7,15 +7,15 @@ Dilated convolution과 residual connection을 활용한 시계열 예측 모델�
 
 # 1. 표준 라이브러리
 import os
-import json
 import time
-from typing import Any, Dict, Optional, List, Tuple, Union
+from typing import Any, Dict, Optional, List, Tuple
+import asyncio
+from dataclasses import dataclass
 
 # 2. 서드파티
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
@@ -24,8 +24,46 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 # 3. 프로젝트 내부
 from ..base_model import ModelWithAMP
 from ...utils.unified_logging import get_logger
+from ...utils.unified_memory_manager import get_unified_memory_manager
+from ...utils.cuda_optimizers import get_cuda_optimizer
+from ...utils.enhanced_process_pool import get_enhanced_process_pool
+from ...utils.unified_async_manager import get_unified_async_manager
+from ...utils.cache_manager import CacheManager
+
+# TensorRT 지원 (선택적)
+try:
+    import torch_tensorrt
+    TENSORRT_AVAILABLE = True
+except ImportError:
+    TENSORRT_AVAILABLE = False
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class TCNOptimizationConfig:
+    """TCN 최적화 설정"""
+    # TensorRT 설정
+    enable_tensorrt: bool = True
+    tensorrt_precision: str = "fp16"  # fp32, fp16, int8
+    tensorrt_workspace_size: int = 1 << 30  # 1GB
+    
+    # 메모리 관리
+    enable_memory_optimization: bool = True
+    memory_pool_size: int = 2 * 1024 * 1024 * 1024  # 2GB
+    
+    # 캐시 설정
+    enable_cache: bool = True
+    cache_ttl: int = 3600  # 1시간
+    max_cache_size: int = 1000
+    
+    # 비동기 처리
+    enable_async: bool = True
+    async_batch_size: int = 32
+    
+    # 성능 모니터링
+    enable_monitoring: bool = True
+    profiling_enabled: bool = True
 
 
 class Chomp1d(nn.Module):
@@ -280,23 +318,39 @@ class TCNModel(ModelWithAMP):
     미래 번호 출현 확률을 예측합니다.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any]] = None,
+        cache_manager: Optional[CacheManager] = None
+    ):
         """
-        TCN 모델 초기화
+        TCN 모델 초기화 (통합 최적화)
 
         Args:
             config: 모델 설정
         """
         super().__init__(config)
-        self.device = torch.device(
-            "cuda"
-            if config and config.get("use_gpu", False) and torch.cuda.is_available()
-            else "cpu"
-        )
-
+        
         # 모델 설정
         self.config = config or {}
         tcn_config = self.config.get("tcn", {})
+
+        # 최적화 설정
+        self.opt_config = TCNOptimizationConfig()
+        if "tcn_optimization" in self.config:
+            opt_params = self.config["tcn_optimization"]
+            for key, value in opt_params.items():
+                if hasattr(self.opt_config, key):
+                    setattr(self.opt_config, key, value)
+
+        # 통합 시스템 초기화
+        self.memory_manager = get_unified_memory_manager()
+        self.cuda_optimizer = get_cuda_optimizer()
+        self.process_pool = get_enhanced_process_pool()
+        self.async_manager = get_unified_async_manager()
+
+        # 캐시 시스템 초기화
+        self.cache_manager = cache_manager
 
         # TCN 아키텍처 설정
         self.input_dim = tcn_config.get("input_dim", 45)
@@ -311,26 +365,50 @@ class TCNModel(ModelWithAMP):
         # 학습 설정
         self.learning_rate = tcn_config.get("learning_rate", 0.001)
         self.weight_decay = tcn_config.get("weight_decay", 1e-5)
-        self.batch_size = tcn_config.get("batch_size", 64)
+        self.base_batch_size = tcn_config.get("batch_size", 64)
+        self.batch_size = self.base_batch_size
 
         # 시계열 설정
         self.sequence_length = tcn_config.get("sequence_length", 50)
         self.prediction_horizon = tcn_config.get("prediction_horizon", 1)
         self.use_attention = tcn_config.get("use_attention", False)
 
+        # GPU 최적화 설정
+        self.use_data_parallel = tcn_config.get("use_data_parallel", False)
+        self.adaptive_batch_size = tcn_config.get("adaptive_batch_size", True)
+        self.max_memory_usage = tcn_config.get("max_memory_usage", 0.8)
+
         # 모델 이름
-        self.model_name = "TCNModel"
+        self.model_name = "TCNModel_v2"
+
+        # TensorRT 설정
+        self.tensorrt_model = None
+        self.use_tensorrt = (
+            self.opt_config.enable_tensorrt and 
+            TENSORRT_AVAILABLE and 
+            self.cuda_optimizer.is_available()
+        )
+
+        # 성능 통계
+        self.performance_stats = {
+            "total_fits": 0,
+            "total_predictions": 0,
+            "cache_hits": 0,
+            "tensorrt_accelerated": 0,
+            "avg_fit_time": 0.0,
+            "avg_predict_time": 0.0,
+            "memory_efficiency": 0.0
+        }
 
         # 모델 구성
         self._build_model()
 
-        logger.info(f"TCN 모델 초기화 완료: {self.model_name}")
-        logger.info(
-            f"아키텍처: channels={self.num_channels}, kernel_size={self.kernel_size}"
-        )
-        logger.info(
-            f"시퀀스 길이: {self.sequence_length}, 수용 영역: {self._get_receptive_field()}"
-        )
+        logger.info(f"TCN 모델 v2.0 초기화 완료: {self.model_name}")
+        logger.info(f"장치: {self.device} (GPU 사용 가능: {self.device_manager.gpu_available})")
+        logger.info(f"아키텍처: channels={self.num_channels}, kernel_size={self.kernel_size}")
+        logger.info(f"시퀀스 길이: {self.sequence_length}, 수용 영역: {self._get_receptive_field()}")
+        logger.info(f"배치 크기: {self.batch_size} (적응형: {self.adaptive_batch_size})")
+        logger.info(f"최적화 설정: TensorRT={self.use_tensorrt}, 캐시={self.opt_config.enable_cache}")
 
     def _build_model(self):
         """TCN 모델 구성"""
@@ -344,6 +422,11 @@ class TCNModel(ModelWithAMP):
             use_weight_norm=self.use_weight_norm,
             output_dim=self.output_dim,
         ).to(self.device)
+
+        # DataParallel 적용 (다중 GPU 사용 시)
+        if self.use_data_parallel and torch.cuda.device_count() > 1:
+            self.model = nn.DataParallel(self.model)
+            logger.info(f"DataParallel 적용: {torch.cuda.device_count()}개 GPU 사용")
 
         # 옵티마이저 설정
         self.optimizer = optim.AdamW(
@@ -359,6 +442,32 @@ class TCNModel(ModelWithAMP):
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode="min", factor=0.5, patience=10, verbose=True
         )
+
+    def _adjust_batch_size(self, current_memory_usage: float) -> int:
+        """
+        GPU 메모리 사용량에 따른 배치 크기 동적 조정
+
+        Args:
+            current_memory_usage: 현재 메모리 사용률 (0-1)
+
+        Returns:
+            조정된 배치 크기
+        """
+        if not self.adaptive_batch_size or not self.device_manager.gpu_available:
+            return self.batch_size
+
+        if current_memory_usage > self.max_memory_usage:
+            # 메모리 사용량이 높으면 배치 크기 감소
+            new_batch_size = max(8, self.batch_size // 2)
+            logger.info(f"메모리 사용량 높음 ({current_memory_usage:.1%}), 배치 크기 감소: {self.batch_size} -> {new_batch_size}")
+            self.batch_size = new_batch_size
+        elif current_memory_usage < 0.5 and self.batch_size < self.base_batch_size:
+            # 메모리 여유가 있으면 배치 크기 증가
+            new_batch_size = min(self.base_batch_size, self.batch_size * 2)
+            logger.info(f"메모리 여유 있음 ({current_memory_usage:.1%}), 배치 크기 증가: {self.batch_size} -> {new_batch_size}")
+            self.batch_size = new_batch_size
+
+        return self.batch_size
 
     def _get_receptive_field(self) -> int:
         """수용 영역 계산"""
@@ -417,7 +526,7 @@ class TCNModel(ModelWithAMP):
         shuffle: bool = True,
     ) -> DataLoader:
         """
-        PyTorch DataLoader 생성
+        PyTorch DataLoader 생성 (GPU 최적화)
 
         Args:
             X: 입력 데이터
@@ -429,8 +538,15 @@ class TCNModel(ModelWithAMP):
             DataLoader 객체
         """
         if batch_size is None:
-            batch_size = self.batch_size
+            # GPU 메모리 사용량 확인 후 배치 크기 조정
+            memory_info = self.device_manager.check_memory_usage()
+            if memory_info.get("gpu_available", False):
+                current_usage = memory_info.get("usage_percent", 0) / 100
+                batch_size = self._adjust_batch_size(current_usage)
+            else:
+                batch_size = self.batch_size
 
+        # 데이터를 tensor로 변환 (GPU로 이동은 훈련 시에 수행)
         X_tensor = torch.FloatTensor(X)
 
         if y is not None:
@@ -439,11 +555,18 @@ class TCNModel(ModelWithAMP):
         else:
             dataset = TensorDataset(X_tensor)
 
-        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+        # DataLoader 설정 (GPU 사용 시 pin_memory=True)
+        return DataLoader(
+            dataset, 
+            batch_size=batch_size, 
+            shuffle=shuffle,
+            pin_memory=self.device_manager.gpu_available,
+            num_workers=2 if self.device_manager.gpu_available else 0
+        )
 
     def _train_epoch(self, train_loader: DataLoader) -> float:
         """
-        한 에포크 훈련
+        한 에포크 훈련 (GPU 최적화)
 
         Args:
             train_loader: 훈련 데이터 로더
@@ -455,21 +578,41 @@ class TCNModel(ModelWithAMP):
         total_loss = 0.0
         num_batches = 0
 
-        for batch_data in train_loader:
-            if len(batch_data) == 2:
-                inputs, targets = batch_data
-                inputs, targets = inputs.to(self.device), targets.to(self.device)
-            else:
-                inputs = batch_data[0].to(self.device)
-                targets = None
+        for batch_idx, batch_data in enumerate(train_loader):
+            try:
+                if len(batch_data) == 2:
+                    inputs, targets = batch_data
+                    # GPU로 데이터 이동 (non_blocking=True로 최적화)
+                    inputs = self.device_manager.to_device(inputs)
+                    targets = self.device_manager.to_device(targets)
+                else:
+                    inputs = self.device_manager.to_device(batch_data[0])
+                    targets = None
 
-            # AMP를 사용한 훈련 스텝
-            if targets is not None:
-                loss = self.train_step_with_amp(
-                    self.model, inputs, targets, self.optimizer, self.criterion
-                )
-                total_loss += loss
-                num_batches += 1
+                # AMP를 사용한 훈련 스텝
+                if targets is not None:
+                    loss = self.train_step_with_amp(
+                        self.model, inputs, targets, self.optimizer, self.criterion
+                    )
+                    total_loss += loss
+                    num_batches += 1
+
+                # 주기적으로 GPU 메모리 상태 확인
+                if batch_idx % 50 == 0 and self.device_manager.gpu_available:
+                    memory_info = self.device_manager.check_memory_usage()
+                    if memory_info.get("usage_percent", 0) > 90:
+                        logger.warning(f"GPU 메모리 사용량 높음: {memory_info.get('usage_percent', 0):.1f}%")
+
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    logger.warning(f"배치 {batch_idx}에서 GPU 메모리 부족, 캐시 정리 후 배치 크기 감소")
+                    self.device_manager.clear_cache()
+                    # 배치 크기 감소
+                    self.batch_size = max(8, self.batch_size // 2)
+                    logger.info(f"배치 크기 감소: {self.batch_size}")
+                    continue
+                else:
+                    raise
 
         return total_loss / max(num_batches, 1)
 
@@ -1079,3 +1222,387 @@ class TCNModel(ModelWithAMP):
         self.model.eval()  # 다시 평가 모드로
 
         return mean_pred, std_pred
+
+    # ========================================
+    # 새로운 통합 최적화 메서드들 (v2.0)
+    # ========================================
+
+    async def predict_async(self, X: np.ndarray, **kwargs) -> np.ndarray:
+        """
+        비동기 예측 메서드
+
+        Args:
+            X: 입력 데이터
+            **kwargs: 추가 매개변수
+
+        Returns:
+            예측 결과
+        """
+        if not self.is_trained:
+            raise ValueError("모델이 학습되지 않았습니다.")
+
+        logger.info(f"비동기 예측 시작: 입력 형태={X.shape}")
+
+        # 캐시 확인
+        cache_key = None
+        if self.cache_manager:
+            cache_key = self._generate_cache_key(X, "predict_async")
+            cached_result = self.cache_manager.get(cache_key)
+            if cached_result is not None:
+                logger.info("캐시에서 비동기 예측 결과 로드")
+                self.performance_stats["cache_hits"] += 1
+                return cached_result
+
+        # 시퀀스 준비
+        X_sequences, _ = self._prepare_sequences(X)
+
+        # 비동기 예측 수행
+        predictions = await self._async_predict_internal(X_sequences)
+
+        # 캐시 저장
+        if self.cache_manager and cache_key:
+            self.cache_manager.set(cache_key, predictions)
+
+        logger.info("비동기 예측 완료")
+        return predictions
+
+    async def _async_predict_internal(self, X_sequences: np.ndarray) -> np.ndarray:
+        """내부 비동기 예측 구현"""
+        chunk_size = self.opt_config.async_batch_size
+        chunks = [X_sequences[i:i + chunk_size] for i in range(0, len(X_sequences), chunk_size)]
+        
+        tasks = []
+        for i, chunk in enumerate(chunks):
+            task = self.async_manager.create_task(
+                self._predict_chunk_async(chunk, i)
+            )
+            tasks.append(task)
+        
+        results = await asyncio.gather(*tasks)
+        return np.vstack(results)
+
+    async def _predict_chunk_async(self, chunk: np.ndarray, chunk_idx: int) -> np.ndarray:
+        """청크 비동기 예측"""
+        logger.debug(f"TCN 청크 {chunk_idx} 예측 시작")
+        
+        with self.memory_manager.optimize_context():
+            model_to_use = self.tensorrt_model if self.use_tensorrt and self.tensorrt_model else self.model
+            
+            model_to_use.eval()
+            with torch.no_grad():
+                chunk_tensor = torch.FloatTensor(chunk).to(self.device)
+                
+                if self.use_amp:
+                    with torch.cuda.amp.autocast():
+                        predictions = model_to_use(chunk_tensor)
+                else:
+                    predictions = model_to_use(chunk_tensor)
+                
+                result = predictions.cpu().numpy()
+        
+        logger.debug(f"TCN 청크 {chunk_idx} 예측 완료")
+        return result
+
+    def _generate_cache_key(self, X: np.ndarray, operation: str) -> str:
+        """캐시 키 생성"""
+        import hashlib
+        
+        # 데이터 해시
+        data_hash = hashlib.md5(X.tobytes()).hexdigest()[:16]
+        
+        # 설정 해시
+        config_str = f"{self.num_channels}_{self.kernel_size}_{self.sequence_length}_{operation}_{self.use_tensorrt}"
+        config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
+        
+        return f"tcn_{data_hash}_{config_hash}"
+
+    def optimize_with_tensorrt(self, sample_input: Optional[torch.Tensor] = None) -> bool:
+        """
+        TensorRT 최적화 수행
+
+        Args:
+            sample_input: 샘플 입력 텐서 (None이면 자동 생성)
+
+        Returns:
+            최적화 성공 여부
+        """
+        if not self.use_tensorrt or not TENSORRT_AVAILABLE:
+            logger.warning("TensorRT 최적화가 비활성화되어 있거나 사용할 수 없습니다.")
+            return False
+
+        if not self.is_trained:
+            logger.warning("모델이 학습되지 않았습니다. 학습 후 TensorRT 최적화를 수행하세요.")
+            return False
+
+        try:
+            logger.info("TensorRT 최적화 시작")
+            
+            # 샘플 입력 생성 (없는 경우)
+            if sample_input is None:
+                sample_input = torch.randn(1, self.sequence_length, self.input_dim).to(self.device)
+            
+            # 모델을 평가 모드로 전환
+            self.model.eval()
+            
+            # TensorRT 변환 설정
+            if self.opt_config.tensorrt_precision == "fp16":
+                precision = torch.half
+            elif self.opt_config.tensorrt_precision == "int8":
+                precision = torch.int8
+            else:
+                precision = torch.float32
+            
+            # TensorRT 모델 생성
+            self.tensorrt_model = torch_tensorrt.compile(
+                self.model,
+                inputs=[torch_tensorrt.Input(
+                    min_shape=sample_input.shape,
+                    opt_shape=sample_input.shape,
+                    max_shape=sample_input.shape,
+                    dtype=precision
+                )],
+                enabled_precisions={precision},
+                workspace_size=self.opt_config.tensorrt_workspace_size
+            )
+            
+            # 테스트 실행
+            with torch.no_grad():
+                test_output = self.tensorrt_model(sample_input)
+                logger.info(f"TensorRT 테스트 실행 성공: 출력 형태={test_output.shape}")
+            
+            logger.info("TensorRT 최적화 완료")
+            return True
+            
+        except Exception as e:
+            logger.error(f"TensorRT 최적화 실패: {str(e)}")
+            self.use_tensorrt = False
+            self.tensorrt_model = None
+            return False
+
+    def predict_optimized(self, X: np.ndarray, **kwargs) -> np.ndarray:
+        """
+        최적화된 예측 수행 (캐시 + TensorRT + 메모리 최적화)
+
+        Args:
+            X: 입력 데이터
+            **kwargs: 추가 매개변수
+
+        Returns:
+            예측 결과
+        """
+        if not self.is_trained:
+            raise ValueError("모델이 학습되지 않았습니다.")
+
+        logger.info(f"최적화된 예측 시작: 입력 형태={X.shape}")
+
+        # 캐시 확인
+        cache_key = None
+        if self.cache_manager:
+            cache_key = self._generate_cache_key(X, "predict_optimized")
+            cached_result = self.cache_manager.get(cache_key)
+            if cached_result is not None:
+                logger.info("캐시에서 최적화된 예측 결과 로드")
+                self.performance_stats["cache_hits"] += 1
+                return cached_result
+
+        # 메모리 최적화된 예측
+        with self.memory_manager.optimize_context():
+            start_time = time.time()
+            
+            # 시퀀스 준비
+            X_sequences, _ = self._prepare_sequences(X)
+            
+            # 최적화된 모델 선택
+            model_to_use = self.tensorrt_model if self.use_tensorrt and self.tensorrt_model else self.model
+            
+            # 예측 수행
+            predictions = []
+            model_to_use.eval()
+            
+            with torch.no_grad():
+                # 배치 크기 조정 (메모리 사용량 고려)
+                memory_info = self.device_manager.check_memory_usage()
+                if memory_info.get("gpu_available", False):
+                    current_usage = memory_info.get("usage_percent", 0) / 100
+                    batch_size = self._adjust_batch_size(current_usage)
+                else:
+                    batch_size = self.batch_size
+                
+                for i in range(0, len(X_sequences), batch_size):
+                    batch_X = X_sequences[i:i + batch_size]
+                    batch_tensor = torch.FloatTensor(batch_X).to(self.device)
+                    
+                    # AMP 사용 여부에 따라 예측 수행
+                    if self.use_amp:
+                        with torch.cuda.amp.autocast():
+                            batch_pred = model_to_use(batch_tensor)
+                    else:
+                        batch_pred = model_to_use(batch_tensor)
+                    
+                    predictions.append(batch_pred.cpu().numpy())
+                
+                # 결과 합치기
+                predictions = np.vstack(predictions)
+            
+            predict_time = time.time() - start_time
+
+        # 성능 통계 업데이트
+        self.performance_stats["total_predictions"] += 1
+        self.performance_stats["avg_predict_time"] = (
+            (self.performance_stats["avg_predict_time"] * (self.performance_stats["total_predictions"] - 1) + predict_time) /
+            self.performance_stats["total_predictions"]
+        )
+
+        # TensorRT 사용 시 통계 업데이트
+        if self.use_tensorrt and self.tensorrt_model:
+            self.performance_stats["tensorrt_accelerated"] += 1
+
+        # 캐시 저장
+        if self.cache_manager and cache_key:
+            self.cache_manager.set(cache_key, predictions)
+
+        logger.info(f"최적화된 예측 완료: 출력 형태={predictions.shape}, 소요 시간={predict_time:.3f}초")
+        return predictions
+
+    def get_performance_report(self) -> Dict[str, Any]:
+        """성능 보고서 생성"""
+        return {
+            "model_name": self.model_name,
+            "architecture": {
+                "num_channels": self.num_channels,
+                "kernel_size": self.kernel_size,
+                "sequence_length": self.sequence_length,
+                "output_dim": self.output_dim,
+                "receptive_field": self._get_receptive_field()
+            },
+            "optimization_config": {
+                "tensorrt_enabled": self.use_tensorrt,
+                "tensorrt_model_loaded": self.tensorrt_model is not None,
+                "cache_enabled": self.opt_config.enable_cache,
+                "async_enabled": self.opt_config.enable_async,
+                "memory_optimization": self.opt_config.enable_memory_optimization,
+                "amp_enabled": self.use_amp
+            },
+            "performance_stats": self.performance_stats,
+            "device_info": {
+                "device": str(self.device),
+                "gpu_available": self.device_manager.gpu_available,
+                "data_parallel": self.use_data_parallel
+            },
+            "memory_info": self.memory_manager.get_memory_info() if self.memory_manager else {},
+            "cuda_info": self.cuda_optimizer.get_device_info() if self.cuda_optimizer else {}
+        }
+
+    def optimize_memory_usage(self) -> Dict[str, Any]:
+        """메모리 사용량 최적화"""
+        logger.info("메모리 사용량 최적화 시작")
+        
+        optimization_results = {
+            "before": {},
+            "after": {},
+            "optimizations_applied": []
+        }
+        
+        # 현재 메모리 사용량 체크
+        if self.memory_manager:
+            optimization_results["before"] = self.memory_manager.get_memory_info()
+        
+        optimizations_applied = []
+        
+        # 1. 모델 가중치 최적화
+        if self.model:
+            try:
+                # 사용하지 않는 버퍼 정리
+                torch.cuda.empty_cache()
+                optimizations_applied.append("cuda_cache_clear")
+                
+                # 그래디언트 정리
+                self.model.zero_grad()
+                optimizations_applied.append("gradient_clear")
+                
+            except Exception as e:
+                logger.warning(f"모델 최적화 중 오류: {e}")
+        
+        # 2. 배치 크기 조정
+        if self.adaptive_batch_size:
+            memory_info = self.device_manager.check_memory_usage()
+            if memory_info.get("gpu_available", False):
+                current_usage = memory_info.get("usage_percent", 0) / 100
+                new_batch_size = self._adjust_batch_size(current_usage)
+                if new_batch_size != self.batch_size:
+                    optimizations_applied.append(f"batch_size_adjusted_{self.batch_size}_to_{new_batch_size}")
+        
+        # 3. 캐시 정리
+        if self.cache_manager:
+            cache_info = self.cache_manager.get_cache_info()
+            if cache_info.get("memory_usage", 0) > 100 * 1024 * 1024:  # 100MB 이상
+                self.cache_manager.clear_cache()
+                optimizations_applied.append("cache_cleared")
+        
+        # 최적화 후 메모리 사용량 체크
+        if self.memory_manager:
+            optimization_results["after"] = self.memory_manager.get_memory_info()
+        
+        optimization_results["optimizations_applied"] = optimizations_applied
+        
+        logger.info(f"메모리 최적화 완료: {len(optimizations_applied)}개 최적화 적용")
+        return optimization_results
+
+    def benchmark_performance(self, X: np.ndarray, n_runs: int = 10) -> Dict[str, Any]:
+        """성능 벤치마크 수행"""
+        logger.info(f"성능 벤치마크 시작: {n_runs}회 실행")
+        
+        if not self.is_trained:
+            raise ValueError("모델이 학습되지 않았습니다.")
+        
+        benchmark_results = {
+            "standard_predict": [],
+            "optimized_predict": [],
+            "async_predict": [],
+            "tensorrt_predict": []
+        }
+        
+        # 1. 표준 예측 벤치마크
+        for i in range(n_runs):
+            start_time = time.time()
+            _ = self.predict(X)
+            benchmark_results["standard_predict"].append(time.time() - start_time)
+        
+        # 2. 최적화된 예측 벤치마크
+        for i in range(n_runs):
+            start_time = time.time()
+            _ = self.predict_optimized(X)
+            benchmark_results["optimized_predict"].append(time.time() - start_time)
+        
+        # 3. 비동기 예측 벤치마크
+        if self.opt_config.enable_async:
+            for i in range(n_runs):
+                start_time = time.time()
+                _ = asyncio.run(self.predict_async(X))
+                benchmark_results["async_predict"].append(time.time() - start_time)
+        
+        # 4. TensorRT 예측 벤치마크 (사용 가능한 경우)
+        if self.use_tensorrt and self.tensorrt_model:
+            for i in range(n_runs):
+                start_time = time.time()
+                _ = self.predict_optimized(X)  # TensorRT 사용
+                benchmark_results["tensorrt_predict"].append(time.time() - start_time)
+        
+        # 결과 요약
+        summary = {}
+        for method, times in benchmark_results.items():
+            if times:
+                summary[method] = {
+                    "avg_time": np.mean(times),
+                    "min_time": np.min(times),
+                    "max_time": np.max(times),
+                    "std_time": np.std(times)
+                }
+        
+        logger.info("성능 벤치마크 완료")
+        return {
+            "benchmark_results": benchmark_results,
+            "summary": summary,
+            "input_shape": X.shape,
+            "n_runs": n_runs
+        }

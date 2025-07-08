@@ -11,22 +11,18 @@
 - Kelly Criterion 적용
 """
 
-import os
 import json
 import numpy as np
-import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple, Union
-from pathlib import Path
-from datetime import datetime, timedelta
-import logging
-from collections import Counter, defaultdict
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+from collections import Counter
 from dataclasses import dataclass
-import math
 from abc import ABC, abstractmethod
 
 from ..shared.types import LotteryNumber, ModelPrediction
 from ..utils.unified_logging import get_logger
-from ..utils.cache_paths import get_cache_dir
+from ..utils.cache_manager import UnifiedCachePathManager
+from ..utils.unified_config import get_paths
 from ..models.realistic_lottery_predictor import RealisticLotteryPredictor
 
 logger = get_logger(__name__)
@@ -71,12 +67,10 @@ class BaseStrategy(ABC):
         self, data: List[LotteryNumber], count: int
     ) -> List[ModelPrediction]:
         """조합 생성 추상 메서드"""
-        pass
 
     @abstractmethod
     def calculate_risk_score(self) -> float:
         """리스크 점수 계산 추상 메서드"""
-        pass
 
 
 class FrequencyBasedStrategy(BaseStrategy):
@@ -150,7 +144,7 @@ class ClusterAnalysisStrategy(BaseStrategy):
             n_clusters = min(3, len(data) // 20)
             if n_clusters >= 2:
                 kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-                cluster_labels = kmeans.fit_predict(features)
+                kmeans.fit_predict(features)
 
                 # 각 클러스터의 중심에서 번호 선택
                 predictions = []
@@ -268,7 +262,7 @@ class AIEnsembleStrategy(BaseStrategy):
         """AI 앙상블 조합 생성"""
         try:
             # 여러 AI 모델의 예측을 조합
-            predictor = RealisticLotteryPredictor()
+            RealisticLotteryPredictor()
 
             # 간단한 앙상블 구현
             predictions = []
@@ -412,26 +406,22 @@ class ContrarianStrategy(BaseStrategy):
 
 
 class LotteryPortfolioManager:
-    """로또 포트폴리오 관리자"""
+    """다양한 투자 전략을 통합하여 로또 포트폴리오를 관리합니다."""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        포트폴리오 관리자 초기화
-
-        Args:
-            config: 설정 객체
+        LotteryPortfolioManager 초기화
         """
         self.config = config or {}
         self.logger = get_logger(__name__)
+        
+        # 캐시 경로 설정
+        paths = get_paths()
+        cache_path_manager = UnifiedCachePathManager(paths)
+        self.cache_dir = cache_path_manager.get_path("portfolio_manager")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # 전략 객체 초기화
-        self.strategies = {
-            "frequency_based": FrequencyBasedStrategy(self.config),
-            "cluster_analysis": ClusterAnalysisStrategy(self.config),
-            "trend_following": TrendFollowingStrategy(self.config),
-            "ai_ensemble": AIEnsembleStrategy(self.config),
-            "contrarian": ContrarianStrategy(self.config),
-        }
+        self.strategies = self._initialize_strategies()
 
         # 기본 포트폴리오 배분
         self.default_allocation = {
@@ -458,10 +448,6 @@ class LotteryPortfolioManager:
             "max_risk_score": 0.7,  # 전체 포트폴리오 최대 리스크
             "rebalancing_threshold": 0.1,  # 리밸런싱 임계값
         }
-
-        # 결과 저장 경로
-        self.cache_dir = Path(get_cache_dir()) / "portfolio_manager"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.logger.info("로또 포트폴리오 관리자 초기화 완료")
 

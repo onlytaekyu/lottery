@@ -8,7 +8,7 @@ import logging.handlers
 import sys
 import threading
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Optional, List
 from dataclasses import dataclass
 from enum import Enum
 import atexit
@@ -190,7 +190,7 @@ def setup_logging(
     )
 
     # 루트 로거 설정
-    root_logger = get_logger("root", config)
+    get_logger("root", config)
 
     # 기본 로거들 미리 생성
     for logger_name in ["main", "training", "analysis", "prediction"]:

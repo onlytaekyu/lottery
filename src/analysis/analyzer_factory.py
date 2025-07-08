@@ -10,7 +10,7 @@
 import hashlib
 import json
 import threading
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional
 from ..utils.unified_logging import get_logger
 
 logger = get_logger(__name__)
@@ -93,6 +93,13 @@ class AnalyzerFactory:
                 return PairAnalyzer(config)
 
             elif analyzer_type == "vectorizer":
+                # 메인 벡터화 시스템을 OptimizedPatternVectorizer로 변경
+                from .optimized_pattern_vectorizer import OptimizedPatternVectorizer
+
+                return OptimizedPatternVectorizer(config)
+
+            elif analyzer_type == "legacy_vectorizer":
+                # 기존 벡터화 시스템을 legacy로 이동
                 from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 
                 return EnhancedPatternVectorizer(config)
@@ -173,6 +180,11 @@ class AnalyzerFactory:
                 from .three_digit_priority_predictor import ThreeDigitPriorityPredictor
 
                 return ThreeDigitPriorityPredictor(config)
+
+            elif analyzer_type == "technical":
+                from .technical_analyzer import TechnicalAnalyzer
+
+                return TechnicalAnalyzer(config)
 
             else:
                 raise ValueError(f"알 수 없는 분석기 타입: {analyzer_type}")

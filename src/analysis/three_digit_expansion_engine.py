@@ -7,15 +7,14 @@ GPU 가속, 멀티쓰레드 처리, 캐시 최적화를 통한 고속 처리
 
 import time
 import numpy as np
-from typing import Dict, List, Tuple, Any, Optional, Set
+from typing import Dict, List, Tuple, Any, Optional
 from itertools import combinations
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
 from dataclasses import dataclass
 from collections import defaultdict
 
 from ..utils.unified_logging import get_logger
-from ..utils.compute_strategy import ComputeExecutor, TaskType
+from ..utils.unified_performance_engine import ComputeExecutor
 from ..utils.cache_manager import get_cache_manager
 from ..utils.memory_manager import get_memory_manager
 from ..shared.types import LotteryNumber

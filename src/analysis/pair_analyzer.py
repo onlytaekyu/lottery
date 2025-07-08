@@ -5,20 +5,16 @@
 주로 중심성 지표, ROI 기반 패턴, 그래프 가중치 계산 등을 수행합니다.
 """
 
-import os
 import json
-import datetime
 import networkx as nx
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, List, Tuple, Optional, Union, Set
-from collections import Counter, defaultdict
+from typing import Dict, Any, List, Optional
+from collections import defaultdict
 
 from ..utils.unified_logging import get_logger
 from ..shared.types import LotteryNumber
 from ..analysis.base_analyzer import BaseAnalyzer
-from ..utils.unified_config import ConfigProxy
-from ..utils.unified_performance_engine import get_auto_performance_monitor
 from ..shared.graph_utils import calculate_pair_frequency, calculate_pair_centrality
 
 # 로그 설정

@@ -5,31 +5,44 @@
 
 주요 기능:
 - 실시간 성과 기반 가중치 조정
-- 메타 러닝 기반 가중치 최적화
+- 메타 러닝 기반 가중치 최적화 (GPU 가속)
 - 다중 목표 최적화 (ROI, 적중률, 리스크)
 - 시간 가중 성과 평가
 - 적응형 학습률 조정
 - 가중치 안정성 보장
+- GPU 기반 특성 추출 및 모델 학습
+
+✅ v2.0 업데이트: src/utils 통합 시스템 적용
+- 통합 메모리 관리자 
+- 비동기 처리 지원
+- 스마트 캐시 시스템
+- 병렬 특성 추출
+- GPU 최적화 강화
 """
 
-import os
 import json
 import numpy as np
-import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple, Union
-from pathlib import Path
-from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional
+from datetime import datetime
 from dataclasses import dataclass, asdict
 from collections import deque, defaultdict
 import math
 from scipy.optimize import minimize
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
 import warnings
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
-from ..shared.types import LotteryNumber, ModelPrediction
+# ✅ src/utils 통합 시스템 활용
 from ..utils.unified_logging import get_logger
-from ..utils.cache_paths import get_cache_dir
+from ..utils.unified_config import get_config
+from ..utils.cache_manager import UnifiedCachePathManager
+from ..utils.unified_memory_manager import get_unified_memory_manager, MemoryConfig
+from ..utils import (
+    get_cuda_optimizer,
+    get_enhanced_process_pool,
+    get_unified_async_manager,
+    get_pattern_filter
+)
 from ..monitoring.performance_tracker import PerformanceMetrics
 
 logger = get_logger(__name__)
@@ -48,6 +61,14 @@ class WeightUpdateConfig:
     adaptation_window: int = 20  # 적응 윈도우 크기
     performance_memory: int = 100  # 성능 메모리 크기
     multi_objective_weights: Dict[str, float] = None  # 다중 목표 가중치
+    use_gpu: bool = True  # GPU 사용 여부
+    batch_size: int = 64  # 배치 크기
+    memory_limit: float = 0.8  # 메모리 사용 제한
+    # ✅ 새로운 최적화 설정
+    enable_async_processing: bool = True  # 비동기 처리 활성화
+    use_smart_caching: bool = True  # 스마트 캐시 활성화
+    parallel_workers: int = 4  # 병렬 처리 워커 수
+    cache_ttl: int = 3600  # 캐시 TTL (초)
 
 
 @dataclass
@@ -77,260 +98,775 @@ class WeightOptimizationResult:
     recommendations: List[str]
 
 
-class MetaLearner:
-    """메타 러닝 시스템"""
+class GPUAcceleratedMetaLearner:
+    """
+    🚀 GPU 가속 메타 러닝 시스템 (v2.0)
+    
+    src/utils 통합 시스템 기반 고성능 메타 러닝:
+    - 통합 메모리 관리
+    - 비동기 처리 지원
+    - 스마트 캐시 시스템
+    - 병렬 특성 추출
+    - GPU 최적화 강화
+    """
 
     def __init__(self, config: WeightUpdateConfig):
         self.config = config
         self.logger = get_logger(__name__)
+        
+        # ✅ src/utils 통합 시스템 초기화
+        try:
+            self.memory_mgr = get_unified_memory_manager()
+            self.cuda_opt = get_cuda_optimizer()
+            self.process_pool = get_enhanced_process_pool()
+            self.async_mgr = get_unified_async_manager()
+            self.pattern_filter = get_pattern_filter()
+            self._unified_system_available = True
+            self.logger.info("✅ 통합 시스템 초기화 완료")
+        except Exception as e:
+            self.logger.warning(f"⚠️ 통합 시스템 초기화 실패, 기본 모드로 폴백: {e}")
+            self._unified_system_available = False
+            self._init_fallback_systems()
 
-        # 메타 모델 초기화
-        self.meta_model = RandomForestRegressor(
-            n_estimators=100, max_depth=10, random_state=42, n_jobs=-1
-        )
+        # GPU 사용 설정
+        self.use_gpu = config.use_gpu
+        self.meta_model = None
+        self.using_gpu = False
+        self._initialize_model()
 
-        # 학습 데이터 저장소
-        self.training_data = []
+        # ✅ 스마트 캐시 시스템 
+        if config.use_smart_caching and self._unified_system_available:
+            self.smart_cache = True
+            self.cache_ttl = config.cache_ttl
+            self.feature_cache = {}  # 스마트 캐시로 관리
+        else:
+            # 기존 캐시 시스템 폴백
+            self.smart_cache = False
+            self.feature_cache = {}
+            self.cache_max_size = 1000
+
+        # ✅ 병렬 처리 설정
+        self.parallel_workers = config.parallel_workers
+        self.enable_async = config.enable_async_processing
+
+        # 학습 데이터 저장소 (메모리 효율적)
+        self.training_data = deque(maxlen=config.performance_memory)
         self.model_trained = False
 
-        # 특성 엔지니어링
+        # ✅ 벡터화된 특성 추출기 (성능 최적화)
         self.feature_extractors = {
-            "performance_trend": self._extract_performance_trend,
-            "volatility_features": self._extract_volatility_features,
-            "correlation_features": self._extract_correlation_features,
-            "temporal_features": self._extract_temporal_features,
+            "performance_trend": self._extract_performance_trend_vectorized,
+            "volatility_features": self._extract_volatility_features_vectorized,
+            "correlation_features": self._extract_correlation_features_vectorized,
+            "temporal_features": self._extract_temporal_features_vectorized,
         }
+        
+        # 특성 크기 미리 계산
+        self.feature_sizes = {
+            "performance_trend": 10,
+            "volatility_features": 10,
+            "correlation_features": 10,
+            "temporal_features": 10,
+        }
+        self.total_feature_size = sum(self.feature_sizes.values())
+
+    def _init_fallback_systems(self):
+        """폴백 시스템 초기화"""
+        # 기본 메모리 관리자
+        memory_config = MemoryConfig(
+            max_memory_usage=self.config.memory_limit,
+            use_memory_pooling=True,
+            pool_size=32,
+            auto_cleanup_interval=30.0,
+        )
+        self.memory_manager = get_unified_memory_manager()
+        
+        # 기본 스레드 풀
+        self.executor = ThreadPoolExecutor(max_workers=self.config.parallel_workers)
+
+    def _initialize_model(self):
+        """
+        모델 초기화 (통합 시스템 GPU 최적화 적용)
+        """
+        try:
+            if self.use_gpu:
+                # ✅ CUDA 최적화기 활용
+                if self._unified_system_available and self.cuda_opt:
+                    self.cuda_opt.set_tf32_enabled(True)
+                    self.cuda_opt.set_memory_pool_enabled(True)
+                    self.logger.info("🚀 CUDA 최적화 활성화")
+                
+                # cuML 시도
+                try:
+                    from cuml.ensemble import RandomForestRegressor as CuMLRandomForestRegressor  # type: ignore
+                    self.meta_model = CuMLRandomForestRegressor(
+                        n_estimators=100,
+                        max_depth=10,
+                        random_state=42,
+                        n_streams=4,  # GPU 스트림 수
+                    )
+                    self.logger.info("✅ GPU 가속 cuML RandomForest 초기화 완료")
+                    self.using_gpu = True
+                except ImportError:
+                    self.logger.warning("cuML 없음, scikit-learn으로 fallback")
+                    self._initialize_cpu_model()
+                    self.using_gpu = False
+            else:
+                self._initialize_cpu_model()
+                self.using_gpu = False
+                
+        except Exception as e:
+            self.logger.error(f"모델 초기화 실패: {e}")
+            self._initialize_cpu_model()
+            self.using_gpu = False
+
+    def _initialize_cpu_model(self):
+        """CPU 모델 초기화"""
+        from sklearn.ensemble import RandomForestRegressor
+        self.meta_model = RandomForestRegressor(
+            n_estimators=100, 
+            max_depth=10, 
+            random_state=42, 
+            n_jobs=-1
+        )
+
+    async def extract_features_batch_async(
+        self, 
+        performance_histories: List[Dict[str, List[PerformanceMetrics]]]
+    ) -> np.ndarray:
+        """
+        🚀 비동기 배치 특성 추출 (통합 시스템 활용)
+        """
+        if not self.enable_async or not self._unified_system_available:
+            return self.extract_features_batch(performance_histories)
+        
+        try:
+            batch_size = len(performance_histories)
+            features_batch = np.zeros((batch_size, self.total_feature_size))
+            
+            # ✅ 비동기 처리로 병렬 특성 추출
+            async with self.async_mgr.semaphore(self.parallel_workers):
+                tasks = []
+                for batch_idx, performance_history in enumerate(performance_histories):
+                    task = self._extract_features_async_worker(
+                        performance_history, batch_idx
+                    )
+                    tasks.append(task)
+                
+                # 모든 태스크 완료 대기
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # 결과 수집
+                for batch_idx, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        self.logger.warning(f"배치 {batch_idx} 특성 추출 실패: {result}")
+                        features_batch[batch_idx] = np.zeros(self.total_feature_size)
+                    else:
+                        features_batch[batch_idx] = result
+
+            return features_batch
+
+        except Exception as e:
+            self.logger.error(f"비동기 배치 특성 추출 실패: {e}")
+            # 동기 방식 폴백
+            return self.extract_features_batch(performance_histories)
+
+    async def _extract_features_async_worker(
+        self, 
+        performance_history: Dict[str, List[PerformanceMetrics]], 
+        batch_idx: int
+    ) -> np.ndarray:
+        """비동기 특성 추출 워커"""
+        try:
+            # ✅ 스마트 캐시 확인
+            if self.smart_cache:
+                cache_key = await self._get_cache_key_async(performance_history)
+                if cache_key in self.feature_cache:
+                    # 캐시 만료 확인
+                    cached_data = self.feature_cache[cache_key]
+                    if self._is_cache_valid(cached_data):
+                        return cached_data['features']
+            
+            # 특성 추출
+            feature_vector = await self._extract_features_async(performance_history)
+            
+            # ✅ 스마트 캐시 저장
+            if self.smart_cache:
+                cache_data = {
+                    'features': feature_vector,
+                    'timestamp': datetime.now().timestamp(),
+                    'ttl': self.cache_ttl
+                }
+                self.feature_cache[cache_key] = cache_data
+                
+                # 캐시 크기 관리
+                await self._manage_cache_size()
+            
+            return feature_vector
+            
+        except Exception as e:
+            self.logger.error(f"비동기 특성 추출 워커 실패: {e}")
+            return np.zeros(self.total_feature_size)
+
+    def extract_features_batch(
+        self, 
+        performance_histories: List[Dict[str, List[PerformanceMetrics]]]
+    ) -> np.ndarray:
+        """
+        배치 단위 특성 추출 (개선된 동기 버전)
+        """
+        try:
+            batch_size = len(performance_histories)
+            features_batch = np.zeros((batch_size, self.total_feature_size))
+            
+            # ✅ 통합 메모리 관리자로 메모리 할당
+            if self._unified_system_available and self.memory_mgr:
+                with self.memory_mgr.temporary_allocation(
+                    size=batch_size * self.total_feature_size * 8,  # float64 기준
+                    prefer_device="cpu"
+                ) as work_mem:
+                    # 배치 단위로 특성 추출
+                    for batch_idx, performance_history in enumerate(performance_histories):
+                        features_batch[batch_idx] = self._extract_features_with_cache(
+                            performance_history
+                        )
+            else:
+                # 폴백: 기본 방식
+                for batch_idx, performance_history in enumerate(performance_histories):
+                    features_batch[batch_idx] = self.extract_features(performance_history)
+
+            return features_batch
+
+        except Exception as e:
+            self.logger.error(f"배치 특성 추출 실패: {e}")
+            return np.zeros((len(performance_histories), self.total_feature_size))
+
+    def _extract_features_with_cache(
+        self, 
+        performance_history: Dict[str, List[PerformanceMetrics]]
+    ) -> np.ndarray:
+        """캐시를 활용한 특성 추출"""
+        try:
+            # 캐시 키 생성
+            cache_key = self._get_cache_key(performance_history)
+            
+            # 캐시 확인
+            if cache_key in self.feature_cache:
+                if self.smart_cache:
+                    cached_data = self.feature_cache[cache_key]
+                    if self._is_cache_valid(cached_data):
+                        return cached_data['features']
+                else:
+                    return self.feature_cache[cache_key]
+            
+            # 특성 추출
+            feature_vector = self.extract_features(performance_history)
+            
+            # 캐시 저장
+            if self.smart_cache:
+                cache_data = {
+                    'features': feature_vector,
+                    'timestamp': datetime.now().timestamp(),
+                    'ttl': self.cache_ttl
+                }
+                self.feature_cache[cache_key] = cache_data
+            else:
+                # 기본 캐시 (크기 제한)
+                if len(self.feature_cache) < self.cache_max_size:
+                    self.feature_cache[cache_key] = feature_vector
+            
+            return feature_vector
+            
+        except Exception as e:
+            self.logger.error(f"캐시 특성 추출 실패: {e}")
+            return np.zeros(self.total_feature_size)
+
+    def _is_cache_valid(self, cached_data: Dict[str, Any]) -> bool:
+        """캐시 유효성 검사"""
+        try:
+            current_time = datetime.now().timestamp()
+            cache_time = cached_data.get('timestamp', 0)
+            ttl = cached_data.get('ttl', self.cache_ttl)
+            
+            return (current_time - cache_time) < ttl
+            
+        except Exception:
+            return False
+
+    async def _manage_cache_size(self):
+        """캐시 크기 관리 (비동기)"""
+        try:
+            if len(self.feature_cache) > self.cache_max_size * 1.5:
+                # 오래된 캐시 항목 제거
+                datetime.now().timestamp()
+                expired_keys = []
+                
+                for key, cached_data in self.feature_cache.items():
+                    if not self._is_cache_valid(cached_data):
+                        expired_keys.append(key)
+                
+                for key in expired_keys:
+                    del self.feature_cache[key]
+                
+                self.logger.info(f"만료된 캐시 {len(expired_keys)}개 제거")
+                
+        except Exception as e:
+            self.logger.error(f"캐시 관리 실패: {e}")
+
+    async def _get_cache_key_async(self, performance_history: Dict[str, List[PerformanceMetrics]]) -> str:
+        """비동기 캐시 키 생성"""
+        return self._get_cache_key(performance_history)
+
+    async def _extract_features_async(
+        self, 
+        performance_history: Dict[str, List[PerformanceMetrics]]
+    ) -> np.ndarray:
+        """비동기 특성 추출"""
+        # CPU 집약적 작업을 스레드 풀에서 실행
+        if self._unified_system_available and self.process_pool:
+            return await self.process_pool.run_in_thread(
+                self.extract_features, performance_history
+            )
+        else:
+            return self.extract_features(performance_history)
+
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """
+        🚀 성능 통계 반환 (통합 시스템 정보 포함)
+        """
+        stats = {
+            "model_type": "GPUAcceleratedMetaLearner",
+            "using_gpu": self.using_gpu,
+            "unified_system_available": self._unified_system_available,
+            "smart_cache_enabled": self.smart_cache,
+            "async_processing_enabled": self.enable_async,
+            "parallel_workers": self.parallel_workers,
+            "cache_size": len(self.feature_cache),
+            "model_trained": self.model_trained,
+            "feature_size": self.total_feature_size
+        }
+        
+        # 통합 시스템 통계
+        if self._unified_system_available:
+            if self.memory_mgr:
+                try:
+                    stats["memory_performance"] = self.memory_mgr.get_performance_metrics()
+                except Exception as e:
+                    self.logger.debug(f"메모리 성능 통계 조회 실패: {e}")
+            
+            if self.cuda_opt:
+                try:
+                    stats["cuda_optimization"] = self.cuda_opt.get_optimization_stats()
+                except Exception as e:
+                    self.logger.debug(f"CUDA 최적화 통계 조회 실패: {e}")
+        
+        return stats
+
+    def optimize_memory_usage(self):
+        """
+        🚀 메모리 사용량 최적화
+        """
+        if self._unified_system_available and self.memory_mgr:
+            self.memory_mgr.cleanup_unused_memory()
+            self.logger.info("🧹 통합 메모리 최적화 완료")
+        
+        # 캐시 정리
+        if self.smart_cache:
+            asyncio.create_task(self._manage_cache_size())
+        else:
+            # 기본 캐시 정리
+            if len(self.feature_cache) > self.cache_max_size:
+                self.feature_cache.clear()
+                self.logger.info("캐시 정리 완료")
+
+    def get_optimal_batch_size(self, data_size: int) -> int:
+        """
+        🚀 최적 배치 크기 계산
+        """
+        if self._unified_system_available and self.memory_mgr:
+            try:
+                memory_stats = self.memory_mgr.get_memory_status()
+                cpu_util = memory_stats.get("cpu_utilization", 0.5)
+                
+                # CPU 사용률에 따른 동적 조정
+                if cpu_util < 0.3:
+                    base_batch = 128
+                elif cpu_util < 0.7:
+                    base_batch = 64
+                else:
+                    base_batch = 32
+                
+                return min(max(base_batch, 1), data_size)
+                
+            except Exception as e:
+                self.logger.debug(f"최적 배치 크기 계산 실패: {e}")
+        
+        # 폴백: 기본 배치 크기
+        return min(self.config.batch_size, data_size)
+
+    def _get_cache_key(self, performance_history: Dict[str, List[PerformanceMetrics]]) -> str:
+        """캐시 키 생성"""
+        try:
+            # 성능 데이터의 해시 생성
+            key_data = []
+            for strategy, metrics_list in performance_history.items():
+                if metrics_list:
+                    latest_metric = metrics_list[-1]
+                    key_data.append(f"{strategy}_{latest_metric.roi:.4f}_{latest_metric.win_rate:.4f}")
+            return "_".join(sorted(key_data))
+        except:
+            return f"cache_{hash(str(performance_history)) % 10000}"
 
     def extract_features(
         self, performance_history: Dict[str, List[PerformanceMetrics]]
     ) -> np.ndarray:
-        """성능 이력에서 특성 추출"""
+        """성능 이력에서 특성 추출 (벡터화 최적화)"""
         try:
-            features = []
+            features = np.zeros(self.total_feature_size)
+            feature_idx = 0
 
             for extractor_name, extractor_func in self.feature_extractors.items():
                 try:
+                    feature_size = self.feature_sizes[extractor_name]
                     feature_vector = extractor_func(performance_history)
-                    features.extend(feature_vector)
+                    
+                    # 크기 맞춤
+                    if len(feature_vector) > feature_size:
+                        feature_vector = feature_vector[:feature_size]
+                    elif len(feature_vector) < feature_size:
+                        feature_vector = np.pad(feature_vector, (0, feature_size - len(feature_vector)))
+                    
+                    features[feature_idx:feature_idx + feature_size] = feature_vector
+                    feature_idx += feature_size
+                    
                 except Exception as e:
-                    self.logger.warning(f"특성 추출 실패 ({extractor_name}): {str(e)}")
+                    self.logger.warning(f"특성 추출 실패 ({extractor_name}): {e}")
                     # 기본값으로 채움
-                    features.extend([0.0] * 10)  # 기본 특성 크기
+                    feature_idx += self.feature_sizes[extractor_name]
 
-            return np.array(features)
+            return features
 
         except Exception as e:
-            self.logger.error(f"특성 추출 중 오류: {str(e)}")
-            return np.zeros(40)  # 기본 특성 벡터
+            self.logger.error(f"특성 추출 중 오류: {e}")
+            return np.zeros(self.total_feature_size)
 
-    def _extract_performance_trend(
+    def _extract_performance_trend_vectorized(
         self, performance_history: Dict[str, List[PerformanceMetrics]]
-    ) -> List[float]:
-        """성능 트렌드 특성 추출"""
-        features = []
-
-        for strategy, metrics_list in performance_history.items():
-            if len(metrics_list) >= 2:
-                # ROI 트렌드
-                roi_values = [m.roi for m in metrics_list[-10:]]
-                roi_trend = (
-                    np.polyfit(range(len(roi_values)), roi_values, 1)[0]
-                    if len(roi_values) > 1
-                    else 0
-                )
-                features.append(roi_trend)
-
-                # 승률 트렌드
-                win_rate_values = [m.win_rate for m in metrics_list[-10:]]
-                win_rate_trend = (
-                    np.polyfit(range(len(win_rate_values)), win_rate_values, 1)[0]
-                    if len(win_rate_values) > 1
-                    else 0
-                )
-                features.append(win_rate_trend)
-            else:
-                features.extend([0.0, 0.0])
-
-        # 고정 크기로 패딩
-        while len(features) < 10:
-            features.append(0.0)
-
-        return features[:10]
-
-    def _extract_volatility_features(
-        self, performance_history: Dict[str, List[PerformanceMetrics]]
-    ) -> List[float]:
-        """변동성 특성 추출"""
-        features = []
-
-        for strategy, metrics_list in performance_history.items():
-            if len(metrics_list) >= 2:
-                # ROI 변동성
-                roi_values = [m.roi for m in metrics_list[-10:]]
-                roi_volatility = np.std(roi_values) if len(roi_values) > 1 else 0
-                features.append(roi_volatility)
-
-                # 샤프 비율 평균
-                sharpe_values = [m.sharpe_ratio for m in metrics_list[-10:]]
-                avg_sharpe = np.mean(sharpe_values) if sharpe_values else 0
-                features.append(avg_sharpe)
-            else:
-                features.extend([0.0, 0.0])
-
-        # 고정 크기로 패딩
-        while len(features) < 10:
-            features.append(0.0)
-
-        return features[:10]
-
-    def _extract_correlation_features(
-        self, performance_history: Dict[str, List[PerformanceMetrics]]
-    ) -> List[float]:
-        """상관관계 특성 추출"""
-        features = []
-
-        strategies = list(performance_history.keys())
-
-        # 전략 간 ROI 상관관계
-        if len(strategies) >= 2:
-            roi_data = {}
-            for strategy, metrics_list in performance_history.items():
-                roi_data[strategy] = [m.roi for m in metrics_list[-10:]]
-
-            # 상관관계 계산
-            correlations = []
-            for i in range(len(strategies)):
-                for j in range(i + 1, len(strategies)):
-                    strat1, strat2 = strategies[i], strategies[j]
-                    if len(roi_data[strat1]) > 1 and len(roi_data[strat2]) > 1:
-                        corr = np.corrcoef(roi_data[strat1], roi_data[strat2])[0, 1]
-                        correlations.append(corr if not np.isnan(corr) else 0)
-
-            # 평균 상관관계
-            avg_correlation = np.mean(correlations) if correlations else 0
-            features.append(avg_correlation)
-        else:
-            features.append(0.0)
-
-        # 고정 크기로 패딩
-        while len(features) < 10:
-            features.append(0.0)
-
-        return features[:10]
-
-    def _extract_temporal_features(
-        self, performance_history: Dict[str, List[PerformanceMetrics]]
-    ) -> List[float]:
-        """시간적 특성 추출"""
-        features = []
-
-        for strategy, metrics_list in performance_history.items():
-            if metrics_list:
-                # 최근 성과 vs 과거 성과
-                recent_roi = (
-                    np.mean([m.roi for m in metrics_list[-5:]])
-                    if len(metrics_list) >= 5
-                    else 0
-                )
-                past_roi = (
-                    np.mean([m.roi for m in metrics_list[-10:-5]])
-                    if len(metrics_list) >= 10
-                    else recent_roi
-                )
-
-                performance_change = recent_roi - past_roi
-                features.append(performance_change)
-
-                # 성과 일관성
-                roi_values = [m.roi for m in metrics_list[-10:]]
-                consistency = 1 / (1 + np.std(roi_values)) if len(roi_values) > 1 else 0
-                features.append(consistency)
-            else:
-                features.extend([0.0, 0.0])
-
-        # 고정 크기로 패딩
-        while len(features) < 10:
-            features.append(0.0)
-
-        return features[:10]
-
-    def train_meta_model(self, training_data: List[Dict[str, Any]]) -> bool:
-        """메타 모델 학습"""
+    ) -> np.ndarray:
+        """성능 트렌드 특성 추출 (벡터화)"""
         try:
-            if len(training_data) < 10:
-                self.logger.warning("학습 데이터가 부족합니다")
+            features = np.zeros(10)
+
+            # 모든 전략의 데이터를 배열로 변환
+            roi_data = []
+            win_rate_data = []
+            
+            for strategy, metrics_list in performance_history.items():
+                if len(metrics_list) >= 2:
+                    recent_metrics = metrics_list[-10:]
+                    roi_values = np.array([m.roi for m in recent_metrics])
+                    win_rate_values = np.array([m.win_rate for m in recent_metrics])
+                    
+                    roi_data.append(roi_values)
+                    win_rate_data.append(win_rate_values)
+
+            if roi_data and win_rate_data:
+                # 벡터화된 트렌드 계산
+                roi_array = np.array(roi_data)
+                win_rate_array = np.array(win_rate_data)
+                
+                # 전체 트렌드 (평균)
+                if roi_array.size > 0:
+                    roi_trend = np.mean([np.polyfit(range(len(vals)), vals, 1)[0] 
+                                       for vals in roi_array if len(vals) > 1])
+                    features[0] = roi_trend if not np.isnan(roi_trend) else 0.0
+                
+                if win_rate_array.size > 0:
+                    win_rate_trend = np.mean([np.polyfit(range(len(vals)), vals, 1)[0] 
+                                            for vals in win_rate_array if len(vals) > 1])
+                    features[1] = win_rate_trend if not np.isnan(win_rate_trend) else 0.0
+                
+                # 변동성 메트릭
+                features[2] = np.mean([np.std(vals) for vals in roi_array if len(vals) > 1])
+                features[3] = np.mean([np.std(vals) for vals in win_rate_array if len(vals) > 1])
+                
+                # 최근 성과
+                features[4] = np.mean([vals[-1] for vals in roi_array if len(vals) > 0])
+                features[5] = np.mean([vals[-1] for vals in win_rate_array if len(vals) > 0])
+
+            return features
+
+        except Exception as e:
+            self.logger.error(f"성능 트렌드 특성 추출 실패: {e}")
+            return np.zeros(10)
+
+    def _extract_volatility_features_vectorized(
+        self, performance_history: Dict[str, List[PerformanceMetrics]]
+    ) -> np.ndarray:
+        """변동성 특성 추출 (벡터화)"""
+        try:
+            features = np.zeros(10)
+            
+            all_roi_values = []
+            all_sharpe_values = []
+            all_volatility_values = []
+
+            for strategy, metrics_list in performance_history.items():
+                if len(metrics_list) >= 2:
+                    recent_metrics = metrics_list[-10:]
+                    roi_values = [m.roi for m in recent_metrics]
+                    sharpe_values = [m.sharpe_ratio for m in recent_metrics]
+                    
+                    all_roi_values.extend(roi_values)
+                    all_sharpe_values.extend(sharpe_values)
+                    
+                    # 개별 전략 변동성
+                    if len(roi_values) > 1:
+                        all_volatility_values.append(np.std(roi_values))
+
+            if all_roi_values:
+                # 전체 변동성 메트릭
+                features[0] = np.std(all_roi_values)
+                features[1] = np.mean(all_sharpe_values) if all_sharpe_values else 0.0
+                features[2] = np.var(all_roi_values)
+                features[3] = np.mean(all_volatility_values) if all_volatility_values else 0.0
+                
+                # 분위수 기반 특성
+                features[4] = np.percentile(all_roi_values, 25)
+                features[5] = np.percentile(all_roi_values, 75)
+                features[6] = np.percentile(all_roi_values, 90) - np.percentile(all_roi_values, 10)
+
+            return features
+
+        except Exception as e:
+            self.logger.error(f"변동성 특성 추출 실패: {e}")
+            return np.zeros(10)
+
+    def _extract_correlation_features_vectorized(
+        self, performance_history: Dict[str, List[PerformanceMetrics]]
+    ) -> np.ndarray:
+        """상관관계 특성 추출 (벡터화)"""
+        try:
+            features = np.zeros(10)
+            
+            strategies = list(performance_history.keys())
+            if len(strategies) < 2:
+                return features
+
+            # ROI 데이터 행렬 구성
+            roi_matrix = []
+            win_rate_matrix = []
+            
+            min_length = min(len(metrics_list) for metrics_list in performance_history.values())
+            if min_length < 2:
+                return features
+
+            for strategy in strategies:
+                metrics_list = performance_history[strategy][-min_length:]
+                roi_values = [m.roi for m in metrics_list]
+                win_rate_values = [m.win_rate for m in metrics_list]
+                
+                roi_matrix.append(roi_values)
+                win_rate_matrix.append(win_rate_values)
+
+            # 상관관계 행렬 계산
+            roi_matrix = np.array(roi_matrix)
+            win_rate_matrix = np.array(win_rate_matrix)
+            
+            if roi_matrix.shape[1] > 1:
+                roi_corr = np.corrcoef(roi_matrix)
+                win_rate_corr = np.corrcoef(win_rate_matrix)
+                
+                # 상관관계 특성
+                features[0] = np.mean(roi_corr[np.triu_indices_from(roi_corr, k=1)])
+                features[1] = np.std(roi_corr[np.triu_indices_from(roi_corr, k=1)])
+                features[2] = np.mean(win_rate_corr[np.triu_indices_from(win_rate_corr, k=1)])
+                features[3] = np.std(win_rate_corr[np.triu_indices_from(win_rate_corr, k=1)])
+                
+                # 다이버시티 메트릭
+                features[4] = 1.0 - np.mean(np.abs(roi_corr[np.triu_indices_from(roi_corr, k=1)]))
+
+            return features
+
+        except Exception as e:
+            self.logger.error(f"상관관계 특성 추출 실패: {e}")
+            return np.zeros(10)
+
+    def _extract_temporal_features_vectorized(
+        self, performance_history: Dict[str, List[PerformanceMetrics]]
+    ) -> np.ndarray:
+        """시간적 특성 추출 (벡터화)"""
+        try:
+            features = np.zeros(10)
+            
+            current_time = datetime.now()
+            all_timestamps = []
+            all_performance_values = []
+
+            for strategy, metrics_list in performance_history.items():
+                for metric in metrics_list:
+                    all_timestamps.append(metric.timestamp)
+                    all_performance_values.append(metric.roi)
+
+            if all_timestamps:
+                # 시간 기반 특성
+                time_diffs = [(current_time - ts).total_seconds() / 3600 for ts in all_timestamps]  # 시간 단위
+                
+                features[0] = np.mean(time_diffs)
+                features[1] = np.std(time_diffs)
+                features[2] = min(time_diffs) if time_diffs else 0
+                features[3] = max(time_diffs) if time_diffs else 0
+                
+                # 시간 가중 성과
+                weights = np.exp(-np.array(time_diffs) / 24)  # 24시간 반감기
+                if len(all_performance_values) == len(weights):
+                    features[4] = np.average(all_performance_values, weights=weights)
+
+            return features
+
+        except Exception as e:
+            self.logger.error(f"시간적 특성 추출 실패: {e}")
+            return np.zeros(10)
+
+    def train_meta_model_gpu(self, training_data: List[Dict[str, Any]]) -> bool:
+        """GPU 가속 메타 모델 훈련"""
+        try:
+            if not training_data:
+                self.logger.warning("훈련 데이터가 없습니다.")
                 return False
 
-            # 특성과 타겟 분리
-            X = []
-            y = []
+            self.logger.info(f"GPU 메타 모델 훈련 시작: {len(training_data)}개 샘플")
 
-            for data in training_data:
-                features = data.get("features", [])
-                target = data.get("target_performance", 0)
+            # 특성과 타겟 준비
+            features_list = []
+            targets = []
 
-                if features and target is not None:
-                    X.append(features)
-                    y.append(target)
+            for data_point in training_data:
+                performance_history = data_point["performance_history"]
+                target_performance = data_point["target_performance"]
+                
+                # 배치 단위 특성 추출
+                features = self.extract_features(performance_history)
+                features_list.append(features)
+                targets.append(target_performance)
 
-            if len(X) < 10:
-                self.logger.warning("유효한 학습 데이터가 부족합니다")
+            X = np.array(features_list)
+            y = np.array(targets)
+
+            if X.shape[0] == 0:
+                self.logger.warning("특성 행렬이 비어있습니다.")
                 return False
 
-            X = np.array(X)
-            y = np.array(y)
+            # GPU 메모리 체크
+            if self.using_gpu:
+                try:
+                    import cupy as cp  # type: ignore
+                    memory_info = cp.cuda.runtime.memGetInfo()
+                    available_memory = memory_info[0] / (1024**3)  # GB
+                    required_memory = X.nbytes * 3 / (1024**3)  # 추정치
+                    
+                    if required_memory > available_memory * 0.8:
+                        self.logger.warning(f"GPU 메모리 부족 예상, CPU로 fallback")
+                        self._initialize_cpu_model()
+                        self.using_gpu = False
+                except:
+                    pass
 
-            # 모델 학습
+            # ✅ 메타 모델 존재 확인
+            if self.meta_model is None:
+                raise RuntimeError("메타 모델이 초기화되지 않았습니다")
+
+            # 모델 훈련
             self.meta_model.fit(X, y)
-
-            # 성능 평가
-            y_pred = self.meta_model.predict(X)
-            mse = mean_squared_error(y, y_pred)
-
             self.model_trained = True
-            self.logger.info(f"메타 모델 학습 완료 - MSE: {mse:.4f}")
+
+            # 훈련 성과 평가
+            if hasattr(self.meta_model, 'score'):
+                score = self.meta_model.score(X, y)
+                self.logger.info(f"메타 모델 훈련 완료: R² score = {score:.4f}")
+            else:
+                self.logger.info("메타 모델 훈련 완료")
 
             return True
 
         except Exception as e:
-            self.logger.error(f"메타 모델 학습 중 오류: {str(e)}")
+            self.logger.error(f"GPU 메타 모델 훈련 실패: {e}")
             return False
 
-    def predict_performance(self, features: np.ndarray) -> float:
-        """성능 예측"""
+    def predict_performance_batch(self, features_batch: np.ndarray) -> np.ndarray:
+        """배치 단위 성능 예측 (GPU 가속)"""
         try:
-            if not self.model_trained:
-                return 0.0
+            if not self.model_trained or self.meta_model is None:
+                self.logger.warning("모델이 훈련되지 않았습니다.")
+                return np.zeros(len(features_batch))
 
-            prediction = self.meta_model.predict(features.reshape(1, -1))[0]
-            return float(prediction)
+            predictions = self.meta_model.predict(features_batch)
+            
+            # GPU 텐서를 numpy로 변환 (cuML 사용 시)
+            if self.using_gpu and hasattr(predictions, 'get'):
+                predictions = predictions.get()
+
+            return predictions
 
         except Exception as e:
-            self.logger.error(f"성능 예측 중 오류: {str(e)}")
-            return 0.0
+            self.logger.error(f"배치 예측 실패: {e}")
+            return np.zeros(len(features_batch))
 
     def get_feature_importance(self) -> Dict[str, float]:
         """특성 중요도 반환"""
         try:
-            if not self.model_trained:
+            if not self.model_trained or self.meta_model is None:
                 return {}
 
             importance = self.meta_model.feature_importances_
-            feature_names = [f"feature_{i}" for i in range(len(importance))]
+            
+            # GPU 텐서를 numpy로 변환 (cuML 사용 시)
+            if self.using_gpu and hasattr(importance, 'get'):
+                importance = importance.get()
+
+            # 특성 이름과 매핑
+            feature_names = []
+            for extractor_name, size in self.feature_sizes.items():
+                for i in range(size):
+                    feature_names.append(f"{extractor_name}_{i}")
 
             return dict(zip(feature_names, importance))
 
         except Exception as e:
-            self.logger.error(f"특성 중요도 계산 중 오류: {str(e)}")
+            self.logger.error(f"특성 중요도 계산 실패: {e}")
+            return {}
+
+    def clear_cache(self):
+        """캐시 정리"""
+        self.feature_cache.clear()
+        
+    def get_memory_usage(self) -> Dict[str, float]:
+        """메모리 사용량 반환"""
+        try:
+            memory_info = {"cache_size": len(self.feature_cache)}
+            
+            if self.using_gpu:
+                try:
+                    import cupy as cp  # type: ignore
+                    gpu_memory = cp.cuda.runtime.memGetInfo()
+                    memory_info["gpu_total_gb"] = gpu_memory[1] / (1024**3)
+                    memory_info["gpu_available_gb"] = gpu_memory[0] / (1024**3)
+                    memory_info["gpu_used_gb"] = (gpu_memory[1] - gpu_memory[0]) / (1024**3)
+                except:
+                    pass
+                    
+            return memory_info
+        except Exception as e:
+            self.logger.error(f"메모리 사용량 조회 실패: {e}")
             return {}
 
 
 class AdaptiveWeightSystem:
-    """적응형 가중치 시스템"""
+    """적응형 가중치 시스템 v2.0"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        적응형 가중치 시스템 초기화
+        AdaptiveWeightSystem 초기화
 
         Args:
             config: 설정 객체
@@ -338,14 +874,41 @@ class AdaptiveWeightSystem:
         self.config = config or {}
         self.logger = get_logger(__name__)
 
-        # 가중치 업데이트 설정
+        # 통합 시스템 초기화
+        self.opt_config = self._setup_optimization_config()
+        self.memory_manager = get_unified_memory_manager()
+        self.cuda_optimizer = get_cuda_optimizer()
+        self.process_pool = get_enhanced_process_pool()
+
+        # 데이터 저장 설정
+        paths = get_config()
+        cache_path_manager = UnifiedCachePathManager(paths)
+        self.cache_dir = cache_path_manager.get_path("adaptive_weights")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # 전략별 가중치 및 성능 데이터
+        self.strategy_weights: Dict[str, StrategyWeight] = {}
+        self.performance_history: Dict[str, deque[PerformanceMetrics]] = defaultdict(
+            lambda: deque(maxlen=self.opt_config.performance_memory)
+        )
+
+        # 최적화 이력
+        self.optimization_history = []
+
+        # 초기 가중치 설정
+        self.initialize_weights()
+
+        self.logger.info("적응형 가중치 시스템 초기화 완료")
+
+    def _setup_optimization_config(self) -> WeightUpdateConfig:
+        """가중치 업데이트 설정 초기화"""
         weight_config = self.config.get("weight_update", {})
         multi_obj_weights = weight_config.get(
             "multi_objective_weights",
             {"roi": 0.4, "win_rate": 0.3, "stability": 0.2, "risk": 0.1},
         )
 
-        self.update_config = WeightUpdateConfig(
+        return WeightUpdateConfig(
             learning_rate=weight_config.get("learning_rate", 0.01),
             momentum=weight_config.get("momentum", 0.9),
             decay_rate=weight_config.get("decay_rate", 0.95),
@@ -355,27 +918,14 @@ class AdaptiveWeightSystem:
             adaptation_window=weight_config.get("adaptation_window", 20),
             performance_memory=weight_config.get("performance_memory", 100),
             multi_objective_weights=multi_obj_weights,
+            use_gpu=weight_config.get("use_gpu", True),
+            batch_size=weight_config.get("batch_size", 64),
+            memory_limit=weight_config.get("memory_limit", 0.8),
+            enable_async_processing=weight_config.get("enable_async_processing", True),
+            use_smart_caching=weight_config.get("use_smart_caching", True),
+            parallel_workers=weight_config.get("parallel_workers", 4),
+            cache_ttl=weight_config.get("cache_ttl", 3600),
         )
-
-        # 메타 러닝 시스템
-        self.meta_learner = MetaLearner(self.update_config)
-
-        # 전략 가중치 관리
-        self.strategy_weights = {}
-        self.weight_history = defaultdict(deque)
-        self.performance_history = defaultdict(deque)
-
-        # 최적화 이력
-        self.optimization_history = []
-
-        # 데이터 저장 경로
-        self.cache_dir = Path(get_cache_dir()) / "adaptive_weights"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-
-        # 초기 가중치 설정
-        self.initialize_weights()
-
-        self.logger.info("적응형 가중치 시스템 초기화 완료")
 
     def initialize_weights(self, strategies: Optional[List[str]] = None) -> None:
         """가중치 초기화"""
@@ -463,12 +1013,12 @@ class AdaptiveWeightSystem:
 
                 # 가중 평균 계산
                 weighted_score = (
-                    self.update_config.multi_objective_weights["roi"] * roi_score
-                    + self.update_config.multi_objective_weights["win_rate"]
+                    self.opt_config.multi_objective_weights["roi"] * roi_score
+                    + self.opt_config.multi_objective_weights["win_rate"]
                     * win_rate_score
-                    + self.update_config.multi_objective_weights["stability"]
+                    + self.opt_config.multi_objective_weights["stability"]
                     * stability_score
-                    + self.update_config.multi_objective_weights["risk"] * risk_score
+                    + self.opt_config.multi_objective_weights["risk"] * risk_score
                 )
 
                 # 시간 가중 적용
@@ -528,8 +1078,8 @@ class AdaptiveWeightSystem:
             # 최소/최대 가중치 제한 적용
             clipped_weights = np.clip(
                 softmax_weights,
-                self.update_config.min_weight,
-                self.update_config.max_weight,
+                self.opt_config.min_weight,
+                self.opt_config.max_weight,
             )
 
             # 정규화
@@ -563,8 +1113,8 @@ class AdaptiveWeightSystem:
 
                     # 모멘텀 업데이트
                     new_momentum = (
-                        self.update_config.momentum * current_momentum
-                        + self.update_config.learning_rate * gradient
+                        self.opt_config.momentum * current_momentum
+                        + self.opt_config.learning_rate * gradient
                     )
 
                     # 새로운 가중치 계산
@@ -593,7 +1143,7 @@ class AdaptiveWeightSystem:
                     current_weight = self.strategy_weights[strategy].current_weight
 
                     # 변화량 제한
-                    max_change = self.update_config.stability_threshold
+                    max_change = self.opt_config.stability_threshold
                     weight_change = weight - current_weight
 
                     if abs(weight_change) > max_change:
@@ -632,8 +1182,8 @@ class AdaptiveWeightSystem:
             clipped = {}
             for strategy, weight in normalized.items():
                 clipped[strategy] = max(
-                    self.update_config.min_weight,
-                    min(self.update_config.max_weight, weight),
+                    self.opt_config.min_weight,
+                    min(self.opt_config.max_weight, weight),
                 )
 
             # 재정규화
@@ -694,7 +1244,7 @@ class AdaptiveWeightSystem:
                 # 이력 크기 제한
                 if (
                     len(self.weight_history[strategy])
-                    > self.update_config.performance_memory
+                    > self.opt_config.performance_memory
                 ):
                     self.weight_history[strategy].popleft()
 
@@ -714,7 +1264,7 @@ class AdaptiveWeightSystem:
             features = self.meta_learner.extract_features(performance_history)
 
             # 메타 모델 예측
-            predicted_performance = self.meta_learner.predict_performance(features)
+            predicted_performance = self.meta_learner.predict_performance_batch([features])[0]
 
             # 최적화 목적함수 정의
             def objective(weights):
@@ -722,7 +1272,7 @@ class AdaptiveWeightSystem:
                 try:
                     # 제약 조건 확인
                     if np.sum(weights) != 1.0 or np.any(
-                        weights < self.update_config.min_weight
+                        weights < self.opt_config.min_weight
                     ):
                         return 1e10
 
@@ -754,7 +1304,7 @@ class AdaptiveWeightSystem:
             constraints = [{"type": "eq", "fun": lambda x: np.sum(x) - 1.0}]
 
             bounds = [
-                (self.update_config.min_weight, self.update_config.max_weight)
+                (self.opt_config.min_weight, self.opt_config.max_weight)
                 for _ in range(len(self.strategy_weights))
             ]
 
@@ -838,12 +1388,12 @@ class AdaptiveWeightSystem:
 
             # 가중 평균
             weighted_score = (
-                self.update_config.multi_objective_weights["roi"] * roi_score
-                + self.update_config.multi_objective_weights["win_rate"]
+                self.opt_config.multi_objective_weights["roi"] * roi_score
+                + self.opt_config.multi_objective_weights["win_rate"]
                 * win_rate_score
-                + self.update_config.multi_objective_weights["stability"]
+                + self.opt_config.multi_objective_weights["stability"]
                 * stability_score
-                + self.update_config.multi_objective_weights["risk"] * risk_score
+                + self.opt_config.multi_objective_weights["risk"] * risk_score
             )
 
             return max(0.0, min(1.0, weighted_score))
@@ -995,7 +1545,7 @@ class AdaptiveWeightSystem:
                 "strategy_weights": {},
                 "weight_history": {},
                 "optimization_history": self.optimization_history,
-                "config": asdict(self.update_config),
+                "config": asdict(self.opt_config),
             }
 
             # 전략 가중치
@@ -1062,7 +1612,7 @@ class AdaptiveWeightSystem:
             # 가중치 이력 복원
             for strategy, history in weight_data.get("weight_history", {}).items():
                 self.weight_history[strategy] = deque(
-                    history, maxlen=self.update_config.performance_memory
+                    history, maxlen=self.opt_config.performance_memory
                 )
 
             # 최적화 이력 복원

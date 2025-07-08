@@ -11,15 +11,248 @@ import torch
 import numpy as np
 from typing import Dict, List, Any, Optional, Union, Tuple
 from abc import ABC, abstractmethod
-from pathlib import Path
 import time
-import importlib
+from contextlib import nullcontext
 
+# ✅ src/utils 통합 시스템 활용
 from ..utils.unified_logging import get_logger
-from ..utils.model_saver import save_model, load_model
-from ..shared.types import LotteryNumber, ModelPrediction
+from ..utils import (
+    get_unified_memory_manager,
+    get_cuda_optimizer
+)
 
 logger = get_logger(__name__)
+
+
+class GPUDeviceManager:
+    """
+    GPU 장치 관리자 - src/utils 통합 시스템 기반 고성능 메모리 관리
+    
+    기존 API 호환성을 유지하면서 src/utils의 강력한 기능들을 통합:
+    - 스마트 메모리 할당
+    - GPU 메모리 풀링
+    - 자동 메모리 정리
+    - OOM 자동 복구
+    """
+    
+    def __init__(self):
+        # ✅ 기존 호환성 유지
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.gpu_available = torch.cuda.is_available()
+        
+        # ✅ src/utils 통합 시스템 초기화
+        try:
+            self.memory_mgr = get_unified_memory_manager()
+            self.cuda_opt = get_cuda_optimizer()
+            self._unified_system_available = True
+            logger.info("✅ 통합 메모리 관리 시스템 초기화 완료")
+        except Exception as e:
+            logger.warning(f"⚠️ 통합 시스템 초기화 실패, 기본 모드로 폴백: {e}")
+            self.memory_mgr = None
+            self.cuda_opt = None
+            self._unified_system_available = False
+        
+        if self.gpu_available:
+            logger.info(f"✅ GPU 사용 가능: {torch.cuda.get_device_name()}")
+            logger.info(f"GPU 메모리: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}GB")
+            
+            # ✅ CUDA 최적화 설정 (통합 시스템이 있는 경우)
+            if self._unified_system_available and self.cuda_opt:
+                self.cuda_opt.set_tf32_enabled(True)
+                logger.info("🚀 TF32 최적화 활성화")
+        else:
+            logger.info("⚠️ GPU 사용 불가능, CPU 모드로 실행")
+    
+    def to_device(self, tensor_or_data: Union[torch.Tensor, np.ndarray, List]) -> torch.Tensor:
+        """
+        데이터를 적절한 device로 이동 (스마트 메모리 할당 적용)
+        
+        Args:
+            tensor_or_data: 이동할 데이터
+            
+        Returns:
+            device로 이동된 텐서
+        """
+        try:
+            # ✅ 통합 시스템이 있으면 스마트 할당 사용
+            if self._unified_system_available and self.memory_mgr:
+                return self._smart_to_device(tensor_or_data)
+            else:
+                # 기존 방식 폴백
+                return self._legacy_to_device(tensor_or_data)
+                
+        except Exception as e:
+            logger.warning(f"⚠️ 스마트 변환 실패, 기본 방식으로 폴백: {e}")
+            return self._legacy_to_device(tensor_or_data)
+    
+    def _smart_to_device(self, tensor_or_data: Union[torch.Tensor, np.ndarray, List]) -> torch.Tensor:
+        """스마트 메모리 할당을 사용한 device 이동"""
+        # ✅ 메모리 관리자 존재 확인 (타입 체커 명확화)
+        if self.memory_mgr is None:
+            raise RuntimeError("통합 메모리 관리자가 초기화되지 않았습니다")
+        
+        # 데이터 크기 추정
+        if isinstance(tensor_or_data, torch.Tensor):
+            size = tensor_or_data.numel()
+            tensor = tensor_or_data
+        elif isinstance(tensor_or_data, np.ndarray):
+            size = tensor_or_data.size
+            tensor = torch.from_numpy(tensor_or_data)
+        elif isinstance(tensor_or_data, (list, tuple)):
+            size = len(tensor_or_data)
+            tensor = torch.tensor(tensor_or_data)
+        else:
+            raise TypeError(f"지원되지 않는 타입: {type(tensor_or_data)}")
+        
+        # ✅ 스마트 메모리 할당으로 device 이동
+        device_type = "gpu" if self.device.type == "cuda" else "cpu"
+        
+        # 임시 할당 컨텍스트 사용
+        with self.memory_mgr.temporary_allocation(
+            size=size * 4,  # float32 기준
+            prefer_device=device_type
+        ) as work_tensor:
+            return tensor.to(self.device, non_blocking=True)
+    
+    def _legacy_to_device(self, tensor_or_data: Union[torch.Tensor, np.ndarray, List]) -> torch.Tensor:
+        """기존 방식의 device 이동 (폴백용)"""
+        if isinstance(tensor_or_data, torch.Tensor):
+            return tensor_or_data.to(self.device, non_blocking=True)
+        elif isinstance(tensor_or_data, np.ndarray):
+            return torch.from_numpy(tensor_or_data).to(self.device, non_blocking=True)
+        elif isinstance(tensor_or_data, (list, tuple)):
+            return torch.tensor(tensor_or_data).to(self.device, non_blocking=True)
+        else:
+            raise TypeError(f"지원되지 않는 타입: {type(tensor_or_data)}")
+    
+    def check_memory_usage(self) -> Dict[str, float]:
+        """
+        GPU 메모리 사용량 확인 (통합 시스템 정보 포함)
+        
+        Returns:
+            메모리 사용량 정보
+        """
+        if not self.gpu_available:
+            return {"gpu_available": False}
+        
+        # ✅ 기본 GPU 메모리 정보
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        
+        result = {
+            "gpu_available": True,
+            "allocated_gb": allocated,
+            "reserved_gb": reserved,
+            "total_gb": total,
+            "usage_percent": (allocated / total) * 100
+        }
+        
+        # ✅ 통합 시스템 정보 추가
+        if self._unified_system_available and self.memory_mgr:
+            try:
+                unified_stats = self.memory_mgr.get_memory_status()
+                result["unified_memory"] = unified_stats
+                result["memory_efficiency"] = unified_stats.get("efficiency", 0.0)
+                result["pool_utilization"] = unified_stats.get("pool_utilization", 0.0)
+            except Exception as e:
+                logger.debug(f"통합 메모리 정보 조회 실패: {e}")
+        
+        return result
+    
+    def clear_cache(self):
+        """GPU 캐시 정리 (통합 시스템 연동)"""
+        if self.gpu_available:
+            # ✅ 통합 시스템이 있으면 스마트 정리
+            if self._unified_system_available and self.memory_mgr:
+                try:
+                    # 통합 메모리 관리자의 정리 기능 사용
+                    self.memory_mgr.cleanup_unused_memory()
+                    logger.info("🧹 스마트 GPU 메모리 정리 완료")
+                except Exception as e:
+                    logger.warning(f"⚠️ 스마트 정리 실패, 기본 정리로 폴백: {e}")
+                    torch.cuda.empty_cache()
+                    logger.info("GPU 캐시 정리 완료 (기본 모드)")
+            else:
+                # 기존 방식
+                torch.cuda.empty_cache()
+                logger.info("GPU 캐시 정리 완료")
+    
+    def get_optimal_batch_size(self, data_size: int, model_complexity: float = 1.0) -> int:
+        """
+        🚀 새로운 기능: 현재 메모리 상태에 따른 최적 배치 크기 계산
+        
+        Args:
+            data_size: 처리할 데이터 크기
+            model_complexity: 모델 복잡도 (1.0 = 기본)
+            
+        Returns:
+            최적 배치 크기
+        """
+        if not self.gpu_available:
+            return min(32, data_size)  # CPU 기본값
+        
+        if self._unified_system_available and self.memory_mgr:
+            try:
+                # 통합 시스템의 지능적 배치 크기 계산
+                memory_stats = self.memory_mgr.get_memory_status()
+                gpu_util = memory_stats.get("gpu_utilization", 0.5)
+                
+                # GPU 사용률에 따른 동적 조정
+                if gpu_util < 0.3:
+                    base_batch = 128
+                elif gpu_util < 0.7:
+                    base_batch = 64
+                else:
+                    base_batch = 32
+                
+                # 모델 복잡도 반영
+                optimal_batch = int(base_batch / model_complexity)
+                
+                return min(max(optimal_batch, 1), data_size)
+                
+            except Exception as e:
+                logger.debug(f"지능적 배치 크기 계산 실패: {e}")
+        
+        # 폴백: 기본 계산
+        memory_info = self.check_memory_usage()
+        usage_percent = memory_info.get("usage_percent", 50)
+        
+        if usage_percent < 30:
+            return min(64, data_size)
+        elif usage_percent < 70:
+            return min(32, data_size)
+        else:
+            return min(16, data_size)
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """
+        🚀 새로운 기능: 성능 통계 반환
+        
+        Returns:
+            상세한 성능 통계
+        """
+        stats = {
+            "device": str(self.device),
+            "gpu_available": self.gpu_available,
+            "unified_system": self._unified_system_available,
+            "memory_info": self.check_memory_usage()
+        }
+        
+        if self._unified_system_available:
+            if self.memory_mgr:
+                try:
+                    stats["memory_performance"] = self.memory_mgr.get_performance_metrics()
+                except Exception as e:
+                    logger.debug(f"메모리 성능 통계 조회 실패: {e}")
+            
+            if self.cuda_opt:
+                try:
+                    stats["cuda_optimization"] = self.cuda_opt.get_optimization_stats()
+                except Exception as e:
+                    logger.debug(f"CUDA 최적화 통계 조회 실패: {e}")
+        
+        return stats
 
 
 class BaseModel(ABC):
@@ -31,7 +264,7 @@ class BaseModel(ABC):
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        기본 모델 초기화
+        기본 모델 초기화 (src/utils 통합 시스템 적용)
 
         Args:
             config: 모델 설정
@@ -39,29 +272,43 @@ class BaseModel(ABC):
         # 기본 설정
         self.config = config or {}
 
-        # 장치 설정
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # ✅ GPU 장치 관리자 초기화 (통합 시스템 포함)
+        self.device_manager = GPUDeviceManager()
+        self.device = self.device_manager.device
 
         # 모델 상태
         self.is_trained = False
         self.training_history = []
         self.model_name = self.__class__.__name__
 
-        # 3자리 예측 모드 지원
-        self.supports_3digit_mode = False
-        self.is_3digit_mode = False
-        self.three_digit_model = None
+        # ✅ 성능 최적화 설정
+        self.enable_smart_batching = self.config.get("enable_smart_batching", True)
+        self.auto_memory_optimization = self.config.get("auto_memory_optimization", True)
 
-        # 모델 메타데이터
+        # 모델 메타데이터 (통합 시스템 정보 포함)
         self.metadata = {
             "model_type": self.model_name,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "version": "1.0.0",
-            "supports_3digit": self.supports_3digit_mode,
+            "version": "2.0.0",  # src/utils 통합으로 버전 업
+            "device": str(self.device),
+            "gpu_available": self.device_manager.gpu_available,
+            "unified_system": self.device_manager._unified_system_available,
+            "smart_features": {
+                "smart_batching": self.enable_smart_batching,
+                "auto_memory_optimization": self.auto_memory_optimization,
+                "tf32_enabled": (self.device_manager._unified_system_available and 
+                               self.device_manager.cuda_opt is not None)
+            }
         }
 
-        logger.info(f"{self.model_name} 초기화: 장치 {self.device}")
+        logger.info(f"✅ {self.model_name} 초기화 완료: 장치 {self.device}")
+        
+        # 통합 시스템 상태 로그
+        if self.device_manager._unified_system_available:
+            logger.info("🚀 통합 성능 최적화 시스템 활성화")
+        else:
+            logger.info("⚠️ 기본 모드로 실행 (통합 시스템 비활성화)")
 
     @abstractmethod
     def fit(self, X: np.ndarray, y: np.ndarray, **kwargs) -> Dict[str, Any]:
@@ -192,39 +439,120 @@ class BaseModel(ABC):
             logger.error(f"특성 벡터 로드 중 오류: {e}")
             raise
 
-    # ===== 3자리 예측 모드 지원 메서드들 =====
-
-    def enable_3digit_mode(self) -> bool:
+    def get_model_info(self) -> Dict[str, Any]:
         """
-        3자리 예측 모드 활성화
+        모델 정보 반환 (통합 시스템 정보 포함)
 
         Returns:
-            bool: 활성화 성공 여부
+            모델 메타데이터와 상태 정보
         """
-        if not self.supports_3digit_mode:
-            logger.warning(f"{self.model_name}은 3자리 모드를 지원하지 않습니다.")
-            return False
+        info = self.metadata.copy()
+        info.update({
+            "is_trained": self.is_trained,
+            "training_history_length": len(self.training_history),
+            "device": str(self.device),
+            "gpu_memory_info": self.device_manager.check_memory_usage(),
+            "performance_stats": self.device_manager.get_performance_stats(),
+        })
+        return info
+    
+    def get_optimal_batch_size(self, data_size: int, model_complexity: float = 1.0) -> int:
+        """
+        🚀 스마트 배치 크기 계산
+        
+        Args:
+            data_size: 처리할 데이터 크기
+            model_complexity: 모델 복잡도 (1.0 = 기본)
+            
+        Returns:
+            최적 배치 크기
+        """
+        if not self.enable_smart_batching:
+            return min(32, data_size)  # 스마트 배치 비활성화시 기본값
+        
+        return self.device_manager.get_optimal_batch_size(data_size, model_complexity)
+    
+    def smart_data_transfer(self, data: Union[torch.Tensor, np.ndarray, List]) -> torch.Tensor:
+        """
+        🚀 스마트 데이터 전송 (통합 메모리 관리 활용)
+        
+        Args:
+            data: 전송할 데이터
+            
+        Returns:
+            device로 이동된 텐서
+        """
+        if not self.auto_memory_optimization:
+            # 기존 방식 사용
+            return self.device_manager._legacy_to_device(data)
+        
+        return self.device_manager.to_device(data)
+    
+    def optimize_memory_usage(self):
+        """
+        🚀 메모리 사용량 최적화
+        """
+        if self.auto_memory_optimization:
+            self.device_manager.clear_cache()
+            logger.info(f"{self.model_name}: 메모리 최적화 완료")
+        else:
+            logger.debug(f"{self.model_name}: 메모리 최적화 비활성화")
+    
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """
+        🚀 성능 요약 정보 반환
+        
+        Returns:
+            성능 요약 통계
+        """
+        self.device_manager.get_performance_stats()
+        memory_info = self.device_manager.check_memory_usage()
+        
+        summary = {
+            "model_name": self.model_name,
+            "device": str(self.device),
+            "is_trained": self.is_trained,
+            "unified_system_active": self.device_manager._unified_system_available,
+            "memory_efficiency": memory_info.get("memory_efficiency", 0.0),
+            "gpu_utilization": memory_info.get("usage_percent", 0.0),
+            "smart_features_enabled": {
+                "smart_batching": self.enable_smart_batching,
+                "auto_memory_optimization": self.auto_memory_optimization
+            }
+        }
+        
+        return summary
 
+
+class ThreeDigitMixin:
+    """3자리 예측 모드를 위한 Mixin 클래스"""
+    
+    def __init__(self):
+        self.supports_3digit_mode = True
+        self.is_3digit_mode = False
+        self.three_digit_model = None
+
+    def enable_3digit_mode(self) -> bool:
+        """3자리 예측 모드 활성화"""
+        if not self.supports_3digit_mode:
+            logger.warning(f"{self.model_name}은 3자리 예측 모드를 지원하지 않습니다.")
+            return False
+        
         self.is_3digit_mode = True
-        logger.info(f"{self.model_name} 3자리 모드 활성화")
+        logger.info(f"{self.model_name}: 3자리 예측 모드 활성화")
         return True
 
     def disable_3digit_mode(self) -> bool:
-        """
-        3자리 예측 모드 비활성화
-
-        Returns:
-            bool: 비활성화 성공 여부
-        """
+        """3자리 예측 모드 비활성화"""
         self.is_3digit_mode = False
-        logger.info(f"{self.model_name} 3자리 모드 비활성화")
+        logger.info(f"{self.model_name}: 3자리 예측 모드 비활성화")
         return True
 
     def predict_3digit_combinations(
         self, X: np.ndarray, top_k: int = 100, **kwargs
     ) -> List[Tuple[Tuple[int, int, int], float]]:
         """
-        3자리 조합 예측 (하위 클래스에서 구현)
+        3자리 조합 예측 (구현 필요)
 
         Args:
             X: 특성 벡터
@@ -232,27 +560,22 @@ class BaseModel(ABC):
             **kwargs: 추가 매개변수
 
         Returns:
-            List[Tuple[Tuple[int, int, int], float]]: (3자리 조합, 신뢰도) 리스트
+            3자리 조합과 확률의 리스트
         """
-        if not self.supports_3digit_mode:
-            logger.error(f"{self.model_name}은 3자리 모드를 지원하지 않습니다.")
-            return []
-
         if not self.is_3digit_mode:
-            logger.error("3자리 모드가 활성화되지 않았습니다.")
-            return []
-
-        # 하위 클래스에서 구현해야 함
-        logger.warning(
-            f"{self.model_name}의 predict_3digit_combinations가 구현되지 않았습니다."
-        )
-        return []
+            raise ValueError("3자리 예측 모드가 활성화되지 않았습니다.")
+        
+        if self.three_digit_model is None:
+            raise ValueError("3자리 예측 모델이 훈련되지 않았습니다.")
+        
+        # 하위 클래스에서 구현
+        raise NotImplementedError("3자리 예측 메서드를 구현해야 합니다.")
 
     def fit_3digit_mode(
         self, X: np.ndarray, y_3digit: np.ndarray, **kwargs
     ) -> Dict[str, Any]:
         """
-        3자리 모드 전용 훈련 (하위 클래스에서 구현)
+        3자리 예측 모드 훈련 (구현 필요)
 
         Args:
             X: 특성 벡터
@@ -260,225 +583,13 @@ class BaseModel(ABC):
             **kwargs: 추가 매개변수
 
         Returns:
-            Dict[str, Any]: 훈련 결과
+            훈련 결과
         """
         if not self.supports_3digit_mode:
-            logger.error(f"{self.model_name}은 3자리 모드를 지원하지 않습니다.")
-            return {"error": "3자리 모드 미지원"}
-
-        # 하위 클래스에서 구현해야 함
-        logger.warning(f"{self.model_name}의 fit_3digit_mode가 구현되지 않았습니다.")
-        return {"error": "구현되지 않음"}
-
-    def get_3digit_feature_vector(
-        self,
-        feature_path: str = "data/cache/3digit_feature_vector.npy",
-        names_path: str = "data/cache/3digit_feature_vector.names.json",
-    ) -> Tuple[np.ndarray, List[str]]:
-        """
-        3자리 전용 특성 벡터와 특성 이름을 로드
-
-        Args:
-            feature_path: 3자리 특성 벡터 파일 경로
-            names_path: 3자리 특성 이름 파일 경로
-
-        Returns:
-            Tuple[np.ndarray, List[str]]: 특성 벡터와 특성 이름
-        """
-        try:
-            # 벡터 데이터 로드
-            if not os.path.exists(feature_path):
-                logger.warning(
-                    f"3자리 특성 벡터 파일이 없어 기본 벡터 사용: {feature_path}"
-                )
-                return self.get_feature_vector()
-
-            vector = np.load(feature_path)
-
-            # 특성 이름 로드
-            if not os.path.exists(names_path):
-                logger.warning(
-                    f"3자리 특성 이름 파일이 없어 기본 이름 생성: {names_path}"
-                )
-                feature_names = [f"3digit_feature_{i}" for i in range(vector.shape[-1])]
-            else:
-                with open(names_path, "r", encoding="utf-8") as f:
-                    feature_names = json.load(f)
-
-            logger.info(
-                f"3자리 특성 벡터 로드 완료: {vector.shape}, 특성 수={len(feature_names)}"
-            )
-            return vector, feature_names
-
-        except Exception as e:
-            logger.error(f"3자리 특성 벡터 로드 중 오류: {e}")
-            # 기본 벡터로 대체
-            return self.get_feature_vector()
-
-    def prepare_3digit_training_data(
-        self, historical_data: List[LotteryNumber], window_size: int = 50
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        3자리 모드 훈련 데이터 준비
-
-        Args:
-            historical_data: 과거 당첨 번호 데이터
-            window_size: 윈도우 크기
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: (특성 벡터, 3자리 조합 레이블)
-        """
-        try:
-            from itertools import combinations
-
-            # 3자리 조합 생성
-            all_3digit_combos = list(combinations(range(1, 46), 3))
-
-            X_samples = []
-            y_samples = []
-
-            # 슬라이딩 윈도우로 훈련 데이터 생성
-            for i in range(len(historical_data) - window_size):
-                window_data = historical_data[i : i + window_size]
-                target_draw = historical_data[i + window_size]
-
-                # 윈도우 데이터에서 특성 추출
-                window_features = self._extract_window_features(window_data)
-
-                # 타겟 당첨 번호에서 3자리 조합 추출
-                target_3digit_combos = list(combinations(target_draw.numbers, 3))
-
-                # 각 3자리 조합에 대한 레이블 생성 (원-핫 인코딩)
-                for combo in target_3digit_combos:
-                    combo_label = np.zeros(len(all_3digit_combos))
-                    if combo in all_3digit_combos:
-                        combo_idx = all_3digit_combos.index(combo)
-                        combo_label[combo_idx] = 1.0
-
-                    X_samples.append(window_features)
-                    y_samples.append(combo_label)
-
-            X = np.array(X_samples) if X_samples else np.array([])
-            y = np.array(y_samples) if y_samples else np.array([])
-
-            logger.info(f"3자리 훈련 데이터 준비 완료: X={X.shape}, y={y.shape}")
-            return X, y
-
-        except Exception as e:
-            logger.error(f"3자리 훈련 데이터 준비 중 오류: {e}")
-            return np.array([]), np.array([])
-
-    def _extract_window_features(self, window_data: List[LotteryNumber]) -> np.ndarray:
-        """
-        윈도우 데이터에서 특성 추출 (하위 클래스에서 재정의 가능)
-
-        Args:
-            window_data: 윈도우 당첨 번호 데이터
-
-        Returns:
-            np.ndarray: 추출된 특성 벡터
-        """
-        try:
-            # 기본 특성 추출: 번호 빈도, 간격 통계 등
-            all_numbers = []
-            for draw in window_data:
-                all_numbers.extend(draw.numbers)
-
-            # 번호별 빈도
-            freq_features = np.zeros(45)
-            for num in all_numbers:
-                if 1 <= num <= 45:
-                    freq_features[num - 1] += 1
-
-            # 정규화
-            freq_features = (
-                freq_features / len(window_data) if window_data else freq_features
-            )
-
-            # 추가 통계 특성
-            if all_numbers:
-                stats_features = np.array(
-                    [
-                        np.mean(all_numbers),
-                        np.std(all_numbers),
-                        np.max(all_numbers),
-                        np.min(all_numbers),
-                        len(set(all_numbers)),  # 고유 번호 수
-                    ]
-                )
-            else:
-                stats_features = np.zeros(5)
-
-            # 특성 결합
-            features = np.concatenate([freq_features, stats_features])
-
-            return features
-
-        except Exception as e:
-            logger.error(f"윈도우 특성 추출 중 오류: {e}")
-            return np.zeros(50)  # 기본 50차원 벡터
-
-    def evaluate_3digit_mode(
-        self, X: np.ndarray, y_3digit: np.ndarray, **kwargs
-    ) -> Dict[str, Any]:
-        """
-        3자리 모드 평가
-
-        Args:
-            X: 특성 벡터
-            y_3digit: 3자리 조합 레이블
-            **kwargs: 추가 매개변수
-
-        Returns:
-            Dict[str, Any]: 평가 결과
-        """
-        if not self.supports_3digit_mode or not self.is_3digit_mode:
-            return {"error": "3자리 모드가 지원되지 않거나 활성화되지 않음"}
-
-        try:
-            # 예측 수행
-            predictions = self.predict_3digit_combinations(X, **kwargs)
-
-            if not predictions:
-                return {"error": "예측 결과 없음"}
-
-            # 평가 메트릭 계산
-            metrics = {
-                "total_predictions": len(predictions),
-                "avg_confidence": np.mean([conf for _, conf in predictions]),
-                "max_confidence": np.max([conf for _, conf in predictions]),
-                "min_confidence": np.min([conf for _, conf in predictions]),
-            }
-
-            return metrics
-
-        except Exception as e:
-            logger.error(f"3자리 모드 평가 중 오류: {e}")
-            return {"error": str(e)}
-
-    def get_model_info(self) -> Dict[str, Any]:
-        """
-        모델 정보 반환 (3자리 모드 정보 포함)
-
-        Returns:
-            Dict[str, Any]: 모델 정보
-        """
-        info = {
-            "model_name": self.model_name,
-            "device": str(self.device),
-            "is_trained": self.is_trained,
-            "supports_3digit_mode": self.supports_3digit_mode,
-            "is_3digit_mode": self.is_3digit_mode,
-            "metadata": self.metadata,
-        }
-
-        if self.supports_3digit_mode:
-            info["3digit_model_info"] = {
-                "three_digit_model": self.three_digit_model is not None,
-                "mode_active": self.is_3digit_mode,
-            }
-
-        return info
+            return {"error": "3자리 예측 모드를 지원하지 않습니다."}
+        
+        # 하위 클래스에서 구현
+        raise NotImplementedError("3자리 모드 훈련 메서드를 구현해야 합니다.")
 
 
 class ModelWithAMP(BaseModel):
@@ -507,9 +618,12 @@ class ModelWithAMP(BaseModel):
             self.scaler = torch.cuda.amp.GradScaler()
             logger.info(f"{self.model_name}: AMP 활성화됨")
         else:
-            # Linter 오류 방지를 위해 None 대신 더미 스케일러 객체 생성
-            self.scaler = _DummyScaler()
+            self.scaler = None
             logger.info(f"{self.model_name}: AMP 비활성화됨")
+
+    def get_amp_context(self):
+        """AMP 컨텍스트 반환 - nullcontext 사용으로 개선"""
+        return torch.cuda.amp.autocast() if self.use_amp else nullcontext()
 
     def train_step_with_amp(self, model, inputs, targets, optimizer, loss_fn, **kwargs):
         """
@@ -532,63 +646,36 @@ class ModelWithAMP(BaseModel):
         # 그래디언트 초기화
         optimizer.zero_grad()
 
-        if self.use_amp:
-            # AMP 컨텍스트에서 순전파
-            with torch.cuda.amp.autocast():
+        # 데이터를 적절한 device로 이동
+        inputs = self.device_manager.to_device(inputs)
+        targets = self.device_manager.to_device(targets)
+
+        try:
+            with self.get_amp_context():
                 outputs = model(inputs)
                 loss = loss_fn(outputs, targets)
 
-            # 스케일된 그래디언트로 역전파
-            self.scaler.scale(loss).backward()
+            if self.use_amp and self.scaler:
+                # 스케일된 그래디언트로 역전파
+                self.scaler.scale(loss).backward()
+                # 스케일된 그래디언트로 옵티마이저 스텝
+                self.scaler.step(optimizer)
+                # 스케일러 업데이트
+                self.scaler.update()
+            else:
+                # 일반 역전파
+                loss.backward()
+                optimizer.step()
 
-            # 스케일된 그래디언트로 옵티마이저 스텝
-            self.scaler.step(optimizer)
-
-            # 스케일러 업데이트
-            self.scaler.update()
-        else:
-            # 일반 순전파 및 역전파
-            outputs = model(inputs)
-            loss = loss_fn(outputs, targets)
-            loss.backward()
-            optimizer.step()
-
-        return loss.item()
-
-
-class _DummyScaler:
-    """
-    AMP가 비활성화되었을 때 사용하는 더미 스케일러 클래스
-
-    AMP 스케일러 인터페이스를 모방하여 linter 오류를 방지합니다.
-    """
-
-    def scale(self, loss):
-        """
-        손실값 스케일링 (더미 구현)
-
-        Args:
-            loss: 손실값
-
-        Returns:
-            원본 손실값 (스케일링 없음)
-        """
-        return loss
-
-    def step(self, optimizer):
-        """
-        옵티마이저 스텝 (더미 구현)
-
-        Args:
-            optimizer: 옵티마이저
-        """
-        optimizer.step()
-
-    def update(self):
-        """
-        스케일러 업데이트 (더미 구현)
-        """
-        pass
+            return loss.item()
+            
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                logger.warning("GPU 메모리 부족, 캐시 정리 후 재시도")
+                self.device_manager.clear_cache()
+                raise MemoryError(f"GPU 메모리 부족: {e}")
+            else:
+                raise
 
 
 class EnsembleBaseModel(BaseModel):
@@ -641,8 +728,12 @@ class EnsembleBaseModel(BaseModel):
             logger.info(
                 f"앙상블 구성 모델 {i+1}/{len(self.models)} ({model.model_name}) 훈련 중..."
             )
-            result = model.fit(X, y, **kwargs)
-            results[model.model_name] = result
+            try:
+                result = model.fit(X, y, **kwargs)
+                results[model.model_name] = result
+            except Exception as e:
+                logger.error(f"모델 {model.model_name} 훈련 실패: {e}")
+                results[model.model_name] = {"error": str(e)}
 
         self.is_trained = all(model.is_trained for model in self.models)
 
@@ -650,6 +741,7 @@ class EnsembleBaseModel(BaseModel):
             "ensemble_results": results,
             "is_trained": self.is_trained,
             "model_count": len(self.models),
+            "gpu_memory_info": self.device_manager.check_memory_usage(),
         }
 
     def predict(self, X: np.ndarray, **kwargs) -> np.ndarray:
@@ -672,8 +764,15 @@ class EnsembleBaseModel(BaseModel):
         predictions = []
 
         for model, weight in zip(self.models, self.weights):
-            pred = model.predict(X, **kwargs)
-            predictions.append((pred, weight))
+            try:
+                pred = model.predict(X, **kwargs)
+                predictions.append((pred, weight))
+            except Exception as e:
+                logger.warning(f"모델 {model.model_name} 예측 실패: {e}")
+                continue
+
+        if not predictions:
+            raise RuntimeError("모든 모델 예측이 실패했습니다.")
 
         return self._combine_predictions(predictions)
 
@@ -682,19 +781,26 @@ class EnsembleBaseModel(BaseModel):
         모델 예측값 결합
 
         Args:
-            predictions: (예측값, 가중치) 튜플 목록
+            predictions: (예측값, 가중치) 튜플 리스트
 
         Returns:
-            결합된 예측값
+            가중 평균 예측값
         """
-        # 기본 구현: 가중 평균
-        weighted_preds = [pred * weight for pred, weight in predictions]
-        total_weight = sum(self.weights)
+        if not predictions:
+            raise ValueError("결합할 예측값이 없습니다.")
 
-        if total_weight == 0:
-            return predictions[0][0]  # 가중치가 모두 0이면 첫 번째 예측 반환
+        # 가중 평균 계산
+        weighted_sum = None
+        total_weight = 0
 
-        return sum(weighted_preds) / total_weight
+        for pred, weight in predictions:
+            if weighted_sum is None:
+                weighted_sum = pred * weight
+            else:
+                weighted_sum += pred * weight
+            total_weight += weight
+
+        return weighted_sum / total_weight if total_weight > 0 and weighted_sum is not None else (weighted_sum or predictions[0][0])
 
     def save(self, path: str) -> bool:
         """
@@ -707,31 +813,37 @@ class EnsembleBaseModel(BaseModel):
             성공 여부
         """
         try:
-            # 디렉토리 확인
             self._ensure_directory(path)
 
-            # 각 구성 모델 저장
+            # 앙상블 메타데이터 저장
             ensemble_data = {
-                "model_paths": [],
+                "model_count": len(self.models),
                 "weights": self.weights,
+                "model_names": [model.model_name for model in self.models],
                 "metadata": self.metadata,
             }
 
+            # 각 모델 개별 저장
+            model_paths = []
             for i, model in enumerate(self.models):
-                model_path = f"{os.path.splitext(path)[0]}_model_{i}.pt"
+                model_path = f"{path}_model_{i}_{model.model_name}"
                 success = model.save(model_path)
                 if success:
-                    ensemble_data["model_paths"].append(model_path)
+                    model_paths.append(model_path)
+                else:
+                    logger.warning(f"모델 {model.model_name} 저장 실패")
 
-            # 앙상블 메타데이터 저장
-            with open(path, "w", encoding="utf-8") as f:
+            ensemble_data["model_paths"] = model_paths
+
+            # 앙상블 정보 저장
+            with open(f"{path}_ensemble.json", "w", encoding="utf-8") as f:
                 json.dump(ensemble_data, f, ensure_ascii=False, indent=2)
 
-            logger.info(f"앙상블 모델 저장 완료: {path} (모델 {len(self.models)}개)")
+            logger.info(f"앙상블 모델 저장 완료: {path}")
             return True
 
         except Exception as e:
-            logger.error(f"앙상블 모델 저장 중 오류: {e}")
+            logger.error(f"앙상블 모델 저장 실패: {e}")
             return False
 
     def load(self, path: str) -> bool:
@@ -739,84 +851,55 @@ class EnsembleBaseModel(BaseModel):
         앙상블 모델 로드
 
         Args:
-            path: 모델 경로
+            path: 로드할 모델 경로
 
         Returns:
             성공 여부
         """
         try:
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"앙상블 모델 파일이 존재하지 않습니다: {path}")
-
-            # 앙상블 메타데이터 로드
-            with open(path, "r", encoding="utf-8") as f:
+            # 앙상블 정보 로드
+            with open(f"{path}_ensemble.json", "r", encoding="utf-8") as f:
                 ensemble_data = json.load(f)
 
-            model_paths = ensemble_data.get("model_paths", [])
-            self.weights = ensemble_data.get("weights", [])
-            self.metadata = ensemble_data.get("metadata", {})
-
-            # 모델 목록 초기화
+            # 모델 리스트 초기화
             self.models = []
+            self.weights = ensemble_data["weights"]
 
-            # 각 구성 모델 로드
-            for model_path in model_paths:
-                if not os.path.exists(model_path):
-                    logger.warning(f"구성 모델 파일이 존재하지 않습니다: {model_path}")
-                    continue
+            # 각 모델 로드
+            for i, model_path in enumerate(ensemble_data["model_paths"]):
+                model_name = ensemble_data["model_names"][i]
+                model = self._create_model_instance(model_name)
+                
+                if model and model.load(model_path):
+                    self.models.append(model)
+                else:
+                    logger.warning(f"모델 {model_name} 로드 실패")
 
-                # 모델 타입 추론 및 인스턴스 생성
-                model_type = os.path.basename(model_path).split("_")[0]
-                model_instance = self._create_model_instance(model_type)
-
-                if model_instance and model_instance.load(model_path):
-                    self.models.append(model_instance)
-
-            # 훈련 상태 갱신
             self.is_trained = len(self.models) > 0
+            self.metadata = ensemble_data.get("metadata", self.metadata)
 
-            logger.info(
-                f"앙상블 모델 로드 완료: {path} (모델 {len(self.models)}개/{len(model_paths)}개)"
-            )
-            return self.is_trained
+            logger.info(f"앙상블 모델 로드 완료: {len(self.models)}개 모델")
+            return True
 
         except Exception as e:
-            logger.error(f"앙상블 모델 로드 중 오류: {e}")
+            logger.error(f"앙상블 모델 로드 실패: {e}")
             return False
 
     def _create_model_instance(self, model_type: str) -> Optional[BaseModel]:
-        """
-        모델 타입에 따른 인스턴스 생성
-
-        Args:
-            model_type: 모델 타입 문자열
-
-        Returns:
-            모델 인스턴스 또는 None
-        """
-        try:
-            # 모델 모듈 동적 임포트
-            for module_path in [
-                f"..models.ml.{model_type.lower()}_model",
-                f"..models.dl.{model_type.lower()}_model",
-                f"..models.rl.{model_type.lower()}_model",
-                f"..models.bayesian.{model_type.lower()}_model",
-                f"..models.meta.{model_type.lower()}_model",
-            ]:
-                try:
-                    module = importlib.import_module(module_path, package=__package__)
-                    model_class = getattr(module, model_type)
-                    return model_class(self.config)
-                except (ImportError, AttributeError):
-                    continue
-
-            logger.warning(
-                f"모델 타입에 해당하는 클래스를 찾을 수 없습니다: {model_type}"
-            )
-            return None
-
-        except Exception as e:
-            logger.error(f"모델 인스턴스 생성 중 오류: {e}")
+        """모델 타입 문자열로부터 모델 인스턴스를 생성합니다."""
+        if model_type == "TCNModel":
+            from .dl.tcn_model import TCNModel
+            # TODO: 로드된 모델에 대한 캐시 관리자 주입 방법을 고려해야 합니다.
+            # 현재는 캐시를 비활성화합니다.
+            return TCNModel(config=self.config, cache_manager=None)
+        elif model_type == "AutoencoderModel":
+            from .dl.autoencoder_model import AutoencoderModel
+            return AutoencoderModel(self.config)
+        elif model_type == "LightGBMModel":
+            from .ml.lightgbm_model import LightGBMModel
+            return LightGBMModel(self.config)
+        else:
+            logger.error(f"알 수 없는 모델 타입: {model_type}")
             return None
 
 

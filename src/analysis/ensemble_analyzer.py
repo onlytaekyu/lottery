@@ -15,14 +15,12 @@
 """
 
 import numpy as np
-import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple, Callable
-from collections import defaultdict, Counter
+from typing import Dict, List, Any, Optional
+from collections import defaultdict
 from datetime import datetime
 import json
 from pathlib import Path
 from scipy import stats
-from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 from .base_analyzer import BaseAnalyzer
 from ..shared.types import LotteryNumber

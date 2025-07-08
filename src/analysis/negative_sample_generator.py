@@ -19,9 +19,9 @@ import psutil
 
 from ..utils.unified_logging import get_logger
 from ..utils.memory_manager import get_memory_manager
+from ..utils.cuda_optimizers import get_cuda_optimizer, CudaConfig
 
 # from ..utils.batch_controller import DynamicBatchSizeController, CPUBatchProcessor  # 존재하지 않음
-from ..utils.cuda_singleton_manager import get_singleton_cuda_optimizer
 from ..shared.types import LotteryNumber
 from .pattern_analyzer import PatternAnalyzer
 from .base_analyzer import BaseAnalyzer
@@ -73,24 +73,20 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
         # CPU/GPU별 최적화 도구 설정
         if self.use_gpu:
             try:
-                from ..utils.cuda_singleton_manager import (
-                    get_singleton_cuda_optimizer,
-                    CudaSingletonConfig,
-                )
-                cuda_config = CudaSingletonConfig(
+                self.cuda_optimizer = get_cuda_optimizer(config=CudaConfig(
                     use_amp=True,
-                    batch_size=32,
-                    use_cudnn=True,
-                )
-                self.cuda_optimizer = get_singleton_cuda_optimizer(
-                    config=cuda_config, requester_name="negative_sample_generator"
-                )
+                    use_tensorrt=False,  # TensorRT는 벡터 생성에 불필요
+                ))
                 self.amp_scaler = torch.cuda.amp.GradScaler()
                 self.cpu_batch_processor = None
             except Exception as e:
                 logger.warning(f"CUDA 최적화기 초기화 실패: {e}")
                 self.cuda_optimizer = None
                 self.cpu_batch_processor = CPUBatchProcessor(
+                    n_jobs=negative_sampler_config.get("vectorize_workers", -1),
+                    batch_size=negative_sampler_config.get("vectorize_batch", 1000),
+                    backend="multiprocessing",  # GIL 회피
+                )
         else:
             self.cuda_optimizer = None
             self.cpu_batch_processor = CPUBatchProcessor(
@@ -117,6 +113,8 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
             "processing_time": 0.0,
             "samples_per_second": 0.0,
         }
+
+        self.max_overlap_ratio = self.generation_config.get("max_overlap_ratio", 0.6)
 
     def _analyze_impl(
         self, historical_data: List[LotteryNumber], *args, **kwargs
@@ -472,7 +470,7 @@ class NegativeSampleGenerator(BaseAnalyzer[Dict[str, Any]]):
             self.logger.info(f"배치 크기: {batch_size}")
 
             # 특성 벡터 크기 확인
-            expected_num_features = self._estimate_feature_vector_size()
+            self._estimate_feature_vector_size()
             actual_num_features = self._get_actual_vector_size(
                 negative_samples[0], draw_data
             )

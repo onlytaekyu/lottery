@@ -6,25 +6,22 @@
 """
 
 # 1. 표준 라이브러리
-import os
 import json
 import time
-from typing import Dict, List, Any, Optional, Tuple, Set
+from typing import Dict, List, Any, Optional
 from pathlib import Path
 from datetime import datetime
-import itertools
 from collections import Counter
 
 # 2. 서드파티
 import numpy as np
-from scipy.spatial.distance import pdist, squareform
+from scipy.spatial.distance import pdist
 from scipy.stats import entropy
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 
 # 3. 프로젝트 내부
-from ..shared.types import LotteryNumber, ModelPrediction
 from ..utils.unified_logging import get_logger
 from ..analysis.pattern_analysis_utils import calculate_combination_diversity_score
 

@@ -6,7 +6,6 @@ TCN 최적화 전처리기 - 다중 해상도 윈도우, 시계열 증강, Atten
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 from sklearn.preprocessing import StandardScaler
@@ -16,8 +15,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from ..utils.unified_logging import get_logger
-from ..utils.memory_manager import MemoryManager
-from ..utils.cuda_singleton_manager import CudaSingletonManager
+from ..shared.types import PreprocessedData
 
 logger = get_logger(__name__)
 
@@ -174,13 +172,6 @@ class OptimizedTCNPreprocessor:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.logger = get_logger(__name__)
-        self.memory_manager = MemoryManager()
-        self.cuda_manager = CudaSingletonManager()
-
-        # 디바이스 설정
-        self.device = torch.device(
-            "cuda" if self.cuda_manager.is_available() else "cpu"
-        )
 
         # TCN 설정
         self.tcn_config = TCNConfig(
@@ -488,3 +479,66 @@ class OptimizedTCNPreprocessor:
         print(f"  • 특성 압축률: {metadata['compression_ratio']:.2f}x")
 
         print("=" * 60)
+
+    def preprocess(self, data: np.ndarray) -> PreprocessedData:
+        """
+        데이터를 전처리합니다.
+
+        Args:
+            data: 입력 데이터 (samples, features)
+
+        Returns:
+            PreprocessedData: 전처리된 데이터와 메타데이터
+        """
+
+        try:
+            self.logger.info("TCN 최적화 전처리 시작")
+
+            with self.memory_manager.get_context("tcn_preprocessing"):
+                # 1. 데이터 정규화
+                self.logger.info("데이터 정규화...")
+                X_scaled = self.scaler.fit_transform(data)
+
+                # 2. 시계열 시퀀스 생성
+                self.logger.info("시계열 시퀀스 생성...")
+                X_sequences = self._create_sequences(X_scaled)
+
+                # 3. 다중 해상도 특성 추출
+                self.logger.info("다중 해상도 특성 추출...")
+                X_multi_resolution = self._extract_multi_resolution_features(
+                    X_sequences
+                )
+
+                # 4. 시계열 증강
+                self.logger.info("시계열 증강...")
+                X_augmented = self._apply_time_series_augmentation(X_multi_resolution)
+
+                # 5. Attention 기반 특성 선택
+                self.logger.info("Attention 기반 특성 선택...")
+                X_selected, attention_weights = self._apply_attention_selection(
+                    X_augmented
+                )
+
+                # 6. 최종 시퀀스 형태로 변환
+                X_final = self._format_for_tcn(X_selected)
+
+                # 메타데이터 생성
+                metadata = {
+                    "sequence_length": self.tcn_config.sequence_length,
+                    "input_dim": X_final.shape[-1],
+                    "multi_resolution_windows": self.multi_resolution_windows,
+                    "attention_heads": self.tcn_config.attention_heads,
+                    "augmentation_methods": self.time_augmentation.methods,
+                    "compression_ratio": data.shape[1] / X_final.shape[-1],
+                }
+
+                self.fitted = True
+                self.logger.info(
+                    f"TCN 전처리 완료 - 시퀀스 길이: {X_final.shape[1]}, 특성 수: {X_final.shape[2]}"
+                )
+
+                return PreprocessedData(data=X_final, metadata=metadata)
+
+        except Exception as e:
+            self.logger.error(f"TCN 전처리 중 오류: {e}")
+            raise

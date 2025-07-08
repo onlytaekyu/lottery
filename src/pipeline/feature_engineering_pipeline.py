@@ -9,20 +9,14 @@ Phase 2: 성능 향상을 위한 고급 특성 엔지니어링
 """
 
 import numpy as np
-import pandas as pd
-from typing import Dict, List, Tuple, Optional, Any, Union
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
-from pathlib import Path
 from itertools import combinations
-from sklearn.preprocessing import PolynomialFeatures
 from sklearn.feature_selection import SelectKBest, mutual_info_classif
-import warnings
 
-from ..shared.types import LotteryNumber
 from ..utils.unified_logging import get_logger
 from ..utils.unified_config import get_config
 from ..utils.memory_manager import get_memory_manager
-from ..utils.unified_performance import performance_monitor
 
 logger = get_logger(__name__)
 

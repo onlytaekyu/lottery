@@ -15,14 +15,12 @@
 """
 
 import numpy as np
-import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple
-from collections import defaultdict, Counter
+from typing import Dict, List, Any, Optional
+from collections import defaultdict
 from datetime import datetime
 import json
 from pathlib import Path
 from scipy import stats
-from scipy.special import beta, gamma
 
 from .base_analyzer import BaseAnalyzer
 from ..shared.types import LotteryNumber
@@ -523,7 +521,7 @@ class BayesianAnalyzer(BaseAnalyzer):
         self, data: List[LotteryNumber]
     ) -> Dict[str, Any]:
         """시간적 조건부 확률"""
-        window_size = self.bayesian_config["condition_window"]
+        self.bayesian_config["condition_window"]
         temporal_conditions = {}
 
         for number in range(1, 46):

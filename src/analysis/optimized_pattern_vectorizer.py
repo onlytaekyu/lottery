@@ -12,14 +12,13 @@ import numpy as np
 import json
 import threading
 import hashlib
-import time
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 from pathlib import Path
-from datetime import datetime
 
 from ..utils.unified_logging import get_logger
 from ..utils.unified_performance_engine import get_unified_performance_engine, TaskType
-from ..utils.cache_manager import CacheManager
+from ..utils.cache_manager import get_cache_manager
+from ..utils.unified_feature_vector_validator import get_unified_feature_validator
 from ..shared.types import LotteryNumber
 
 logger = get_logger(__name__)
@@ -52,7 +51,10 @@ class OptimizedPatternVectorizer:
         self.performance_engine = get_unified_performance_engine()
 
         # 캐시 관리자 초기화
-        self.cache_manager = CacheManager()
+        self.cache_manager = get_cache_manager()
+
+        # 특성 벡터 검증기 초기화
+        self.feature_validator = get_unified_feature_validator()
 
         # 벡터 구성 정의 (간소화)
         self.vector_config = {
@@ -137,6 +139,15 @@ class OptimizedPatternVectorizer:
 
         # 정규화
         normalized_vector = self._normalize_vector(combined_vector)
+
+        # 벡터 검증
+        if not self.feature_validator.validate_all(
+            normalized_vector, self.feature_names
+        ):
+            logger.warning("생성된 벡터가 검증에 실패했습니다. 기본값으로 대체합니다.")
+            normalized_vector = np.random.uniform(
+                0.1, 1.0, size=self.total_dimensions
+            ).astype(np.float32)
 
         return normalized_vector
 

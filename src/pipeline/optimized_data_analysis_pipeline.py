@@ -14,50 +14,29 @@
 """
 
 import json
-import logging
-import os
 import sys
 import time
-import random
-import traceback
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 
 import numpy as np
 import psutil
 
-from src.utils.error_handler_refactored import (
-    get_logger,
-    log_exception_with_trace,
-    StrictErrorHandler,
-    strict_error_handler,
-    validate_and_fail_fast,
-)
-from src.utils.state_vector_cache import get_cache
-from src.utils.data_loader import load_draw_history, LotteryJSONEncoder
+from src.utils.unified_logging import get_logger
+from src.utils.data_loader import load_draw_history
 from src.shared.types import LotteryNumber
 from src.utils.unified_config import load_config
-from src.utils.unified_performance import get_profiler
 
 # 최적화 시스템 import
-from src.utils.process_pool_manager import get_process_pool_manager
-from src.utils.hybrid_optimizer import get_hybrid_optimizer, optimize
-from src.utils.memory_manager import get_memory_manager
+from src.utils.enhanced_process_pool import get_enhanced_process_pool
+from src.utils.unified_memory_manager import get_unified_memory_manager
 
 from src.analysis.pattern_analyzer import PatternAnalyzer
 from src.analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
-from src.utils.unified_report import safe_convert, save_physical_performance_report
-from src.analysis.pair_analyzer import PairAnalyzer
-from src.analysis.distribution_analyzer import DistributionAnalyzer
-from src.analysis.roi_analyzer import ROIAnalyzer
-from src.analysis.cluster_analyzer import ClusterAnalyzer
-from src.analysis.trend_analyzer import TrendAnalyzer
-from src.analysis.overlap_analyzer import OverlapAnalyzer
-from src.analysis.structural_analyzer import StructuralAnalyzer
-from src.analysis.statistical_analyzer import StatisticalAnalyzer
+# from src.utils.unified_report import safe_convert, save_physical_performance_report
 
 # from src.utils.feature_vector_validator import (
 #     validate_feature_vector_with_config,
@@ -65,14 +44,6 @@ from src.analysis.statistical_analyzer import StatisticalAnalyzer
 # )
 
 # 최적화된 함수들 import
-from src.shared.graph_utils import (
-    calculate_pair_frequency,
-    calculate_segment_entropy,
-    calculate_number_gaps,
-    calculate_cluster_distribution,
-    clear_cache,
-    get_cache_stats,
-)
 
 # 로거 설정
 logger = get_logger(__name__)
@@ -92,9 +63,6 @@ CACHE_STRATEGY = {
     "vectorization": "analysis_hash + vector_config_hash",
     "additional_analysis": "pattern_hash + addon_config_hash",
 }
-
-# 전역 엄격한 에러 핸들러
-strict_handler = StrictErrorHandler()
 
 # 전역 최적화 시스템들
 process_pool_manager = None
@@ -143,7 +111,7 @@ def initialize_optimization_systems(config: Dict[str, Any]):
                 "restart_threshold": process_pool_config.get("restart_threshold", 100),
             }
 
-            process_pool_manager = get_process_pool_manager(safe_config)
+            process_pool_manager = get_enhanced_process_pool(safe_config)
             logger.info("ProcessPool 관리자 초기화 완료")
         except Exception as e:
             logger.warning(f"ProcessPool 관리자 초기화 실패: {e}")
@@ -151,21 +119,10 @@ def initialize_optimization_systems(config: Dict[str, Any]):
 
         # 메모리 관리자 초기화
         try:
-            from src.utils.memory_manager import MemoryConfig
-
-            memory_config_dict = optimization_config.get("memory", {})
-            memory_config = MemoryConfig(
-                max_memory_usage=memory_config_dict.get("max_memory_usage", 0.85),
-                cache_size=memory_config_dict.get("cache_size", 256 * 1024 * 1024),
-                use_memory_pooling=memory_config_dict.get("use_memory_pooling", True),
-                auto_cleanup_interval=memory_config_dict.get(
-                    "auto_cleanup_interval", 60.0
-                ),
-            )
-            memory_manager = get_memory_manager(memory_config)
-            logger.info("메모리 관리자 초기화 완료")
+            memory_manager = get_unified_memory_manager()
+            logger.info("통합 메모리 관리자 초기화 완료")
         except Exception as e:
-            logger.warning(f"메모리 관리자 초기화 실패: {e}")
+            logger.warning(f"통합 메모리 관리자 초기화 실패: {e}")
             memory_manager = None
 
         # 하이브리드 최적화 시스템 초기화
@@ -178,8 +135,9 @@ def initialize_optimization_systems(config: Dict[str, Any]):
                     "cpu_threshold": 75.0,
                 },
             )
-            hybrid_optimizer = get_hybrid_optimizer(hybrid_config)
-            logger.info("하이브리드 최적화 시스템 초기화 완료")
+            # hybrid_optimizer = get_hybrid_optimizer(hybrid_config)
+            # logger.info("하이브리드 최적화 시스템 초기화 완료")
+            hybrid_optimizer = None
         except Exception as e:
             logger.warning(f"하이브리드 최적화 시스템 초기화 실패: {e}")
             hybrid_optimizer = None
@@ -189,7 +147,7 @@ def initialize_optimization_systems(config: Dict[str, Any]):
         if process_pool_manager is not None:
             initialized_systems.append("ProcessPool")
         if memory_manager is not None:
-            initialized_systems.append("MemoryManager")
+            initialized_systems.append("UnifiedMemoryManager")
         if hybrid_optimizer is not None:
             initialized_systems.append("HybridOptimizer")
 
@@ -203,46 +161,24 @@ def initialize_optimization_systems(config: Dict[str, Any]):
         memory_manager = None
 
 
-@optimize(
-    task_info={
-        "function_type": "analysis",
-        "parallelizable": True,
-        "gpu_compatible": False,
-    }
-)
 def optimized_pattern_analysis(
     data_chunk: List, analyzer: PatternAnalyzer
 ) -> Dict[str, Any]:
     """최적화된 패턴 분석"""
     try:
         # 메모리 관리 스코프 내에서 실행
-        if memory_manager:
-            with memory_manager.allocation_scope():
-                return analyzer.analyze(data_chunk)
-        else:
-            return analyzer.analyze(data_chunk)
+        return analyzer.analyze(data_chunk)
     except Exception as e:
         logger.error(f"패턴 분석 실패: {e}")
         return {}
 
 
-@optimize(
-    task_info={
-        "function_type": "vectorize",
-        "parallelizable": True,
-        "gpu_compatible": False,
-    }
-)
 def optimized_vectorization(
     patterns: List, vectorizer: EnhancedPatternVectorizer
 ) -> Tuple[np.ndarray, List[str]]:
     """최적화된 벡터화"""
     try:
-        if memory_manager:
-            with memory_manager.allocation_scope():
-                return vectorizer.vectorize(patterns)
-        else:
-            return vectorizer.vectorize(patterns)
+        return vectorizer.vectorize(patterns)
     except Exception as e:
         logger.error(f"벡터화 실패: {e}")
         return np.array([]), []
@@ -272,11 +208,9 @@ def process_data_chunks_optimized(data: List, chunk_size: int, process_func, **k
     # ProcessPool이 사용 가능하고 데이터가 충분히 큰 경우 병렬 처리
     if process_pool_manager and len(data) > 200:
         try:
-            chunks = process_pool_manager.chunk_and_split(data, chunk_size)
-            results = process_pool_manager.parallel_analyze(
-                chunks, process_func, **kwargs
+            return process_pool_manager.parallel_map(
+                process_func, data, chunksize=chunk_size, **kwargs
             )
-            return process_pool_manager.merge_results(results)
         except Exception as e:
             logger.warning(f"병렬 처리 실패, 순차 처리로 전환: {e}")
 
@@ -324,7 +258,6 @@ def safe_analysis_step(step_name: str, func, *args, **kwargs):
 def clear_analysis_cache():
     """실제 분석 실행을 위한 캐시 무효화"""
     import os
-    from pathlib import Path
 
     cache_files = [
         "data/cache/pattern_analysis_1172.pkl",
@@ -358,7 +291,6 @@ def clear_analysis_cache():
     return cleared_count
 
 
-@strict_error_handler("최적화된 데이터 분석 파이프라인", exit_on_error=True)
 def run_optimized_data_analysis() -> bool:
     """
     최적화된 데이터 분석 파이프라인 실행
@@ -638,7 +570,7 @@ def run_optimized_data_analysis() -> bool:
             logger.error(f"❌ 누락된 분석기: {missing_analyzers}")
 
         # 종합 보고서 생성
-        comprehensive_report = generate_comprehensive_report(analysis_results)
+        generate_comprehensive_report(analysis_results)
 
         # 완성도 상태 출력
         if completion_rate >= 100.0:
@@ -659,8 +591,7 @@ def run_optimized_data_analysis() -> bool:
             logger.info("향상된 벡터화 시스템만 사용하여 특성 추출")
 
             # 기본값 설정
-            optimized_features = np.array([])
-            optimized_names = []
+            np.array([])
             extraction_result = type(
                 "MockResult",
                 (),
@@ -852,14 +783,11 @@ def run_optimized_data_analysis() -> bool:
                             )
                         else:
                             feature_vector = None
-                            feature_names = []
                     except Exception as fallback_e:
                         logger.error(f"기존 벡터화 시스템도 실패: {fallback_e}")
                         feature_vector = None
-                        feature_names = []
                 else:
                     feature_vector = None
-                    feature_names = []
 
             # 🔥 이중 벡터 시스템 통합: 훈련 샘플만 최종 벡터로 사용
             logger.info("기존 패턴 벡터라이저 비활성화 - 훈련 샘플만 최종 벡터로 사용")
@@ -885,9 +813,7 @@ def run_optimized_data_analysis() -> bool:
 
         except Exception as e:
             logger.error(f"특성 벡터 생성 중 오류: {e}")
-            log_exception_with_trace(
-                "optimized_data_analysis_pipeline", e, "특성 벡터 생성 중 오류"
-            )
+            logger.error(f"특성 벡터 생성 상세 오류: {e}")
             return False
 
         # 5단계: 결과 저장
@@ -994,11 +920,9 @@ def run_optimized_data_analysis() -> bool:
                 vectors = np.load(vector_file)
 
                 # 훈련 샘플 파일 확인
-                training_samples = None
-                training_file_size = 0
                 if training_file.exists():
-                    training_samples = np.load(training_file)
-                    training_file_size = training_file.stat().st_size
+                    np.load(training_file)
+                    training_file.stat().st_size
 
                 # 특성 이름 로드
                 feature_names = []
@@ -1175,101 +1099,45 @@ def run_parallel_analysis(
     analyzers: Dict[str, Any],
     config: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """병렬 분석 실행"""
+    """분석 병렬 실행"""
     analysis_results = {}
 
-    try:
-        logger.info("병렬 분석 시작")
+    def _execute_task(task):
+        name, analyzer, data_chunk = task
+        try:
+            return {name: analyzer.analyze(data_chunk)}
+        except Exception as e:
+            logger.error(f"'{name}' 분석 중 오류: {e}")
+            return {name: {"error": str(e)}}
 
-        # 🔥 모든 11개 분석기를 포함한 분석 작업 정의
-        analysis_tasks = []
+    # 실행할 분석 작업 목록 생성
+    analysis_tasks = [
+        (name, analyzer, historical_data) for name, analyzer in analyzers.items()
+    ]
 
-        # 기존 핵심 분석기들
-        core_analyzers = ["pattern", "distribution", "roi", "pair"]
-        for name in core_analyzers:
-            if name in analyzers and analyzers[name] is not None:
-                analysis_tasks.append((name, analyzers[name]))
+    # 병렬 실행 (ProcessPool 사용)
+    if process_pool_manager and len(analysis_tasks) > 1:
+        try:
+            logger.info(f"병렬 분석 실행: {len(analysis_tasks)}개 작업")
+            results = process_pool_manager.execute_parallel(
+                _execute_task, analysis_tasks
+            )
+            # 결과 병합
+            for result in results:
+                if result:
+                    analysis_results.update(result)
+            return analysis_results
+        except Exception as e:
+            logger.warning(f"병렬 분석 실패, 순차 처리로 전환: {e}")
 
-        # 🚀 모든 11개 분석기 완전 활용 (확장된 분석기들)
-        extended_analyzers = [
-            "cluster",
-            "trend",
-            "overlap",
-            "structural",
-            "statistical",
-            "negative_sample",
-            "unified",  # 🎯 UnifiedAnalyzer 추가
-        ]
-        for name in extended_analyzers:
-            if name in analyzers and analyzers[name] is not None:
-                analysis_tasks.append((name, analyzers[name]))
-                logger.info(f"✅ {name} 분석기 병렬 분석에 포함")
+    # 순차 실행
+    logger.info("순차 분석 실행")
+    for task in analysis_tasks:
+        result = _execute_task(task)
+        if result:
+            analysis_results.update(result)
 
-        logger.info(f"총 {len(analysis_tasks)}개 분석기로 병렬 분석 실행 (목표: 11개)")
-        logger.info(f"활성화된 분석기: {[name for name, _ in analysis_tasks]}")
-
-        # 프로세스 풀이 있으면 병렬 실행, 없으면 순차 실행
-        if process_pool_manager and len(analysis_tasks) > 1:
-            logger.info("프로세스 풀을 사용한 병렬 분석")
-
-            # 🔧 워커 수를 분석기 수에 맞게 조정
-            max_workers = min(len(analysis_tasks), 8)  # 최대 8개 워커
-
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_name = {}
-
-                for name, analyzer in analysis_tasks:
-                    if analyzer:
-                        future = executor.submit(
-                            safe_analysis_execution, name, analyzer, historical_data
-                        )
-                        future_to_name[future] = name
-
-                # 결과 수집
-                for future in as_completed(future_to_name):
-                    name = future_to_name[future]
-                    try:
-                        result = future.result(timeout=300)  # 5분 타임아웃
-                        if result:
-                            analysis_results[name] = result
-                            logger.info(f"✅ {name} 분석 완료")
-                        else:
-                            logger.warning(f"⚠️ {name} 분석 결과 없음")
-                    except Exception as e:
-                        logger.error(f"❌ {name} 분석 실패: {e}")
-        else:
-            logger.info("순차 분석 실행")
-
-            for name, analyzer in analysis_tasks:
-                if analyzer:
-                    try:
-                        result = safe_analysis_execution(
-                            name, analyzer, historical_data
-                        )
-                        if result:
-                            analysis_results[name] = result
-                            logger.info(f"✅ {name} 분석 완료")
-                        else:
-                            logger.warning(f"⚠️ {name} 분석 결과 없음")
-                    except Exception as e:
-                        logger.error(f"❌ {name} 분석 실패: {e}")
-
-        logger.info(
-            f"🎉 병렬 분석 완료: {len(analysis_results)}개 결과 (목표: {len(analysis_tasks)}개)"
-        )
-
-        # 분석 결과 상세 로깅
-        for name, result in analysis_results.items():
-            if isinstance(result, dict):
-                logger.info(f"   - {name}: {len(result)} 항목")
-            else:
-                logger.info(f"   - {name}: {type(result).__name__}")
-
-        return analysis_results
-
-    except Exception as e:
-        logger.error(f"병렬 분석 실행 중 오류: {e}")
-        return {}
+    return analysis_results
 
 
 def validate_analysis_result(analyzer_name: str, result: Any) -> bool:
@@ -1363,7 +1231,7 @@ def safe_analysis_execution(
 
     except Exception as e:
         logger.error(f"❌ {name} 분석 중 오류: {e}")
-        log_exception_with_trace(logger, e, f"{name} 분석 실행 중")
+        logger.error(f"❌ {name} 분석 실행 중 상세 오류: {e}")
         return None
 
 
@@ -1546,50 +1414,26 @@ def get_memory_usage() -> Dict[str, float]:
 
 
 def cleanup_optimization_systems() -> None:
-    """최적화 시스템 정리 (중복 방지)"""
+    """
+    최적화 시스템들을 정리합니다.
+    """
     global process_pool_manager, hybrid_optimizer, memory_manager
 
-    try:
-        # ProcessPool 정리 (중복 방지)
-        if (
-            process_pool_manager
-            and hasattr(process_pool_manager, "_shutdown")
-            and not process_pool_manager._shutdown
-        ):
-            process_pool_manager.shutdown()
-            logger.info("프로세스 풀 정리 완료")
-        elif process_pool_manager:
-            logger.debug("프로세스 풀 이미 종료됨")
-
-        # Memory Manager 정리
-        if (
-            memory_manager
-            and hasattr(memory_manager, "_is_shutdown")
-            and not getattr(memory_manager, "_is_shutdown", False)
-        ):
-            memory_manager.cleanup()
-            logger.info("메모리 관리자 정리 완료")
-        elif memory_manager:
-            logger.debug("메모리 관리자 이미 정리됨")
-
-        # Hybrid Optimizer 정리
-        if (
-            hybrid_optimizer
-            and hasattr(hybrid_optimizer, "_is_shutdown")
-            and not getattr(hybrid_optimizer, "_is_shutdown", False)
-        ):
-            hybrid_optimizer.cleanup()
-            logger.info("하이브리드 최적화 시스템 정리 완료")
-        elif hybrid_optimizer:
-            logger.debug("하이브리드 최적화 시스템 이미 정리됨")
-
-    except Exception as e:
-        logger.warning(f"최적화 시스템 정리 중 오류: {e}")
-    finally:
-        # 전역 변수 초기화
+    if process_pool_manager:
+        process_pool_manager.shutdown()
         process_pool_manager = None
-        hybrid_optimizer = None
+        logger.info("ProcessPool 관리자 정리 완료")
+
+    if memory_manager:
+        # 통합 메모리 관리자는 별도 정리 로직이 필요 없을 수 있음
+        # 필요하다면 memory_manager.cleanup() 등 호출
         memory_manager = None
+        logger.info("통합 메모리 관리자 정리 완료")
+
+    if hybrid_optimizer:
+        # 하이브리드 최적화기 정리 로직
+        hybrid_optimizer = None
+        logger.info("하이브리드 최적화 시스템 정리 완료")
 
 
 def run_data_analysis() -> bool:
@@ -1597,42 +1441,6 @@ def run_data_analysis() -> bool:
     기본 데이터 분석 함수 (하위 호환성)
     """
     return run_optimized_data_analysis()
-
-
-def run_fully_optimized_analysis():
-    """완전 최적화된 데이터 분석 파이프라인"""
-
-    # 🚀 전역 최적화 시스템 초기화
-    from src.utils.memory_manager import get_memory_manager, MemoryConfig
-    from src.utils.cuda_optimizers import CudaConfig
-    from src.utils.unified_performance import get_profiler
-
-    logger.info("🎉 완전 최적화된 데이터 분석 파이프라인 시작")
-
-    # 전역 최적화 시스템 초기화
-    memory_config = MemoryConfig(
-        max_memory_usage=0.85,
-        use_memory_pooling=True,
-        pool_size=32,
-        auto_cleanup_interval=60.0,
-    )
-    memory_manager = get_memory_manager(memory_config)
-
-    cuda_config = CudaConfig(
-        use_amp=True,
-        batch_size=128,
-        use_cudnn=True,
-    )
-
-    # 프로파일러 초기화
-    profiler = get_profiler()
-
-    # 🧠 전역 메모리 관리 컨텍스트
-    with memory_manager.allocation_scope():
-        # 📈 전체 성능 모니터링
-        with profiler.profile("완전_최적화_분석"):
-            # 기본 최적화된 분석 실행
-            return run_optimized_data_analysis()
 
 
 def create_optimized_analyzer(

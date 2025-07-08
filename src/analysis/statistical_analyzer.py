@@ -6,7 +6,7 @@
 
 import numpy as np
 from typing import Dict, Any, List, Set, Tuple, Optional
-from collections import Counter, defaultdict
+from collections import Counter
 
 from .base_analyzer import BaseAnalyzer
 from ..shared.types import LotteryNumber
@@ -270,7 +270,7 @@ class StatisticalAnalyzer(BaseAnalyzer[Dict[str, Any]]):
             recent_frequency.update(draw.numbers)
 
         # 핫 넘버: 전체 기간과 최근 기간 모두에서 상위 30% 출현
-        all_numbers = set(range(1, 46))
+        set(range(1, 46))
         hot_threshold = int(45 * 0.3)  # 상위 30%
 
         hot_all_time = {num for num, _ in frequency.most_common(hot_threshold)}

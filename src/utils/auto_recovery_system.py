@@ -8,20 +8,26 @@ import psutil
 import gc
 import threading
 import time
-import asyncio
-from typing import Dict, Any, Optional, List, Callable, Union
+from typing import Dict, Any, List, Callable, Optional
 from dataclasses import dataclass
 from enum import Enum
-import weakref
 from contextlib import contextmanager
+import functools
 
 from .unified_logging import get_logger
 from .unified_config import get_config
 from .factory import get_singleton_instance
-from .compute_strategy import get_compute_executor, ComputeStrategy
-from .unified_memory_manager import get_unified_memory_manager, DeviceType
+# from .unified_performance_engine import get_compute_executor, ComputeStrategy  # 순환 참조 방지
+from .unified_memory_manager import get_unified_memory_manager
 
 logger = get_logger(__name__)
+
+
+class CircuitBreakerState(Enum):
+    """서킷 브레이커 상태"""
+    CLOSED = "CLOSED"
+    OPEN = "OPEN"
+    HALF_OPEN = "HALF_OPEN"
 
 
 class RecoveryStrategy(Enum):
@@ -160,7 +166,8 @@ class RecoveryActionExecutor:
 
     def __init__(self):
         self.memory_manager = get_unified_memory_manager()
-        self.compute_executor = get_compute_executor()
+        # self.compute_executor는 제거. 순환 참조의 원인.
+        # 액션은 상태 변경에만 집중하고, 실제 실행은 호출자가 담당.
 
     def execute_action(self, action: RecoveryAction, context: RecoveryContext) -> bool:
         """복구 액션 실행"""
@@ -218,8 +225,8 @@ class RecoveryActionExecutor:
         return True
 
     def _fallback_to_cpu(self, context: RecoveryContext) -> bool:
-        """CPU로 폴백"""
-        logger.info("CPU로 폴백")
+        """CPU로 폴백 (상태 플래그 설정)"""
+        logger.info("CPU 폴백 요청. 컨텍스트에 'force_cpu=True' 설정.")
 
         context.metadata["force_cpu"] = True
         context.metadata["fallback_to_cpu"] = True
@@ -227,8 +234,9 @@ class RecoveryActionExecutor:
         # GPU 메모리 정리
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-
-        logger.info("CPU 폴백 완료")
+        
+        # compute_executor 직접 호출 로직 제거
+        logger.info("CPU 폴백 상태 설정 완료")
         return True
 
     def _restart_process(self, context: RecoveryContext) -> bool:
@@ -273,14 +281,24 @@ class RecoveryActionExecutor:
 
 
 class AutoRecoverySystem:
-    """자동 복구 시스템"""
+    """통합 자동 복구 시스템 (Circuit Breaker 포함)"""
 
     def __init__(self):
-        self.config = get_config("main").get_nested("utils.recovery", {})
+        """초기화"""
+        # Circuit Breaker 설정
+        self.circuit_breaker_config = get_config().get("circuit_breaker", {})
+        self.failure_threshold = self.circuit_breaker_config.get("failure_threshold", 5)
+        self.recovery_timeout = self.circuit_breaker_config.get("recovery_timeout", 60)
+        
+        self._state = CircuitBreakerState.CLOSED
+        self._failure_count = 0
+        self._last_failure_time = 0
+        self._lock = threading.RLock()
 
-        # 구성 요소
-        self.monitor = SystemMonitor()
-        self.executor = RecoveryActionExecutor()
+        # 기존 시스템 모니터 및 액션 실행기
+        self.monitor = get_singleton_instance(SystemMonitor)
+        self.action_executor = get_singleton_instance(RecoveryActionExecutor)
+        self.is_running = False
 
         # 복구 전략 매핑
         self.recovery_strategies = {
@@ -318,18 +336,51 @@ class AutoRecoverySystem:
 
         logger.info(f"✅ 자동 복구 시스템 초기화 (활성화: {self.enable_auto_recovery})")
 
+    @property
+    def state(self):
+        """Circuit Breaker 상태 확인 및 자동 전환"""
+        with self._lock:
+            if self._state == CircuitBreakerState.OPEN and (
+                time.time() - self._last_failure_time > self.recovery_timeout
+            ):
+                self._state = CircuitBreakerState.HALF_OPEN
+                logger.info("서킷 브레이커 상태 변경: OPEN -> HALF_OPEN")
+            return self._state
+
+    def record_failure(self):
+        """실패 기록 및 서킷 OPEN"""
+        with self._lock:
+            self._failure_count += 1
+            logger.debug(f"실패 기록: {self._failure_count}/{self.failure_threshold}")
+            if self._failure_count >= self.failure_threshold:
+                self._state = CircuitBreakerState.OPEN
+                self._last_failure_time = time.time()
+                logger.error(f"서킷 브레이커 OPEN! 임계값({self.failure_threshold}) 도달.")
+
+    def record_success(self):
+        """성공 기록 및 서킷 CLOSE"""
+        with self._lock:
+            if self._state != CircuitBreakerState.CLOSED:
+                 logger.info("서킷 브레이커 상태 변경: -> CLOSED")
+            self._failure_count = 0
+            self._state = CircuitBreakerState.CLOSED
+
     def start(self):
-        """자동 복구 시스템 시작"""
-        if self.enable_auto_recovery:
-            self.monitor.start_monitoring(self.monitoring_interval)
-            logger.info("자동 복구 시스템 시작")
-        else:
-            logger.info("자동 복구 시스템 비활성화")
+        """시스템 모니터링 시작"""
+        if self.is_running:
+            return
+        self.monitor.start_monitoring()
+        self._register_callbacks()
+        self.is_running = True
+        logger.info("✅ 통합 자동 복구 시스템 시작")
 
     def stop(self):
-        """자동 복구 시스템 정지"""
+        """시스템 모니터링 중지"""
+        if not self.is_running:
+            return
         self.monitor.stop_monitoring()
-        logger.info("자동 복구 시스템 정지")
+        self.is_running = False
+        logger.info("⏹️ 통합 자동 복구 시스템 중지")
 
     def handle_error(
         self, error: Exception, context: Dict[str, Any] = None
@@ -418,7 +469,7 @@ class AutoRecoverySystem:
         for action in actions:
             logger.info(f"복구 액션 시도: {action.value}")
 
-            success = self.executor.execute_action(action, context)
+            success = self.action_executor.execute_action(action, context)
             context.attempted_actions.append(action)
 
             if success:
@@ -451,7 +502,7 @@ class AutoRecoverySystem:
             metadata=data,
         )
 
-        self.executor.execute_action(RecoveryAction.CLEANUP_MEMORY, context)
+        self.action_executor.execute_action(RecoveryAction.CLEANUP_MEMORY, context)
 
     def _handle_cpu_usage_high(self, data: Dict[str, Any]):
         """CPU 사용률 높음 처리"""
@@ -465,7 +516,7 @@ class AutoRecoverySystem:
             metadata=data,
         )
 
-        self.executor.execute_action(RecoveryAction.SCALE_DOWN, context)
+        self.action_executor.execute_action(RecoveryAction.SCALE_DOWN, context)
 
     def _handle_memory_usage_high(self, data: Dict[str, Any]):
         """메모리 사용률 높음 처리"""
@@ -479,7 +530,7 @@ class AutoRecoverySystem:
             metadata=data,
         )
 
-        self.executor.execute_action(RecoveryAction.CLEANUP_MEMORY, context)
+        self.action_executor.execute_action(RecoveryAction.CLEANUP_MEMORY, context)
 
     def _handle_disk_usage_high(self, data: Dict[str, Any]):
         """디스크 사용률 높음 처리"""
@@ -493,7 +544,7 @@ class AutoRecoverySystem:
             metadata=data,
         )
 
-        self.executor.execute_action(RecoveryAction.CLEANUP_MEMORY, context)
+        self.action_executor.execute_action(RecoveryAction.CLEANUP_MEMORY, context)
 
     def get_recovery_stats(self) -> Dict[str, Any]:
         """복구 통계 반환"""
@@ -542,27 +593,70 @@ class AutoRecoverySystem:
 
 # 싱글톤 인스턴스
 def get_auto_recovery_system() -> AutoRecoverySystem:
-    """자동 복구 시스템 싱글톤 인스턴스 반환"""
+    """AutoRecoverySystem의 싱글톤 인스턴스를 반환합니다."""
     return get_singleton_instance(AutoRecoverySystem)
 
 
-# 데코레이터
-def auto_recoverable(strategy: RecoveryStrategy = None, context: Dict[str, Any] = None):
-    """자동 복구 데코레이터"""
+def auto_recoverable(
+    strategy: Optional[RecoveryStrategy] = None, 
+    max_retries: int = 3,
+    delay: float = 1.0
+):
+    """
+    통합 자동 복구 데코레이터.
+    GPU OOM, 서킷 브레이커, 재시도 로직을 통합 관리합니다.
+    """
+    recovery_system = get_auto_recovery_system()
 
     def decorator(func):
+        @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            recovery_system = get_auto_recovery_system()
+            # 서킷 브레이커 확인
+            if recovery_system.state == CircuitBreakerState.OPEN:
+                logger.error(f"Circuit Breaker가 열려있어 '{func.__name__}' 호출을 차단합니다.")
+                # OPEN 상태에서는 빠른 실패(fail-fast)를 반환
+                raise ConnectionAbortedError("Circuit Breaker is open.")
 
-            with recovery_system.auto_recovery_context(context):
-                return func(*args, **kwargs)
+            # 재시도 로직
+            retries = 0
+            while retries < max_retries:
+                try:
+                    result = func(*args, **kwargs)
+                    # HALF_OPEN 상태에서 성공 시 서킷을 닫음
+                    if recovery_system.state == CircuitBreakerState.HALF_OPEN:
+                        recovery_system.record_success()
+                    return result
+
+                except torch.cuda.OutOfMemoryError as e:
+                    logger.warning(f"GPU OOM 발생! (시도 {retries + 1}/{max_retries}) - 자동 복구 시도...")
+                    context = {"error": e, "args": args, "kwargs": kwargs}
+                    recovery_context = recovery_system.handle_error(e, context)
+                    
+                    # 복구 액션으로 상태가 변경되었을 수 있으므로 재시도
+                    if recovery_context.success:
+                        logger.info("GPU OOM 복구 성공. 작업을 재시도합니다.")
+                        time.sleep(delay)
+                    else:
+                        logger.error("GPU OOM 복구 실패. 작업을 중단합니다.")
+                        recovery_system.record_failure()
+                        raise e # 복구 실패 시 예외 다시 발생
+
+                except Exception as e:
+                    logger.error(f"'{func.__name__}' 실행 중 예측하지 못한 오류: {e}", exc_info=True)
+                    recovery_system.record_failure()
+                    raise e # 일반 오류는 재시도 없이 전파
+
+                retries += 1
+            
+            # 최종 실패
+            logger.error(f"'{func.__name__}'가 최대 재시도 횟수({max_retries})를 초과했습니다.")
+            recovery_system.record_failure()
+            raise RuntimeError(f"Function {func.__name__} failed after {max_retries} retries.")
 
         return wrapper
-
     return decorator
 
 
-# 편의 함수
 def handle_error_with_recovery(
     error: Exception, context: Dict[str, Any] = None
 ) -> RecoveryContext:

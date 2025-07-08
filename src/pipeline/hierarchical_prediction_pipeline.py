@@ -10,16 +10,13 @@
 import time
 import numpy as np
 from typing import Dict, List, Tuple, Any, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-import asyncio
+import torch
 
 from ..utils.unified_logging import get_logger
-from ..utils.compute_strategy import ComputeExecutor, TaskType
-from ..utils.performance_optimizer import get_performance_optimizer
+from ..utils.unified_performance_engine import ComputeExecutor
 from ..utils.unified_async_manager import get_async_manager
-from ..utils.model_integrator import GPUEnsembleIntegrator
-from ..shared.types import LotteryNumber, ModelPrediction
+from ..shared.types import LotteryNumber
 from ..analysis.pattern_analyzer import PatternAnalyzer
 from ..analysis.enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 from ..analysis.three_digit_expansion_engine import (
@@ -59,18 +56,12 @@ class HierarchicalPredictionPipeline:
 
         # 성능 최적화 시스템 초기화
         self.compute_executor = ComputeExecutor()
-        self.performance_optimizer = get_performance_optimizer()
         self.async_manager = get_async_manager()
 
         # 분석 및 예측 엔진 초기화
         self.pattern_analyzer = PatternAnalyzer(config)
         self.vectorizer = EnhancedPatternVectorizer(config)
         self.expansion_engine = ThreeDigitExpansionEngine(config)
-
-        # 모델 통합기 초기화
-        self.model_integrator = GPUEnsembleIntegrator(
-            gpu_parallel=True, max_workers=self.config.get("max_workers", 4)
-        )
 
         # 파이프라인 설정
         self.stage1_top_k = self.config.get("stage1_top_k", 100)
@@ -369,20 +360,46 @@ class HierarchicalPredictionPipeline:
         historical_data: List[LotteryNumber],
         ensemble_models: Dict[str, Any],
     ) -> float:
-        """ML 앙상블 점수 계산"""
+        """ML 앙상블 점수 계산 (ModelIntegrator 제거, 직접 호출)"""
+        if not ensemble_models:
+            return 0.0
+
         try:
             # 6자리 조합 특성 벡터화
             combo_features = self._vectorize_6digit_combo(
                 six_digit_combo, historical_data
             )
+            combo_features = torch.tensor(combo_features, dtype=torch.float32).unsqueeze(0)
 
-            # 앙상블 예측 수행
-            ensemble_result = await self.model_integrator.predict(combo_features)
+            if torch.cuda.is_available():
+                combo_features = combo_features.to("cuda")
 
-            # 앙상블 점수 추출
-            ml_score = ensemble_result.get("avg_confidence", 0.0)
+            total_confidence = 0.0
+            model_count = 0
 
-            return ml_score
+            # 모델들을 순차적으로 실행하여 점수 평균 계산
+            for model_id, model in ensemble_models.items():
+                try:
+                    with torch.no_grad():
+                        # 모델이 predict 메서드를 가질 수도 있고, 직접 호출 가능할 수도 있음
+                        if hasattr(model, "predict"):
+                            prediction = model.predict(combo_features)
+                        else:
+                            prediction = model(combo_features)
+                    
+                    # 예측 결과에서 신뢰도 추출 (결과가 dict 또는 tensor 형태라고 가정)
+                    if isinstance(prediction, dict) and "confidence" in prediction:
+                        total_confidence += prediction.get("confidence", 0.0)
+                    elif isinstance(prediction, torch.Tensor):
+                        # 텐서인 경우, 가장 높은 값을 신뢰도로 가정 (softmax 결과 등)
+                        total_confidence += prediction.max().item()
+                    
+                    model_count += 1
+
+                except Exception as e:
+                    self.logger.warning(f"앙상블 중 모델 '{model_id}' 예측 실패: {e}")
+
+            return total_confidence / model_count if model_count > 0 else 0.0
 
         except Exception as e:
             self.logger.error(f"ML 앙상블 점수 계산 중 오류: {e}")
@@ -523,7 +540,6 @@ class HierarchicalPredictionPipeline:
         """리소스 정리"""
         try:
             self.expansion_engine.shutdown()
-            self.model_integrator.shutdown()
             self.async_manager.shutdown()
             self.logger.info("계층적 예측 파이프라인 종료 완료")
         except Exception as e:

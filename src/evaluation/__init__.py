@@ -7,6 +7,5 @@ DAEBAK_AI 로또 추천 시스템 평가 모듈
 from .backtester import Backtester
 from .evaluator import Evaluator
 from .diversity_evaluator import DiversityEvaluator, get_diversity_evaluator
-from ..utils.unified_performance import get_profiler
 
 __all__ = ["Backtester", "Evaluator", "DiversityEvaluator", "get_diversity_evaluator"]

@@ -6,17 +6,12 @@
 import asyncio
 import aiofiles
 import aiohttp
-import threading
-import concurrent.futures
-from typing import Dict, Any, Optional, List, Callable, Awaitable, Union
+from typing import Dict, Any, Optional, List, Callable, Awaitable
 from dataclasses import dataclass
 from enum import Enum
-import weakref
 from contextlib import asynccontextmanager
 import pickle
 import json
-import torch
-import numpy as np
 
 from .unified_logging import get_logger
 from .unified_config import get_config
@@ -202,7 +197,39 @@ class AsyncCacheManager:
         return (time.time() - created_at) > ttl
 
     async def _evict_oldest(self):
-        """가장 오래된 캐시 항목 제거"""
+        """가장 오래된 캐시 항목 제거 - 최적화된 LRU 알고리즘"""
+        if not self.cache:
+            return
+        
+        # 가장 오래된 캐시 항목 찾기
+        oldest_key = None
+        oldest_time = float('inf')
+        
+        for key, metadata in self.cache_metadata.items():
+            if key in self.cache:
+                last_accessed = metadata.get('last_accessed', 0)
+                if last_accessed < oldest_time:
+                    oldest_time = last_accessed
+                    oldest_key = key
+        
+        # 가장 오래된 항목 제거
+        if oldest_key:
+            await self.delete(oldest_key)
+            logger.debug(f"캐시 LRU 제거: {oldest_key}")
+        
+        # 메모리 부족 시 추가 정리
+        if len(self.cache) > self.max_cache_size * 0.9:
+            # 상위 10% 제거
+            evict_count = max(1, int(len(self.cache) * 0.1))
+            sorted_items = sorted(
+                self.cache_metadata.items(),
+                key=lambda x: x[1].get('last_accessed', 0)
+            )
+            
+            for key, _ in sorted_items[:evict_count]:
+                if key in self.cache:
+                    await self.delete(key)
+                    logger.debug(f"캐시 배치 제거: {key}")
         if not self.cache_metadata:
             return
 

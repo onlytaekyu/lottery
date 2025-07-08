@@ -5,16 +5,14 @@
 """
 
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Any, Set
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
-from collections import Counter, defaultdict
-import math
-from datetime import datetime, timedelta
+from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 from src.shared.types import LotteryNumber
 from src.utils.error_handler_refactored import get_logger
-from src.utils.unified_performance_engine import get_unified_performance_engine
 from src.utils.memory_manager import get_memory_manager
 from src.utils.unified_report import save_analysis_performance_report
 

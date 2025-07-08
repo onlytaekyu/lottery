@@ -7,27 +7,26 @@
 
 # pyright: reportCallIssue=false
 
-from typing import Dict, List, Any, Optional, Tuple, Set, cast
+from typing import Dict, List, Any, Optional, Tuple
 import numpy as np
 from pathlib import Path
 import json
 
 # logging 제거 - unified_logging 사용
-import time
 from datetime import datetime
 import pickle
 import os  # 추가: os 모듈 임포트
 
 from ..utils.unified_logging import get_logger
 from ..utils.unified_performance_engine import get_unified_performance_engine, TaskType
-from ..shared.types import LotteryNumber, PatternAnalysis
+from ..shared.types import LotteryNumber
 from .enhanced_pattern_vectorizer import EnhancedPatternVectorizer
 from .base_analyzer import BaseAnalyzer
 
 from .roi_analyzer import ROIAnalyzer, ROIMetrics
 from .pattern_analyzer import PatternAnalyzer
-from .distribution_analyzer import DistributionAnalyzer, DistributionPattern
-from ..utils.pattern_filter import GPUPatternFilter, get_pattern_filter
+from .distribution_analyzer import DistributionAnalyzer
+from ..utils.pattern_filter import get_pattern_filter
 
 # 추가 분석기 임포트 (핵심 분석기만 유지)
 from .cluster_analyzer import ClusterAnalyzer
